@@ -21,14 +21,19 @@
 # One declared code, everything else looked up. The source inventory needed
 # eight hand-written variables for this, two of which held the same string.
 
-- name: The inventory must declare an environment and a channel
+- name: An environment and a channel must be supplied
   ansible.builtin.assert:
     that:
       - was_environment is defined
       - was_channel is defined
     fail_msg: >-
-      The inventory must declare was_environment and was_channel. See
-      inventories/<env>/group_vars/all/10_environment.yml - it is two lines.
+      No environment was supplied. It is an input, not a property of a host or
+      of a directory: the same machine can be built as any of
+      {{ was_environment_catalog.keys() | list | join(', ') }}, and the answer
+      decides the cell name, the profile names and the ports.
+      In AWX, answer the survey question "Give an environment". On the command
+      line, pass -e was_environment=RIT. The channel is the same kind of input
+      and may default where a lab only exercises one.
   tags: [model, validate, environment]
 
 - name: The environment must exist in the catalogue
