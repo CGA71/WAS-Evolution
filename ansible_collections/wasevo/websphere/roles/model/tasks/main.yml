@@ -36,24 +36,30 @@
       and may default where a lab only exercises one.
   tags: [model, validate, environment]
 
-- name: The environment must exist in the catalogue
+- name: The environment must resolve to a catalogue entry
   ansible.builtin.assert:
     that:
-      - was_environment in was_environment_catalog
+      - was_env_code | length > 0
     fail_msg: >-
-      Unknown environment {{ was_environment }}. Known:
+      Unknown environment "{{ was_environment }}". Known:
       {{ was_environment_catalog.keys() | list | join(', ') }}.
-      To add one, add a catalogue entry in roles/model/vars/environments.yml
-      and copy an inventory directory.
+      The match is case-insensitive, so rit, RIT and Rit all resolve - this
+      failure means the code itself is not in the catalogue, not that the case
+      is wrong. To add one, add a catalogue entry in
+      roles/model/vars/environments.yml and the hosts to the inventory.
+    success_msg: >-
+      {{ was_environment }} resolved to {{ was_env_code }} / {{ was_env_lower }}
   tags: [model, validate, environment]
 
-- name: The channel must exist in the catalogue
+- name: The channel must resolve to a catalogue entry
   ansible.builtin.assert:
     that:
-      - was_channel in was_channel_catalog
+      - was_channel_code | length > 0
     fail_msg: >-
-      Unknown channel {{ was_channel }}. Known:
+      Unknown channel "{{ was_channel }}". Known:
       {{ was_channel_catalog.keys() | list | join(', ') }}.
+      The match is case-insensitive; the canonical form is title case because
+      that is how the channel appears inside WAS object names.
   tags: [model, validate, environment]
 
 - name: Warn about catalogue entries that were never confirmed
@@ -65,11 +71,11 @@
       standard and set confirmed: true.
   loop:
     - what: Environment
-      name: "{{ was_environment }}"
-      ok: "{{ was_environment_catalog[was_environment].confirmed | default(false) }}"
+      name: "{{ was_env_code }}"
+      ok: "{{ was_environment_catalog[was_env_code].confirmed | default(false) }}"
     - what: Channel
-      name: "{{ was_channel }}"
-      ok: "{{ was_channel_catalog[was_channel].confirmed | default(false) }}"
+      name: "{{ was_channel_code }}"
+      ok: "{{ was_channel_catalog[was_channel_code].confirmed | default(false) }}"
   loop_control:
     label: "{{ item.what }} {{ item.name }}"
   when: not (item.ok | bool)
@@ -84,7 +90,7 @@
       or use the AAP workflow, which carries an Approval Node for exactly this.
       A production run should never be something that happens by typing the
       wrong inventory path.
-  when: was_environment_catalog[was_environment].tier == 'prod'
+  when: was_environment_catalog[was_env_code].tier == 'prod'
   tags: [model, validate, environment]
 
 # ---------------------------------------------------------------------------
@@ -245,9 +251,9 @@
 - name: Report the resolved target
   ansible.builtin.debug:
     msg:
-      - "environment : {{ was_environment }} - {{ was_env_long_name }}"
+      - "environment : {{ was_environment }} -> {{ was_env_code }} / {{ was_env_lower }} - {{ was_env_long_name }}"
       - "              letter {{ was_env_letter_upper }}, tier {{ was_env_tier }}, rank {{ was_env_rank }}"
-      - "channel     : {{ was_channel }} / {{ was_channel_lower }}"
+      - "channel     : {{ was_channel }} -> {{ was_channel_name }} / {{ was_channel_lower }}"
       - "cell        : {{ was_cell_name | default('n/a') }}"
       - "product     : {{ runtime.product }} (phase {{ jdk_matrix[runtime.product].phase }})"
       - "jdk         : Java {{ runtime.jdk.version }} / {{ runtime.jdk.vm }}"
