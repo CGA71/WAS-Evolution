@@ -1,0 +1,5 @@
+---
+# The package list, the limits and the required directories are declared in
+# forge_preflight/defaults/main.yml and loaded from there, so the role that
+# checks a dependency and the role that installs it read the same list.
+# Nothing to override here on purpose.

@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: traditional_prereqs_os
-  description: "OS prerequisites for WAS: packages, users, limits, filesystems, mounts."
+  description: "OS prerequisites for WAS: packages, shell limits and the directory layout, before anything IBM is installed."
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"
 dependencies: []

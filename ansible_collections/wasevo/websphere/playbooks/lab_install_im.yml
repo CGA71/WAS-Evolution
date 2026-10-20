@@ -25,4 +25,8 @@
       tags: [im]
 
   roles:
+    # OS prerequisites first. unzip is one of them, and ansible.builtin.unarchive
+    # needs it on the target - without it the run dies four tasks and 148 MB of
+    # file copy later, with a message about zipinfo.
+    - role: wasevo.websphere.traditional.prereqs_os
     - role: wasevo.websphere.traditional.installation_manager
