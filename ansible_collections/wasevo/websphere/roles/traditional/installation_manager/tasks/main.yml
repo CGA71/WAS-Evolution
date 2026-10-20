@@ -77,7 +77,7 @@
         paths: "{{ im_media_dir }}"
         patterns: "{{ im_media_pattern }}"
         file_type: file
-      register: im_archive
+      register: im_archive_present
       check_mode: false
 
     # In production the media arrives on a mounted share and is already on the
@@ -85,7 +85,7 @@
     # there rather than making someone scp 148 MB by hand before every run.
     - name: Stage the archive from the controller
       when:
-        - im_archive.matched == 0
+        - im_archive_present.matched == 0
         - im_media_src | default('') | length > 0
       block:
 
@@ -116,8 +116,22 @@
             paths: "{{ im_media_dir }}"
             patterns: "{{ im_media_pattern }}"
             file_type: file
-          register: im_archive
+          register: im_archive_staged
           check_mode: false
+
+    # One place decides which archive we ended up with.
+    #
+    # This used to re-register im_archive from the second find, which is a trap:
+    # a task that is SKIPPED but carries `register` still overwrites the
+    # variable - with a skip result that has no `matched` key. So on a second
+    # run, where the archive was already staged and the block skipped, the next
+    # `when: im_archive.matched == 0` died with "object of type 'dict' has no
+    # attribute 'matched'". Never re-register a name from a task that can skip.
+    - name: Settle which archive is available
+      ansible.builtin.set_fact:
+        im_archive_paths: >-
+          {{ (im_archive_present.files | default([]) | map(attribute='path') | list)
+             + (im_archive_staged.files | default([]) | map(attribute='path') | list) }}
 
     - name: Refuse clearly when the archive is missing
       ansible.builtin.fail:
@@ -139,7 +153,7 @@
           agent.installer.linux.gtk.x86_64_{{ im_required_version }}.zip,
           but any name matching {{ im_media_pattern }} is accepted - the role
           looks at the contents, not the name.
-      when: im_archive.matched == 0
+      when: im_archive_paths | length == 0
 
     - name: Create the unpack directory
       ansible.builtin.file:
@@ -150,7 +164,7 @@
 
     - name: Unpack the archive
       ansible.builtin.unarchive:
-        src: "{{ (im_archive.files | first).path }}"
+        src: "{{ im_archive_paths | first }}"
         dest: "{{ im_unpack_dir }}"
         remote_src: true
         creates: "{{ im_unpack_dir }}/installc"
@@ -165,7 +179,7 @@
     - name: Refuse when the archive was not an Installation Manager archive
       ansible.builtin.fail:
         msg: >-
-          {{ (im_archive.files | first).path }} unpacked without producing
+          {{ im_archive_paths | first }} unpacked without producing
           installc, so it is not an Installation Manager installer archive. A
           WAS repository zip looks similar and is a common mix-up; that one
           belongs to the was_install role, not here.
