@@ -147,7 +147,10 @@ stub-unit:
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
     - pip install --quiet --no-cache-dir ansible-core kubernetes
-    - ansible-galaxy collection install --force kubernetes.core >/dev/null
+    # From requirements.yml, not a hand-picked list. forge_preflight checks the
+    # collections it declares, and a job that installs a subset of them fails
+    # that check - which is the preflight working, not a false positive.
+    - ansible-galaxy collection install --force -r collections/requirements.yml >/dev/null
     - curl -sLo /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.4/bin/linux/amd64/kubectl"
     - chmod +x /usr/local/bin/kubectl
     # Built from CI variables, never from a kubeconfig in the repository. The
