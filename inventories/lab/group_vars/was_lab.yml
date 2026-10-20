@@ -1,0 +1,19 @@
+---
+# WebSphere Application Server for Developers v9.0.5.
+#
+# "for Developers" is an edition, not a different product: it installs through
+# the same Installation Manager and differs only by its offering id and its
+# licence. The role discovers that id from the repository rather than
+# hardcoding it, so this file does not need to know it.
+#
+# Media staged here on the VM, by hand - see the README. Neither artefact can
+# be downloaded without an IBMid.
+im_media_dir: /mnt/binaries/IBM/install_im
+was_media_dir: /mnt/binaries/IBM/install_was90
+
+# 9.0.0.0 is what the base Developers install yields. The 9.0.5.x level comes
+# from the fix pack, which is a separate job.
+was_expected_version: "9.0.0.0"
+
+was_node_name: "LabNode01"
+was_service_name: wasserver

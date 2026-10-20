@@ -1,0 +1,10 @@
+---
+site_dns_domain: was-lab.svc.cluster.local
+# No file share here: the IBM media is staged directly on the VM.
+site_binaries_repository: "(staged by hand on the VM)"
+site_binaries_repository_type: none
+site_timezone: Europe/Paris
+# cloud-init creates this account with passwordless sudo and the lab key.
+site_was_user: ansible
+site_was_group: ansible
+site_jython_dirname: jython-ansible

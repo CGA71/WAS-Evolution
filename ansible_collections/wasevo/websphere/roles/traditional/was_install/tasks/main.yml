@@ -1,16 +1,301 @@
 ---
-# WAS ND binaries via imcl, with a truthful changed.
+# Job 2 of the install workflow: WebSphere Application Server for Developers.
 #
-# Scheduled for: wave 1
-# Source material: pbk_install_ibm_websphere_application_server.yml - note its changed_when: False
+# Runs only after job 1 succeeded, because imcl is what does the work here. The
+# role still checks for imcl rather than assuming it: a job template can be
+# launched on its own, and the failure should say what is missing.
 #
-# Not implemented yet. This file exists so the role is tracked, so the wave it
-# belongs to is recorded next to the code, and so a playbook that references it
-# fails with a clear message rather than a missing-role error.
+# The offering id is discovered from the repository, not hardcoded. WAS editions
+# differ only by that id - com.ibm.websphere.ND.v90,
+# com.ibm.websphere.BASE.v90, com.ibm.websphere.DEVELOPERS.v90 - and a wrong
+# guess produces an imcl error that reads like a licence problem. Asking the
+# repository is both correct and self-documenting.
 
-- name: Role not implemented yet
+- name: Resolve the model and the environment
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [was, always]
+
+- name: Installation Manager must be present
+  ansible.builtin.stat:
+    path: "{{ im_installer_cmd }}"
+  register: was_imcl
+  check_mode: false
+  tags: [was]
+
+- name: Refuse clearly when Installation Manager is missing
   ansible.builtin.fail:
     msg: >-
-      wasevo.websphere.traditional/was_install is scheduled for wave 1 and is not implemented.
-      See README section 5 to 7 for the action list of that wave.
-  when: not (allow_unimplemented_roles | default(false))
+      No imcl at {{ im_installer_cmd }}. This role installs WAS *through*
+      Installation Manager, so job 1 of the workflow has to succeed first. Run
+      it, or run the installation_manager role before this one.
+  when: not was_imcl.stat.exists
+  tags: [was]
+
+# ---------------------------------------------------------------------------
+# What is already installed?
+# ---------------------------------------------------------------------------
+
+- name: List the installed packages
+  ansible.builtin.command:
+    cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+  register: was_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+  tags: [was]
+
+- name: Report what is installed
+  ansible.builtin.debug:
+    msg: "{{ was_installed.stdout_lines | default(['(nothing)']) }}"
+  tags: [was]
+
+# ---------------------------------------------------------------------------
+# The repository. This is where a run stops if the media is not staged.
+# ---------------------------------------------------------------------------
+
+- name: Look for a repository descriptor in the media directory
+  ansible.builtin.find:
+    paths: "{{ was_media_dir }}"
+    patterns: "repository.config,repository.xml"
+    recurse: true
+    file_type: file
+  register: was_repo_files
+  check_mode: false
+  tags: [was]
+
+- name: Refuse clearly when the WAS repository is missing
+  ansible.builtin.fail:
+    msg: |
+      No Installation Manager repository under {{ was_media_dir }} on
+      {{ inventory_hostname }} - no repository.config was found.
+
+      This media cannot be fetched automatically. WebSphere Application Server
+      for Developers is free for development use, but the download requires an
+      IBMid and acceptance of the ILAN licence, so there is no URL a playbook
+      can pull.
+
+      Download "WebSphere Application Server for Developers" V9.0 from IBM,
+      unzip every part into one directory, and place it here:
+
+          {{ was_media_dir }}/
+
+      The unpacked tree carries a repository.config at its root. That file is
+      what this role looks for; the archive names do not matter.
+
+      If what you have is a .zip rather than an unpacked tree, unzip it in
+      place - Installation Manager reads a directory, not an archive.
+  when: was_repo_files.matched == 0
+  tags: [was]
+
+- name: Use the shallowest repository descriptor found
+  ansible.builtin.set_fact:
+    # A WAS download unpacked into one directory has repository.config at its
+    # root; nested ones belong to sub-offerings. The shortest path is the root.
+    was_repository: >-
+      {{ (was_repo_files.files | map(attribute='path')
+          | sort(attribute='__len__') | first) | dirname }}
+  tags: [was]
+
+# ---------------------------------------------------------------------------
+# Discover the offering ids
+# ---------------------------------------------------------------------------
+
+- name: Ask the repository what it contains
+  ansible.builtin.command:
+    cmd: >-
+      {{ im_installer_cmd }} listAvailablePackages
+      -repositories {{ was_repository }}
+      -long
+  register: was_available
+  changed_when: false
+  check_mode: false
+  become: true
+  tags: [was]
+
+- name: Show the offerings the repository advertises
+  ansible.builtin.debug:
+    msg: "{{ was_available.stdout_lines }}"
+  tags: [was]
+
+- name: Pick the WAS offering
+  ansible.builtin.set_fact:
+    was_offering: >-
+      {{ was_package_id if (was_package_id | length > 0)
+         else (_candidates | first | default('')) }}
+    was_offering_candidates: "{{ _candidates }}"
+  vars:
+    _candidates: >-
+      {{ was_available.stdout_lines | map('trim')
+         | select('search', '^' ~ (was_package_filter | regex_escape)) | list }}
+  tags: [was]
+
+- name: Refuse when no WAS offering is advertised
+  ansible.builtin.fail:
+    msg: >-
+      The repository at {{ was_repository }} advertises no package starting
+      with {{ was_package_filter }}. What it does advertise is listed above. If
+      this is a fix pack repository rather than a base install repository, it
+      belongs to the was_fixpack role.
+  when: was_offering | length == 0
+  tags: [was]
+
+- name: Refuse when the choice is ambiguous rather than guessing
+  ansible.builtin.fail:
+    msg: >-
+      The repository advertises {{ was_offering_candidates | length }} WAS
+      offerings: {{ was_offering_candidates | join(', ') }}. Set
+      was_package_id to the one you want. Choosing here would risk installing
+      a different edition than intended, and the editions differ only by this
+      id.
+  when:
+    - was_package_id | length == 0
+    - was_offering_candidates | length > 1
+  tags: [was]
+
+- name: Pick the SDK offering from the same repository
+  ansible.builtin.set_fact:
+    was_sdk_offering: >-
+      {{ (was_available.stdout_lines | map('trim')
+          | select('search', '^' ~ (was_sdk_package_filter | regex_escape))
+          | list | first) | default('', true) }}
+  when: was_install_sdk
+  tags: [was]
+
+- name: Decide whether an install is needed
+  ansible.builtin.set_fact:
+    # Compare on the offering id without its build timestamp: the advertised id
+    # carries one, and an installed package reports the same stem.
+    was_needs_install: >-
+      {{ (was_offering | regex_replace('_.*$', ''))
+         not in (was_installed.stdout | default('')) }}
+  tags: [was]
+
+- name: Report the decision
+  ansible.builtin.debug:
+    msg:
+      - "repository : {{ was_repository }}"
+      - "offering   : {{ was_offering }}"
+      - "sdk        : {{ was_sdk_offering | default('(not installing)') }}"
+      - "decision   : {{ 'install' if was_needs_install else 'already installed, nothing to do' }}"
+  tags: [was]
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+
+- name: Install
+  when: was_needs_install
+  tags: [was]
+  block:
+
+    - name: Create the target directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "0755"
+      loop:
+        - "{{ was_home }}"
+        - "{{ im_shared_resources_dir }}"
+        - "{{ was_profiles_base_dir }}"
+        - "{{ im_install_log_dir }}"
+      become: true
+
+    - name: Remove lost+found from the target directories
+      # A filesystem mounted straight onto the installation directory carries a
+      # lost+found, and imcl refuses a non-empty target. The legacy playbook
+      # deleted these for the same reason.
+      ansible.builtin.file:
+        path: "{{ item }}/lost+found"
+        state: absent
+      loop:
+        - "{{ was_home }}"
+        - "{{ im_shared_resources_dir }}"
+      become: true
+
+    - name: Install WAS for Developers through Installation Manager
+      ansible.builtin.command:
+        cmd: >-
+          {{ im_installer_cmd }} install
+          {{ was_offering }}
+          {{ was_sdk_offering if (was_install_sdk and (was_sdk_offering | length > 0)) else '' }}
+          -repositories {{ was_repository }}
+          -installationDirectory {{ was_home }}
+          -sharedResourcesDirectory {{ im_shared_resources_dir }}
+          -dataLocation {{ im_data_dir }}
+          -log {{ im_install_log_dir }}/install_was.log
+          -acceptLicense
+          -nl {{ im_install_locale }}
+        creates: "{{ was_manageprofiles_cmd }}"
+      become: true
+      # An Installation Manager run of this size takes minutes. Async with a
+      # long deadline, so a connection hiccup does not kill it halfway and
+      # leave a partial install to clean up by hand.
+      async: 3600
+      poll: 15
+      register: was_install_run
+
+    - name: Show the tail of the installer output
+      ansible.builtin.debug:
+        msg: "{{ (was_install_run.stdout_lines | default([]))[-20:] }}"
+
+# ---------------------------------------------------------------------------
+# Verify on every run
+# ---------------------------------------------------------------------------
+
+- name: List the installed packages again
+  ansible.builtin.command:
+    cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+  register: was_verify
+  changed_when: false
+  check_mode: false
+  become: true
+  tags: [was, verify]
+
+- name: The expected level must be installed
+  ansible.builtin.assert:
+    that:
+      - was_expected_version in was_verify.stdout
+    fail_msg: >-
+      Installation Manager does not report {{ was_expected_version }} as
+      installed. What it reports is:
+      {{ was_verify.stdout_lines | default([]) | join(' | ') }}
+    success_msg: "{{ was_expected_version }} is installed"
+  tags: [was, verify]
+
+- name: The command-line tools must exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: was_tools
+  loop:
+    - "{{ was_manageprofiles_cmd }}"
+    - "{{ was_managesdk_cmd }}"
+  check_mode: false
+  tags: [was, verify]
+
+- name: Report a missing tool
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      {{ item.item }} is missing. Installation Manager reported success, so the
+      install landed somewhere other than {{ was_home }} - check
+      {{ im_install_log_dir }}/install_was.log.
+  loop: "{{ was_tools.results }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+  tags: [was, verify]
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      - "host        : {{ inventory_hostname }}"
+      - "environment : {{ was_environment }} ({{ was_env_long_name }})"
+      - "offering    : {{ was_offering }}"
+      - "installed   : {{ was_home }}"
+      - "changed     : {{ was_install_run.changed | default(false) }}"
+      - "next        : create a profile, then apply the 9.0.5 fix pack"
+  tags: [was]

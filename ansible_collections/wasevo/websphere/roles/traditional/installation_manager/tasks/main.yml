@@ -1,16 +1,197 @@
 ---
-# IBM Installation Manager install and package inventory.
+# Job 1 of the install workflow: IBM Installation Manager.
 #
-# Scheduled for: wave 1
-# Source material: roles_IM_ihs/ansible_role_im
+# Nothing else can be installed until this exists, which is why it is its own
+# job rather than a block inside the WAS role: if it fails, the WAS job must
+# not start, and AWX expresses that as an on-success edge.
 #
-# Not implemented yet. This file exists so the role is tracked, so the wave it
-# belongs to is recorded next to the code, and so a playbook that references it
-# fails with a clear message rather than a missing-role error.
+# Idempotency is real, not a marker file. The role reads the installed version
+# out of imcl and installs only when imcl is absent or older than required, so
+# a replay reports changed=0 and the workflow is safe to re-run.
 
-- name: Role not implemented yet
-  ansible.builtin.fail:
+- name: Resolve the model and the environment
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [im, always]
+
+# ---------------------------------------------------------------------------
+# Is it already there?
+# ---------------------------------------------------------------------------
+
+- name: Look for an existing imcl
+  ansible.builtin.stat:
+    path: "{{ im_installer_cmd }}"
+  register: im_imcl
+  check_mode: false
+  tags: [im]
+
+- name: Read the installed Installation Manager version
+  ansible.builtin.command:
+    cmd: "{{ im_installer_cmd }} version"
+  register: im_version_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: im_imcl.stat.exists
+  tags: [im]
+
+- name: Decide whether an install is needed
+  ansible.builtin.set_fact:
+    im_installed_version: "{{ _found }}"
+    im_needs_install: >-
+      {{ (not im_imcl.stat.exists)
+         or (_found | length == 0)
+         or (_found is version(im_required_version, '<')) }}
+  vars:
+    _found: >-
+      {{ (im_version_out.stdout | default('')
+          | regex_search('Installation Manager[^0-9]*([0-9]+(\.[0-9]+)+)', '\1')
+          | first) | default('', true) }}
+  tags: [im]
+
+- name: Report what was found
+  ansible.builtin.debug:
     msg: >-
-      wasevo.websphere.traditional/installation_manager is scheduled for wave 1 and is not implemented.
-      See README section 5 to 7 for the action list of that wave.
-  when: not (allow_unimplemented_roles | default(false))
+      {{ ('Installation Manager ' ~ im_installed_version ~ ' at ' ~ im_installer_cmd)
+         if im_imcl.stat.exists
+         else ('no Installation Manager at ' ~ im_installer_cmd) }} --
+      {{ 'install required' if im_needs_install else 'nothing to do' }}
+  tags: [im]
+
+# ---------------------------------------------------------------------------
+# The media. This is where a run stops if the archive is not staged.
+# ---------------------------------------------------------------------------
+
+- name: Install
+  when: im_needs_install
+  tags: [im]
+  block:
+
+    - name: Find the Installation Manager archive
+      ansible.builtin.find:
+        paths: "{{ im_media_dir }}"
+        patterns: "{{ im_media_pattern }}"
+        file_type: file
+      register: im_archive
+      check_mode: false
+
+    - name: Refuse clearly when the archive is missing
+      ansible.builtin.fail:
+        msg: |
+          No Installation Manager archive matching {{ im_media_pattern }}
+          in {{ im_media_dir }} on {{ inventory_hostname }}.
+
+          This archive cannot be fetched automatically. IBM Installation
+          Manager is distributed from IBM Fix Central, and the download needs
+          an IBMid and acceptance of the licence, so there is no URL a
+          playbook can pull.
+
+          Download "IBM Installation Manager" for Linux x86_64, version
+          {{ im_required_version }} or later, and place the zip in:
+
+              {{ im_media_dir }}/
+
+          It is normally named something like
+          agent.installer.linux.gtk.x86_64_{{ im_required_version }}.zip,
+          but any name matching {{ im_media_pattern }} is accepted - the role
+          looks at the contents, not the name.
+      when: im_archive.matched == 0
+
+    - name: Create the unpack directory
+      ansible.builtin.file:
+        path: "{{ im_unpack_dir }}"
+        state: directory
+        mode: "0755"
+      become: true
+
+    - name: Unpack the archive
+      ansible.builtin.unarchive:
+        src: "{{ (im_archive.files | first).path }}"
+        dest: "{{ im_unpack_dir }}"
+        remote_src: true
+        creates: "{{ im_unpack_dir }}/installc"
+      become: true
+
+    - name: The installer must be present after unpacking
+      ansible.builtin.stat:
+        path: "{{ im_unpack_dir }}/installc"
+      register: im_installc
+      check_mode: false
+
+    - name: Refuse when the archive was not an Installation Manager archive
+      ansible.builtin.fail:
+        msg: >-
+          {{ (im_archive.files | first).path }} unpacked without producing
+          installc, so it is not an Installation Manager installer archive. A
+          WAS repository zip looks similar and is a common mix-up; that one
+          belongs to the was_install role, not here.
+      when: not im_installc.stat.exists
+
+    - name: Create the log directory
+      ansible.builtin.file:
+        path: "{{ im_install_log_dir }}"
+        state: directory
+        mode: "0755"
+      become: true
+
+    - name: Install Installation Manager
+      # installc is the administrator install, which is what the estate uses:
+      # the registry lands in /var/ibm and one Installation Manager serves
+      # every product on the host. userinstc would scope it to one account and
+      # quietly diverge from production.
+      ansible.builtin.command:
+        cmd: >-
+          {{ im_unpack_dir }}/installc
+          -acceptLicense
+          -installationDirectory {{ im_installer_dir }}
+          -dataLocation {{ im_data_dir }}
+          -log {{ im_install_log_dir }}/install_im.log
+          -sVP
+        creates: "{{ im_installer_cmd }}"
+      become: true
+      register: im_install
+
+    - name: Show the installer output
+      ansible.builtin.debug:
+        var: im_install.stdout_lines
+      when: im_install.stdout_lines is defined
+
+# ---------------------------------------------------------------------------
+# Verify on every run, whether or not anything was installed
+# ---------------------------------------------------------------------------
+
+- name: Read the version back
+  ansible.builtin.command:
+    cmd: "{{ im_installer_cmd }} version"
+  register: im_verify
+  changed_when: false
+  check_mode: false
+  tags: [im, verify]
+
+- name: The installed version must meet the requirement
+  ansible.builtin.assert:
+    that:
+      - _im_found | length > 0
+      - _im_found is version(im_required_version, '>=')
+    fail_msg: >-
+      Installation Manager reports
+      {{ _im_found | default('an unreadable version') }}, below the required
+      {{ im_required_version }}. WAS 9.0 fix packs need 1.8.5 or later, so an
+      older Installation Manager fails later instead of here.
+    success_msg: "Installation Manager {{ _im_found }} >= {{ im_required_version }}"
+  vars:
+    _im_found: >-
+      {{ (im_verify.stdout
+          | regex_search('Installation Manager[^0-9]*([0-9]+(\.[0-9]+)+)', '\1')
+          | first) | default('', true) }}
+  tags: [im, verify]
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      - "host        : {{ inventory_hostname }}"
+      - "environment : {{ was_environment }} ({{ was_env_long_name }})"
+      - "imcl        : {{ im_installer_cmd }}"
+      - "version     : {{ im_verify.stdout_lines | first | default('n/a') | trim }}"
+      - "changed     : {{ im_install.changed | default(false) }}"
+  tags: [im]
