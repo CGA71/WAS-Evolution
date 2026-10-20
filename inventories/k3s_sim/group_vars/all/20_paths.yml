@@ -30,7 +30,7 @@ was_jdbc_provider_dir: "{{ was_home }}/jdbcprovider"
 
 was_profile_name: "AppSrv"
 was_profile_path: "{{ was_profiles_base_dir }}/{{ was_profile_name }}"
-was_dmgr_profile_name: "Dmgr_{{ was_env_upper }}_{{ was_channel }}"
+was_dmgr_profile_name: "Dmgr_{{ was_env_upper }}_{{ was_channel_name }}"
 was_dmgr_profile_path: "{{ was_profiles_base_dir }}/{{ was_dmgr_profile_name }}"
 
 systemd_base_dir: /usr/lib/systemd/system

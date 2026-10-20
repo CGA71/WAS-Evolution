@@ -74,20 +74,53 @@ was_channel_catalog:
     confirmed: false
 
 
-# Derived forms. Everything a template or a role needs, computed once.
+# Derived forms.
 #
-# Deliberately NOT including a was_cell_name here: the cell name is a WAS
-# object, it belongs with the product variables, and it is built from these.
-was_env: "{{ was_environment_catalog[was_environment] }}"
+# Both cases genuinely matter, which is why the source inventory carried
+# _majuscule and _minuscule pairs rather than being merely redundant:
+#
+#   UPPERCASE  cell name (Extranet_RIT), profile name (Dmgr_RIT_Extranet),
+#              shared class cache (-Xshareclasses:name=RIT%g)
+#   lowercase  directory paths, keystore paths (files/ssl/rit/extranet/),
+#              hostnames and DNS, and the inventory group a host pattern
+#              resolves to
+#
+# So both are published. What is NOT duplicated is the declaration: one input,
+# both forms derived from it.
+#
+# The input arrives from a survey answer, so its case cannot be trusted. The
+# catalogue keys are canonical - environments uppercase, channels title case -
+# and the lookup below is case-insensitive: rit, RIT and Rit all resolve, and
+# so do extranet and Extranet. Without this, a lowercase answer produces a
+# KeyError on the catalogue and nothing explains why.
 
-was_env_upper: "{{ was_environment | upper }}"
-was_env_lower: "{{ was_environment | lower }}"
-was_env_letter_upper: "{{ was_environment_catalog[was_environment].letter | upper }}"
-was_env_letter_lower: "{{ was_environment_catalog[was_environment].letter | lower }}"
-was_env_long_name: "{{ was_environment_catalog[was_environment].long_name }}"
-was_env_tier: "{{ was_environment_catalog[was_environment].tier }}"
-was_env_rank: "{{ was_environment_catalog[was_environment].rank }}"
-was_env_is_production: "{{ was_environment_catalog[was_environment].tier == 'prod' }}"
+# UPPERCASE form of each catalogue key -> the canonical key itself.
+_env_by_upper: >-
+  {{ dict(was_environment_catalog.keys() | list | map('upper') | list
+          | zip(was_environment_catalog.keys() | list)) }}
+_channel_by_upper: >-
+  {{ dict(was_channel_catalog.keys() | list | map('upper') | list
+          | zip(was_channel_catalog.keys() | list)) }}
 
-was_channel_upper: "{{ was_channel }}"
-was_channel_lower: "{{ was_channel | lower }}"
+# The canonical codes. Everything else derives from these two, never from the
+# raw input, so a difference of case cannot reach a cell name or a path.
+was_env_code: >-
+  {{ _env_by_upper[was_environment | default('') | upper] | default('', true) }}
+was_channel_code: >-
+  {{ _channel_by_upper[was_channel | default('') | upper] | default('', true) }}
+
+was_env: "{{ was_environment_catalog[was_env_code] }}"
+
+was_env_upper: "{{ was_env_code }}"
+was_env_lower: "{{ was_env_code | lower }}"
+was_env_letter_upper: "{{ was_environment_catalog[was_env_code].letter | upper }}"
+was_env_letter_lower: "{{ was_environment_catalog[was_env_code].letter | lower }}"
+was_env_long_name: "{{ was_environment_catalog[was_env_code].long_name }}"
+was_env_tier: "{{ was_environment_catalog[was_env_code].tier }}"
+was_env_rank: "{{ was_environment_catalog[was_env_code].rank }}"
+was_env_is_production: "{{ was_environment_catalog[was_env_code].tier == 'prod' }}"
+
+was_channel_upper: "{{ was_channel_code | upper }}"
+was_channel_lower: "{{ was_channel_code | lower }}"
+# Title case, the form that appears inside WAS object names.
+was_channel_name: "{{ was_channel_code }}"

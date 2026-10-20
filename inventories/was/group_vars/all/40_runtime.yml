@@ -14,9 +14,9 @@ runtime:
 
 # WAS object names, derived from the two inputs. Change was_environment at
 # launch and all of these follow.
-was_cell_name: "{{ was_channel }}_{{ was_env_upper }}"
-was_cluster_name: "Cluster{{ was_channel[:3] | upper }}"
-was_console_label: "{{ was_channel }} {{ was_env_upper }}"
+was_cell_name: "{{ was_channel_name }}_{{ was_env_upper }}"
+was_cluster_name: "Cluster{{ was_channel_name[:3] | upper }}"
+was_console_label: "{{ was_channel_name }} {{ was_env_upper }}"
 
 # Port base, offset per environment so two can share a host during a
 # migration. Overridden per environment.
