@@ -8,7 +8,10 @@
 #
 #   ansible-playbook ansible_collections/wasevo/websphere/playbooks/pilot_render_matrix.yml
 #
-# Runs entirely on localhost. Touches no cell, no cluster and no OpenShift API.
+# Runs entirely on localhost and needs no inventory: this proves the PHASE
+# matrix, which is a different axis from the environment. The environment is a
+# launch input handled by model_validate.yml; the three targets below are the
+# three phases of the trajectory.
 
 - name: Render the pilot model across the three trajectory targets
   hosts: localhost

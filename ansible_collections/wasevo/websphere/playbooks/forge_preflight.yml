@@ -1,14 +1,15 @@
 ---
-# The first node of every workflow.
+# The first node of every workflow. Verifies every declared forge dependency
+# before anything is installed.
 #
-#   ansible-playbook -i inventories/rit \
-#       ansible_collections/wasevo/websphere/playbooks/forge_preflight.yml
+#   AWX  : the Survey sets was_environment
+#   shell: ansible-playbook -i inventories/was <this> -e was_environment=RA
 #
-# Control-side only, when no target is reachable (CI, or a laptop):
+# Control side only, when no target is reachable (CI, or a laptop):
 #   ... -e forge_preflight_control_only=true
 
 - name: Verify the forge dependencies
-  hosts: "{{ forge_preflight_hosts | default('was_traditional') }}"
+  hosts: "{{ forge_preflight_hosts | default((was_environment | default('rit') | lower)) }}"
   gather_facts: false
 
   tasks:

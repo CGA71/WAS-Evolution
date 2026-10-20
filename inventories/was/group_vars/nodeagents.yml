@@ -1,0 +1,12 @@
+---
+# Node agents, in any environment. The node name carries the host and the
+# profile, as in the source inventory, but derived rather than typed.
+was_node_name: "ND{{ inventory_hostname }}{{ was_profile_name }}"
+was_service_name: wasnode
+
+# The deployment manager of this host's environment. Resolved from the
+# intersection of the environment group and the dmgr group, so adding an
+# environment needs no new wiring here.
+was_dmgr_host: >-
+  {{ (groups[was_environment | lower] | intersect(groups['dmgr']) | first)
+     ~ '.' ~ site_dns_domain }}

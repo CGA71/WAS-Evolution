@@ -1,0 +1,5 @@
+---
+# Hostnames are built from the short name and the site domain, so the
+# inventory lists short names only and no environment repeats the domain.
+ansible_host: "{{ inventory_hostname }}.{{ site_dns_domain }}"
+ansible_user: "{{ site_was_user }}"

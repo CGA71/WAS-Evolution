@@ -1,13 +1,21 @@
 ---
-# Resolved by AAP at project sync time during development.
-# For production these are baked into the Execution Environment image.
+# Resolved by AWX at project sync, and by the CI jobs. In production these are
+# baked into the Execution Environment image.
+#
+# This is the single source of truth for collections: forge_preflight checks
+# the ones it declares against what is installed, and a job that installs a
+# hand-picked subset fails that check. The pipeline learned this the hard way.
 collections:
-  # ee-liberty-ocp
+  # Liberty / OpenShift plane
   - name: kubernetes.core
     version: ">=3.0.0"
-  - name: redhat.openshift
-    version: ">=2.3.0"
-  # both EEs
+  # community.okd, not redhat.openshift: the latter is a Red Hat certified
+  # collection published on Automation Hub, not on galaxy.ansible.com, so
+  # ansible-galaxy cannot resolve it at all without a Hub token. community.okd
+  # is the Galaxy equivalent of the same OpenShift modules.
+  - name: community.okd
+    version: ">=2.0.0"
+  # both planes
   - name: ansible.posix
     version: ">=1.5.4"
   - name: community.general

@@ -103,7 +103,7 @@ ansible_collections/wasevo/websphere/
       deploy/                    CRD + ConfigMap + Secret via kubernetes.core
       verify/                    k8s_info + smoke test
   playbooks/
-inventories/                     all-YAML inventories
+inventories/                     one all-YAML inventory; the environment is an input
 model/                           the shared declarative model
 docs/                            architecture and per-phase notes
 ```
@@ -299,6 +299,8 @@ Official WebSphere Liberty images on `icr.io/appcafe` ship **IBM Semeru Runtime,
 ## 11. Running it
 
 ```bash
+COL=ansible_collections/wasevo/websphere/playbooks
+
 # install dependencies
 ansible-galaxy collection install -r collections/requirements.yml
 
@@ -308,8 +310,14 @@ ansible-playbook playbooks/model_validate.yml
 # render the pilot datasource in all three trajectory couples
 ansible-playbook playbooks/pilot_render_matrix.yml
 
-# traditional plane, dry run first
-ansible-playbook -i inventories/example playbooks/traditional_config.yml --check --diff
+# validate one environment - the environment is a launch input, not a directory
+ansible-playbook -i inventories/was $COL/model_validate.yml -e was_environment=RA
+
+# traditional plane, dry run first - always
+ansible-playbook -i inventories/was $COL/traditional_config.yml   -e was_environment=RIT --check --diff
+
+# In AWX none of these flags are typed: the Survey asks for the environment,
+# the channel and the production acknowledgement.
 ```
 
 ### Execution Environments
@@ -547,7 +555,7 @@ ansible_collections/wasevo/websphere/
       deploy/                    CRD + ConfigMap + Secret via kubernetes.core
       verify/                    k8s_info + test de fumee
   playbooks/
-inventories/                     inventaires tout YAML
+inventories/                     un inventaire tout YAML ; l environnement est une entree
 model/                           le modele declaratif partage
 docs/                            architecture et notes par phase
 ```
@@ -743,6 +751,8 @@ Les images officielles WebSphere Liberty sur `icr.io/appcafe` embarquent **IBM S
 ## 11. Exécution
 
 ```bash
+COL=ansible_collections/wasevo/websphere/playbooks
+
 # installer les dependances
 ansible-galaxy collection install -r collections/requirements.yml
 
@@ -753,7 +763,7 @@ ansible-playbook playbooks/model_validate.yml
 ansible-playbook playbooks/pilot_render_matrix.yml
 
 # plan traditionnel, a blanc d'abord
-ansible-playbook -i inventories/example playbooks/traditional_config.yml --check --diff
+ansible-playbook -i inventories/was $COL/traditional_config.yml -e was_environment=RIT --check --diff
 ```
 
 ### Execution Environments

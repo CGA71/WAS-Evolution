@@ -1,0 +1,83 @@
+---
+# IBM installation artefacts, common baseline.
+#
+# One dictionary instead of the twenty flat *_package_name / *_package_dir /
+# verifVersion* variables the source inventory carried, for two reasons.
+#
+#  1. A missing field becomes detectable. The source inventory shipped
+#     "verifVersionSdk:" with no value, so it was None and every reference
+#     rendered the string "None" - and with shell: and no validation, nothing
+#     ever reported it. The model role asserts a non-empty verify_version per
+#     artefact.
+#
+#  2. Fixpack levels legitimately differ between environments during a
+#     rollout. An environment that is behind overrides the entry it needs in
+#     its own group_vars/<env>.yml, and only that entry - see prd.yml.
+
+_ibm_repo: "{{ was_install_binaries_base_dir }}/IBM"
+
+was_ibm_artifacts_common:
+
+  installation_manager:
+    shortname: com.ibm.installation.manager
+    repository: "{{ _ibm_repo }}/install_im"
+    verify_version: "1.9.2"
+
+  was_nd:
+    shortname: com.ibm.websphere.ND.v90
+    package: com.ibm.websphere.ND.v90_9.0.0.20160526_1854
+    repository: "{{ _ibm_repo }}/install_was90/was90"
+    verify_version: "9.0.0.0"
+
+  was_sdk:
+    shortname: com.ibm.java.jdk.v8
+    package: com.ibm.java.jdk.v8
+    repository: "{{ _ibm_repo }}/install_was90/sdk80"
+    verify_version: "8.0.0.0"
+
+  was_nd_fixpack:
+    shortname: com.ibm.websphere.ND.v90
+    package: com.ibm.websphere.ND.v90_9.0.9.20180906_1004
+    repository: "{{ _ibm_repo }}/install_was90/fixes/9.0.0-WS-WAS-FP009"
+    verify_version: "9.0.0.9"
+
+  was_sdk_fixpack:
+    shortname: com.ibm.java.jdk.v8
+    package: com.ibm.java.jdk.v8_8.0.5021.20180907_0953
+    repository: "{{ _ibm_repo }}/install_was90/fixes/sdk-8.0-5.21"
+    # The one the source inventory left empty.
+    verify_version: "8.0.5021"
+
+  ihs:
+    shortname: com.ibm.websphere.IHS
+    package: com.ibm.websphere.IHS.v90_9.0.0.20160526_1854
+    repository: "{{ _ibm_repo }}/install_was90/ihs"
+    verify_version: "9.0.0.0"
+
+  ihs_fixpack:
+    shortname: com.ibm.websphere.IHS
+    package: com.ibm.websphere.IHS.v90_9.0.9.20180906_1004
+    repository: "{{ _ibm_repo }}/install_was90/fixes/9.0.0-WS-IHSPLG-FP009"
+    verify_version: "9.0.0.9"
+
+  was_plugin:
+    shortname: com.ibm.websphere.PLG
+    package: com.ibm.websphere.PLG.v90_9.0.0.20160526_1854
+    repository: "{{ _ibm_repo }}/install_was90/plugins"
+    verify_version: "9.0.0.0"
+
+  was_plugin_fixpack:
+    shortname: com.ibm.websphere.PLG
+    package: com.ibm.websphere.PLG.v90_9.0.9.20180906_1004
+    repository: "{{ _ibm_repo }}/install_was90/fixes/9.0.0-WS-IHSPLG-FP009"
+    verify_version: "9.0.0.9"
+
+# The effective set: the common baseline, with any per-environment overrides
+# merged on top. An environment that is behind on a fixpack therefore declares
+# only the entry that differs.
+was_ibm_artifacts: >-
+  {{ was_ibm_artifacts_common
+     | combine(was_ibm_artifacts_override | default({}), recursive=True) }}
+
+im_install_locale: fr
+im_accept_license: true

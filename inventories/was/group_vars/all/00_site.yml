@@ -1,0 +1,20 @@
+---
+# Site-wide facts. One copy, for every environment.
+#
+# The earlier shape had four inventory directories, so this file existed four
+# times and a CI job compared their checksums to catch drift. With one
+# inventory the drift cannot happen, and that job is gone.
+
+site_dns_domain: example.internal
+
+# Share holding the IBM installers, mounted at was_install_binaries_base_dir.
+# Credentials for it come from an AWX Credential, never from here.
+site_binaries_repository: "//fileserver/ISO"
+site_binaries_repository_type: cifs
+
+site_timezone: Europe/Paris
+
+site_was_user: wsadmin
+site_was_group: wsadmin
+
+site_jython_dirname: jython-ansible

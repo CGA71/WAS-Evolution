@@ -29,7 +29,10 @@ forge_collections:
   liberty_more: []
   liberty_ocp:
     - { name: kubernetes.core, version: ">=3.0.0" }
-    - { name: redhat.openshift, version: ">=2.3.0" }
+    # Not redhat.openshift: that one is certified and lives on Automation
+    # Hub, not Galaxy, so ansible-galaxy cannot resolve it without a Hub
+    # token. community.okd is the Galaxy equivalent.
+    - { name: community.okd, version: ">=2.0.0" }
 
 # Python packages that must be importable in the Execution Environment.
 forge_python_packages:
