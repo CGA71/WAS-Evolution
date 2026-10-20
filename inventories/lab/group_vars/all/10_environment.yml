@@ -1,3 +1,17 @@
 ---
-was_environment: RIT
+# No default on purpose.
+#
+# The environment is an answer to the workflow survey question "Give an
+# environment", not a value baked into an inventory. Leaving a default here
+# would mean a run with no answer silently builds RIT, which is exactly the
+# confusion this removes.
+#
+# The model role refuses to continue when was_environment is undefined and
+# says where it is meant to come from.
+#
+#   AWX  : workflow survey, "Give an environment"
+#   shell: ansible-playbook ... -e was_environment=RA
+
+# The channel keeps a default: it is a second, independent input and the lab
+# only ever exercises one.
 was_channel: Extranet

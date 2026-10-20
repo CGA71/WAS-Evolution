@@ -93,11 +93,15 @@ forge_os_packages:
 # Kernel and shell limits the legacy repository deployed as files into
 # /etc/security/limits.d/. Declared as data so AIX can be given its own
 # equivalent rather than silently inheriting Linux values.
+# site_was_user, not was_admin_user: these are two different things that I had
+# conflated. site_was_user is the OS account that owns the installation and
+# runs the processes; was_admin_user is the WAS administrative console user,
+# which has no OS existence at all and comes from a credential.
 forge_limits:
-  - { domain: "{{ was_admin_user }}", type: soft, item: nofile, value: 65536 }
-  - { domain: "{{ was_admin_user }}", type: hard, item: nofile, value: 65536 }
-  - { domain: "{{ was_admin_user }}", type: soft, item: nproc, value: 16384 }
-  - { domain: "{{ was_admin_user }}", type: hard, item: nproc, value: 16384 }
+  - { domain: "{{ site_was_user }}", type: soft, item: nofile, value: 65536 }
+  - { domain: "{{ site_was_user }}", type: hard, item: nofile, value: 65536 }
+  - { domain: "{{ site_was_user }}", type: soft, item: nproc, value: 16384 }
+  - { domain: "{{ site_was_user }}", type: hard, item: nproc, value: 16384 }
 
 # Directories that must exist before any install step. Derived from the paths
 # declared in the inventory, so changing a base path moves all of them.
