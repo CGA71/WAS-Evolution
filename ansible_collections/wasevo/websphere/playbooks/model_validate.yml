@@ -1,23 +1,56 @@
 ---
-# The first gate. Validates the model against the environment catalogue, the
-# product x JDK matrix and the JVM intent table, without touching anything.
+# The first gate. Validates the model without touching anything.
 #
-#   ansible-playbook -i inventories/was \
-#       ansible_collections/wasevo/websphere/playbooks/model_validate.yml \
-#       -e was_environment=RA
+#   AWX  : the survey question "Give an environment"
+#   shell: ansible-playbook -i inventories/was \
+#            ansible_collections/wasevo/websphere/playbooks/model_validate.yml \
+#            -e was_environment=RA
 #
-# Run this in CI for every environment: an invalid combination is rejected
-# here rather than discovered halfway through a deployment.
+# Two plays on purpose.
 #
-# It runs on localhost but reads the inventory, so the environment group vars
-# are the ones that will actually apply at run time.
+# The environment has to be validated BEFORE a host pattern is built from it.
+# This playbook used to be one play targeting "{{ was_environment | lower }}",
+# so an unknown environment produced an empty pattern, matched no hosts, and
+# the run SUCCEEDED having validated nothing. An unknown code has to fail, not
+# evaporate.
 
-- name: Validate the model for one environment
-  hosts: "{{ was_environment | default('rit') | lower }}"
-  gather_facts: false
-  # One host is enough: the model is per environment, not per host.
-  run_once: true
+- name: Resolve and validate the environment
+  hosts: localhost
   connection: local
+  gather_facts: false
+
+  tasks:
+    # Needs no host and no group_vars: the catalogue lives in the role.
+    - name: Validate the environment and the channel
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+        tasks_from: environment.yml
+
+    - name: The inventory must contain hosts for this environment
+      ansible.builtin.assert:
+        that:
+          - was_env_lower in groups
+          - groups[was_env_lower] | default([]) | length > 0
+        fail_msg: >-
+          {{ was_environment }} resolves to {{ was_env_code }}, which is a
+          valid code, but this inventory has no group "{{ was_env_lower }}"
+          with hosts in it. Groups present:
+          {{ groups.keys() | reject('in', ['all', 'ungrouped']) | list | join(', ') }}.
+          Either the wrong inventory is selected, or the hosts for this
+          environment have not been declared.
+        success_msg: >-
+          {{ was_env_code }}: {{ groups[was_env_lower] | length }} host(s) -
+          {{ groups[was_env_lower] | default([]) | join(', ') }}
+      when: model_require_hosts | default(true)
+
+# The rest of the model - runtime, the product x JDK matrix, the JVM intents,
+# the artefact versions - lives in the environment's group_vars, so it can only
+# be validated from a host that belongs to that group.
+- name: Validate the model for the chosen environment
+  hosts: "{{ was_environment | lower }}"
+  gather_facts: false
+  connection: local
+  run_once: true
 
   tasks:
     - name: Validate
