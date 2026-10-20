@@ -1,0 +1,137 @@
+---
+# JVM intent translation table.
+#
+# The model never stores a frozen JVM option string. It stores *intents*, which
+# this table renders for the target (vm implementation, Java version, and
+# whether the target is a container).
+#
+# Why this file exists: the legacy tuning in grp_was_90_ClusterEXT.yml is
+# heavily J9-specific. On Semeru/OpenJ9 21 almost all of it survives; on
+# HotSpot none of it does -- the JVM either refuses to start on an unknown -X
+# or silently drops GC logging, which is worse. Carrying one frozen string
+# across the trajectory is therefore not an option.
+#
+# Rendering rules:
+#   flag        a printf-style template, %s receives the intent value
+#   map         a value -> flag lookup, for intents with no 1:1 equivalent
+#   null        not expressible on that VM; see jvm_unsupported below
+#   container   an override applied when runtime.product == liberty_ocp
+
+jvm_intents:
+
+  headless:
+    openj9: { flag: "-Djava.awt.headless=true" }
+    hotspot: { flag: "-Djava.awt.headless=true" }
+
+  prefer_ipv4:
+    openj9: { flag: "-Djava.net.preferIPv4Stack=true" }
+    hotspot: { flag: "-Djava.net.preferIPv4Stack=true" }
+
+  gc_policy:
+    openj9: { flag: "-Xgcpolicy:%s" }
+    hotspot:
+      map:
+        balanced: "-XX:+UseG1GC"
+        gencon: "-XX:+UseParallelGC"
+        optthruput: "-XX:+UseParallelGC"
+
+  nursery_min:
+    openj9: { flag: "-Xmns%s" }
+    hotspot: { flag: "-XX:NewSize=%s" }
+
+  nursery_max:
+    openj9: { flag: "-Xmnx%s" }
+    hotspot: { flag: "-XX:MaxNewSize=%s" }
+
+  heap_min:
+    openj9: { flag: "-Xms%s" }
+    hotspot: { flag: "-Xms%s" }
+    # A fixed -Xms/-Xmx against a pod memory limit is a guaranteed OOMKilled.
+    container: forbid
+
+  heap_max:
+    openj9: { flag: "-Xmx%s" }
+    hotspot: { flag: "-Xmx%s" }
+    container: forbid
+
+  heap_percent:
+    openj9: { flag: "-XX:MaxRAMPercentage=%s" }
+    hotspot: { flag: "-XX:MaxRAMPercentage=%s" }
+    # The container-safe way to express the same intent as heap_max.
+    container: require
+
+  disable_explicit_gc:
+    openj9: { flag: "-Xdisableexplicitgc" }
+    hotspot: { flag: "-XX:+DisableExplicitGC" }
+
+  shared_classes:
+    openj9: { flag: "-Xshareclasses:name=%s,groupAccess,nonFatal" }
+    hotspot: { flag: null }
+    # In a container the cache must live on a volume or it is rebuilt on every
+    # start, which costs more than it saves.
+    container: needs_volume
+
+  gc_log:
+    openj9: { flag: "-Xverbosegclog:%s,5,18000" }
+    hotspot: { flag: "-Xlog:gc*:file=%s" }
+    # A path inside the container filesystem is lost on restart.
+    container: needs_volume
+
+  ldap_read_timeout:
+    openj9: { flag: "-Dcom.sun.jndi.ldap.read.timeout=%s" }
+    hotspot: { flag: "-Dcom.sun.jndi.ldap.read.timeout=%s" }
+
+
+# Intents that have no Liberty equivalent at all. These are not translation
+# failures, they are functional gaps: the capability has to be replaced, not
+# ported. The model role refuses them for a Liberty target and names the
+# replacement rather than dropping them silently.
+jvm_unsupported:
+
+  pmi_profiler:
+    legacy_flag: "-XrunpmiJvmtiProfiler"
+    products: [liberty_more, liberty_ocp]
+    reason: >-
+      PMI does not exist on Liberty.
+    replacement: >-
+      Enable the monitor-1.0 feature and expose MicroProfile Metrics; scrape
+      with Prometheus. This must be ready in wave 3, when Liberty arrives,
+      not in phase 3.
+
+  jmx_fixed_port:
+    legacy_flag: "-Dcom.sun.management.jmxremote.port=%s"
+    products: [liberty_ocp]
+    reason: >-
+      A fixed JMX port per JVM has no meaning once the unit of deployment is a
+      Deployment with replicas.
+    replacement: >-
+      Use the metrics endpoint and the operator Dump/Trace custom resources.
+
+
+# IBM environment variables, which are OpenJ9 constructs. On Liberty they move
+# from a wsadmin property to the server.env file; in a container the target
+# directories must be a persistent volume or the operator Dump CR.
+jvm_env_intents:
+
+  heapdump_dir:
+    openj9: { var: IBM_HEAPDUMPDIR }
+    hotspot: { flag: "-XX:HeapDumpPath=%s" }
+    container: needs_volume
+
+  javacore_dir:
+    openj9: { var: IBM_JAVACOREDIR }
+    hotspot: { flag: null }
+    container: needs_volume
+
+  core_dir:
+    openj9: { var: IBM_COREDIR }
+    hotspot: { flag: null }
+    container: needs_volume
+
+  dump_on_oom:
+    openj9: { var: IBM_HEAPDUMP_OUTOFMEMORY, value: "true" }
+    hotspot: { flag: "-XX:+HeapDumpOnOutOfMemoryError" }
+
+  javadump_on_oom:
+    openj9: { var: IBM_JAVADUMP_OUTOFMEMORY, value: "true" }
+    hotspot: { flag: "-XX:+HeapDumpOnOutOfMemoryError" }

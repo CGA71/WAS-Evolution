@@ -1,0 +1,27 @@
+---
+# Step 1 of 2. The operator and its CRDs only.
+#
+# The AWX CR is applied separately, from ../instance, because applying both in
+# one kustomization is a race: the CR is rejected with "no matches for kind AWX"
+# when the API server has not finished establishing the CRD yet.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Pinned. Never ref=devel: an operator that upgrades itself on the next apply
+  # will migrate the database underneath you.
+  - https://github.com/ansible/awx-operator/config/default?ref=2.19.1
+
+namespace: awx
+
+images:
+  - name: quay.io/ansible/awx-operator
+    newTag: 2.19.1
+
+  # gcr.io/kubebuilder/kube-rbac-proxy was retired by Google - the repository
+  # is gone, not just the tag, so the operator pod sits in ImagePullBackOff out
+  # of the box. brancz/kube-rbac-proxy is the upstream home of the same
+  # component. Pinned one release behind latest.
+  - name: gcr.io/kubebuilder/kube-rbac-proxy
+    newName: quay.io/brancz/kube-rbac-proxy
+    newTag: v0.22.1

@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: traditional_server_member
+  description: "Application server creation as a cluster member."
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+dependencies: []

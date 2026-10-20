@@ -1,0 +1,88 @@
+---
+# The shared model - the ~40% that is genuinely common to both planes.
+#
+# This file knows nothing about wsadmin, nothing about Kubernetes, and nothing
+# about which JDK will run it. That is the point: the traditional back-end
+# turns these declarations into module arguments for wsadmin, the Liberty
+# back-end turns them into server.xml fragments, and neither leaks back here.
+#
+# Taken from the real values in the source repository
+# (inventories/.../group_vars/grp_was_90_ClusterEXT.yml) so the pilot proves
+# the model against production tuning rather than a toy example.
+
+# --- the pilot object -------------------------------------------------------
+# Declared ONCE. Rendered three ways by playbooks/pilot_render_matrix.yml.
+# If a single datasource and a single heap setting do not survive all three
+# renders, layer 1 does not hold - and we find out in wave 0 rather than
+# thirty modules later.
+
+datasources:
+  - name: as400Extranet
+    jndi_name: jdbc/as400/extranet
+    vendor: db2
+    driver_dir: /app/binaries/was90/jdbcprovider
+    driver_jar: jt400.jar
+    auth_alias: as400ExtranetAlias
+    transactional: "true"
+    statement_cache_size: 20
+    properties:
+      databaseName: EXTRANET
+      serverName: as400.example.internal
+    pool:
+      maxPoolSize: 30
+      minPoolSize: 5
+      connectionTimeout: 30s
+      reapTime: 180s
+      maxIdleTime: 1800s
+
+j2c_aliases:
+  - name: as400ExtranetAlias
+    user: wsextranet
+    # Name only. The value arrives at deploy time from an AAP Credential or an
+    # OpenShift Secret; it is never written into a versioned file.
+    password_env: AS400_EXTRANET_PASSWORD
+
+secret_env_names:
+  - AS400_EXTRANET_PASSWORD
+
+shared_libraries:
+  - name: appCommonLibrary
+    dir: /app/binaries/shared
+    includes: "*.jar"
+
+# --- JVM intents, not flags -------------------------------------------------
+# The legacy was_generic_jvm_arguments string is replaced by intents. Compare:
+#
+#   -Djava.awt.headless=true -Xgcpolicy:balanced -Xmns100M -Xmnx200M
+#   -Xshareclasses:name=RIT%g,groupAccess,nonFatal -Xdisableexplicitgc
+#   -Xverbosegclog:${SERVER_LOG_ROOT}/verbosegc,5,18000
+#   -Djava.net.preferIPv4Stack=true -Dcom.sun.jndi.ldap.read.timeout=40000
+#
+# Every one of those is OpenJ9-specific except the three -D flags. Carried as a
+# string, it breaks on HotSpot and it breaks in a container. Carried as intents,
+# it is translated per target.
+
+jvm:
+  headless: true
+  prefer_ipv4: true
+  gc_policy: balanced
+  nursery_min: 100M
+  nursery_max: 200M
+  disable_explicit_gc: true
+  shared_classes: "RIT%g"
+  gc_log: "${SERVER_LOG_ROOT}/verbosegc"
+  ldap_read_timeout: 40000
+  # heap_min / heap_max are declared per target, because a container must use
+  # heap_percent instead and the model role refuses the fixed form there.
+
+jvm_env:
+  heapdump_dir: /app/dump/was
+  javacore_dir: /app/dump/was
+  core_dir: /app/dump/was
+  dump_on_oom: true
+
+applications:
+  - name: extranet-pilot
+    location: extranet-pilot.war
+    type: war
+    context_root: /extranet

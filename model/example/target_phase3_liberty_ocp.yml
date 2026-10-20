@@ -1,0 +1,39 @@
+---
+# Phase 3 target: the same Liberty configuration and the same JDK, now an
+# immutable image on OpenShift.
+runtime:
+  product: liberty_ocp
+  jdk:
+    version: 21
+    vm: openj9
+
+server_name: extranetServer
+
+liberty_image:
+  registry: icr.io/appcafe
+  repository: websphere-liberty
+  tag: kernel-java21-openj9-ubi-minimal
+
+liberty_features:
+  - javaee-8.0
+  - monitor-1.0
+
+jvm:
+  # No heap_min / heap_max: the model role refuses the fixed form for a
+  # container target, because a fixed heap against a pod memory limit is a
+  # guaranteed OOMKilled.
+  heap_percent: 75
+
+openshift:
+  namespace: extranet-rit
+  replicas: 2
+  resources:
+    requests: { memory: 1Gi, cpu: 500m }
+    limits: { memory: 2Gi, cpu: "2" }
+  route:
+    host: extranet-rit.apps.example.internal
+    tls: edge
+  dumps:
+    # In a pod a dump written to the container filesystem dies with the pod.
+    # Either a volume, or the operator Dump custom resource. Chosen here.
+    strategy: operator_cr

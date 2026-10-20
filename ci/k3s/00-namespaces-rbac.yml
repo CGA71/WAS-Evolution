@@ -1,0 +1,138 @@
+---
+# Logical isolation for the CI simulation: one namespace for the deployment
+# manager, one for the node agents.
+#
+# Why two namespaces rather than two pods in one: the traditional plane treats
+# the DMGR and the node agents as different trust zones. The DMGR holds the
+# master configuration repository and pushes it out; a node agent receives it.
+# Giving each its own namespace means the simulation can show that separation
+# with a NetworkPolicy instead of asserting it in a comment, and it mirrors how
+# the real estate is split across hosts.
+#
+# Applied once, by a cluster administrator. The CI job does NOT create
+# namespaces: its ServiceAccount is deliberately scoped to these two and
+# nothing else, so a leaked CI token cannot reach the rest of the cluster.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: was-sim-dmgr
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/role: dmgr
+    was-evolution/purpose: ci-simulation
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: was-sim-nodeagents
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/role: nodeagents
+    was-evolution/purpose: ci-simulation
+---
+# The CI identity. It lives in the dmgr namespace and is granted rights in both
+# through two RoleBindings - namespaced Roles, never a ClusterRole, so the
+# blast radius of the token is exactly these two throwaway namespaces.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: was-sim-ci
+  namespace: was-sim-dmgr
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+---
+# Long-lived token. Kubernetes 1.24 and later stopped auto-creating these, so
+# it is declared explicitly. It is read once and stored as a masked GitLab CI
+# variable; rotating it means deleting this Secret and re-reading it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: was-sim-ci-token
+  namespace: was-sim-dmgr
+  annotations:
+    kubernetes.io/service-account.name: was-sim-ci
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: was-sim-ci
+  namespace: was-sim-dmgr
+rules:
+  # pods/exec is the one that matters: the Ansible kubectl connection plugin
+  # runs every task through it, which is how the simulation avoids putting an
+  # sshd and a private key inside a container image.
+  - apiGroups: [""]
+    resources: [pods, pods/exec, pods/log, pods/status, configmaps, services]
+    verbs: [get, list, watch, create, delete, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: was-sim-ci
+  namespace: was-sim-nodeagents
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/exec, pods/log, pods/status, configmaps, services]
+    verbs: [get, list, watch, create, delete, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: was-sim-ci
+  namespace: was-sim-dmgr
+subjects:
+  - kind: ServiceAccount
+    name: was-sim-ci
+    namespace: was-sim-dmgr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: was-sim-ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: was-sim-ci
+  namespace: was-sim-nodeagents
+subjects:
+  - kind: ServiceAccount
+    name: was-sim-ci
+    namespace: was-sim-dmgr
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: was-sim-ci
+---
+# Default-deny, then allow only what the topology needs. The point is to make
+# the DMGR / node-agent boundary visible and testable rather than implied:
+# a node agent reaches the DMGR SOAP port, and nothing reaches a node agent
+# from outside its namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-ingress-by-default
+  namespace: was-sim-nodeagents
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-nodeagent-to-dmgr-soap
+  namespace: was-sim-dmgr
+spec:
+  podSelector:
+    matchLabels:
+      was-evolution/role: dmgr
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              was-evolution/role: nodeagents
+      ports:
+        - protocol: TCP
+          port: 8879

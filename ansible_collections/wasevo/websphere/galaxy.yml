@@ -1,0 +1,26 @@
+---
+namespace: wasevo
+name: websphere
+version: 0.1.0
+readme: README.md
+authors:
+  - neo
+description: >-
+  Ansible automation for IBM WebSphere Application Server ND (traditional) and
+  WebSphere Liberty, covering the three-phase trajectory to OpenShift.
+license:
+  - GPL-3.0-or-later
+tags:
+  - websphere
+  - was
+  - liberty
+  - openshift
+  - ibm
+  - middleware
+dependencies:
+  kubernetes.core: ">=3.0.0"
+  ansible.posix: ">=1.5.4"
+repository: https://github.com/CGA71/WAS-Evolution
+build_ignore:
+  - .git
+  - "*.tar.gz"

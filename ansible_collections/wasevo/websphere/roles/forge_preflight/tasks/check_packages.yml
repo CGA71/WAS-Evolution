@@ -1,0 +1,39 @@
+---
+# Package presence, per OS family.
+#
+# Read-only: the preflight reports, prereqs_os installs. Mixing the two is how
+# a verification job quietly becomes a deployment job.
+
+- name: Query the package facts
+  ansible.builtin.package_facts:
+    manager: auto
+  check_mode: false
+
+- name: Required packages must be installed
+  ansible.builtin.assert:
+    that:
+      - item in ansible_facts.packages
+    fail_msg: >-
+      Package {{ item }} is missing on {{ inventory_hostname }}.
+      {{ "psmisc provides killall, which manageprofiles needs - the legacy "
+         "playbook installed it as its last task, after the profiles that "
+         "depend on it." if item == "psmisc" else "" }}
+      Run the prereqs_os role, which installs it rather than just reporting it.
+    success_msg: "{{ item }} present"
+  loop: "{{ forge_os_packages[ansible_facts.os_family] }}"
+  loop_control:
+    label: "{{ item }}"
+  when: not (was_simulation | default(false))
+
+# In the simulation the pod starts from a stock image, so the packages are
+# genuinely absent until prereqs_os runs. Reporting is still useful; failing is
+# not, because the job that installs them comes next in the pipeline.
+- name: Report missing packages without failing, in the simulation
+  ansible.builtin.debug:
+    msg: >-
+      {{ forge_os_packages[ansible_facts.os_family]
+         | reject('in', ansible_facts.packages) | list
+         | ternary('missing: ' ~ (forge_os_packages[ansible_facts.os_family]
+             | reject('in', ansible_facts.packages) | list | join(', ')),
+           'all required packages present') }}
+  when: was_simulation | default(false)

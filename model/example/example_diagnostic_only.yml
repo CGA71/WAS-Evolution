@@ -1,0 +1,25 @@
+---
+# NOT A TARGET. The wave-3 bisection step only.
+#
+# If an application does not start on Liberty + Semeru 21, re-run the SAME
+# server.xml under IBM Java 8 to tell a runtime problem apart from a JDK
+# problem. On machines only, never as an image, and abandoned as soon as the
+# diagnosis is made.
+#
+# The model role refuses this combination unless the run is deliberate:
+#   ansible-playbook ... -e model_allow_diagnostic_jdk=true
+runtime:
+  product: liberty_more
+  jdk:
+    version: 8
+    vm: j9
+
+server_name: extranetServer
+
+liberty_features:
+  - javaee-8.0
+  - monitor-1.0
+
+jvm:
+  heap_min: 2048M
+  heap_max: 2048M

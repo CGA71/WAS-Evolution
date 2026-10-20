@@ -1,0 +1,70 @@
+---
+# Render the shared model into Liberty configuration files.
+#
+# This role deliberately has NO cluster access. It runs offline, is testable
+# without OpenShift, and is the GitOps boundary: if Argo CD is adopted later,
+# this role renders and commits, the deploy role is unplugged, and nothing
+# else changes. Do not merge it with liberty/deploy.
+#
+# It is also the proof of layer 1: the same model must produce the wave 3
+# configuration (Liberty on a machine) and the wave 4 configuration (Liberty in
+# an image). If the two diverge, the defect is in the render, not in the
+# application.
+
+- name: Validate the model and resolve the JVM intents
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [render, always]
+
+- name: Create the render tree
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ config_render_dir }}"
+    - "{{ config_render_dir }}/configDropins/overrides"
+  delegate_to: localhost
+  run_once: true
+  tags: [render]
+
+- name: Render server.xml
+  ansible.builtin.template:
+    src: server.xml.j2
+    dest: "{{ config_render_dir }}/server.xml"
+    mode: "0644"
+  delegate_to: localhost
+  tags: [render]
+
+- name: Render the datasource fragment
+  ansible.builtin.template:
+    src: datasources.xml.j2
+    dest: "{{ config_render_dir }}/configDropins/overrides/datasources.xml"
+    mode: "0644"
+  delegate_to: localhost
+  when: datasources | default([]) | length > 0
+  tags: [render]
+
+- name: Render jvm.options
+  ansible.builtin.template:
+    src: jvm.options.j2
+    dest: "{{ config_render_dir }}/jvm.options"
+    mode: "0644"
+  delegate_to: localhost
+  tags: [render]
+
+- name: Render server.env
+  ansible.builtin.template:
+    src: server.env.j2
+    dest: "{{ config_render_dir }}/server.env"
+    mode: "0644"
+  delegate_to: localhost
+  tags: [render]
+
+- name: Report what was rendered
+  ansible.builtin.debug:
+    msg:
+      - "target  : {{ runtime.product }} / Java {{ runtime.jdk.version }} {{ runtime.jdk.vm }}"
+      - "written : {{ config_render_dir }}"
+      - "features: {{ liberty_features | join(', ') }}"
+  tags: [render]

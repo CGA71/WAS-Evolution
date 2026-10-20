@@ -1,0 +1,14 @@
+---
+# Resolved by AAP at project sync time during development.
+# For production these are baked into the Execution Environment image.
+collections:
+  # ee-liberty-ocp
+  - name: kubernetes.core
+    version: ">=3.0.0"
+  - name: redhat.openshift
+    version: ">=2.3.0"
+  # both EEs
+  - name: ansible.posix
+    version: ">=1.5.4"
+  - name: community.general
+    version: ">=8.0.0"

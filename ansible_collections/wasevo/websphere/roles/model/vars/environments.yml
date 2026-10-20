@@ -1,0 +1,93 @@
+---
+# Environment catalogue.
+#
+# The source inventory declared EIGHT variables for what is one fact:
+#
+#   environnement_nom_long_majuscule: "RIT"      <- same value...
+#   environnement_nom_long_minuscule: "rit"
+#   environnement_trigramme_majuscule: "RIT"     <- ...as this one, both by hand
+#   environnement_trigramme_minuscule: "rit"
+#   environnement_lettre_majuscule: "I"
+#   environnement_lettre_minuscule: "i"
+#   canal: "Extranet"
+#   canal_minuscule: "extranet"
+#
+# Two names held the same string, and six of the eight are derivable. Every one
+# of them had to be edited by hand when a new environment was created, which is
+# exactly the shape of a drift bug waiting to happen.
+#
+# Here the inventory declares ONE code -- was_environment: RIT -- and everything
+# else is looked up or computed. The same applies to the channel.
+#
+# To add an environment: add an entry here and create inventories/<code lower>/.
+# Nothing else.
+
+was_environment_catalog:
+
+  RIT:
+    long_name: "Recette Integration Technique"
+    letter: "I"
+    tier: non_prod
+    # Promotion order, used by the AAP workflow to sequence RIT -> RA -> RU -> PRD.
+    rank: 10
+    confirmed: true
+
+  RA:
+    long_name: "Recette Applicative"
+    letter: "A"
+    tier: non_prod
+    rank: 20
+    # TO CONFIRM: the source inventory only ever declared RIT, where the letter
+    # was "I". The letters below are plausible but unverified. The model role
+    # warns while confirmed is false; set it to true once checked against the
+    # naming standard.
+    confirmed: false
+
+  RU:
+    long_name: "Recette Utilisateur"
+    letter: "U"
+    tier: non_prod
+    rank: 30
+    confirmed: false
+
+  PRD:
+    long_name: "Production"
+    letter: "P"
+    tier: prod
+    rank: 90
+    confirmed: false
+
+
+# Channels. The source inventory carried canal / canal_minuscule as two hand
+# written variables; the lowercase form is derived here instead.
+was_channel_catalog:
+
+  Extranet:
+    description: "Internet-facing channel"
+    confirmed: true
+
+  Intranet:
+    description: "Internal channel"
+    # The source repository shipped keystores for Intranet_RA, Intranet_RIT and
+    # Intranet_RU, so the channel exists; its exact declarations were not in
+    # the archive that was handed over.
+    confirmed: false
+
+
+# Derived forms. Everything a template or a role needs, computed once.
+#
+# Deliberately NOT including a was_cell_name here: the cell name is a WAS
+# object, it belongs with the product variables, and it is built from these.
+was_env: "{{ was_environment_catalog[was_environment] }}"
+
+was_env_upper: "{{ was_environment | upper }}"
+was_env_lower: "{{ was_environment | lower }}"
+was_env_letter_upper: "{{ was_environment_catalog[was_environment].letter | upper }}"
+was_env_letter_lower: "{{ was_environment_catalog[was_environment].letter | lower }}"
+was_env_long_name: "{{ was_environment_catalog[was_environment].long_name }}"
+was_env_tier: "{{ was_environment_catalog[was_environment].tier }}"
+was_env_rank: "{{ was_environment_catalog[was_environment].rank }}"
+was_env_is_production: "{{ was_environment_catalog[was_environment].tier == 'prod' }}"
+
+was_channel_upper: "{{ was_channel }}"
+was_channel_lower: "{{ was_channel | lower }}"

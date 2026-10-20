@@ -1,0 +1,22 @@
+---
+# Phase 2 target: WebSphere Liberty on Semeru 21, on the SAME machines,
+# still administered from the cell through MoRE (ND >= 9.0.5.25).
+#
+# Runtime and JDK change together here because section 4 of the README leaves
+# them nowhere else to go: the traditional engine stops at Java 8, and doing
+# the JDK jump after containerisation would mean building on UBI Standard.
+runtime:
+  product: liberty_more
+  jdk:
+    version: 21
+    vm: openj9
+
+server_name: extranetServer
+
+liberty_features:
+  - javaee-8.0
+  - monitor-1.0
+
+jvm:
+  heap_min: 2048M
+  heap_max: 2048M

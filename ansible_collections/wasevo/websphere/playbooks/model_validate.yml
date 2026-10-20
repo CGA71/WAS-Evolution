@@ -1,0 +1,31 @@
+---
+# The first gate. Validates the model against the product x JDK matrix and the
+# JVM intent table without touching anything.
+#
+#   ansible-playbook ansible_collections/wasevo/websphere/playbooks/model_validate.yml \
+#       -e model_target=target_phase2_liberty_more.yml
+#
+# Run this in CI on every merge request: an invalid combination is rejected
+# here rather than discovered halfway through a deployment.
+
+- name: Validate the shared model
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    model_dir: "{{ playbook_dir }}/../../../../model/example"
+    model_target: target_phase2_liberty_more.yml
+
+  tasks:
+    - name: Load the shared model
+      ansible.builtin.include_vars:
+        file: "{{ model_dir }}/common.yml"
+
+    - name: Load the target definition
+      ansible.builtin.include_vars:
+        file: "{{ model_dir }}/{{ model_target }}"
+
+    - name: Validate
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model

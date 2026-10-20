@@ -1,0 +1,42 @@
+---
+# Wave 0 exit criterion: the layer 1 proof.
+#
+# One datasource and one heap setting, declared ONCE in model/example/common.yml,
+# rendered for all three phases of the trajectory. If the three renders do not
+# agree on the object they describe, the shared model does not hold - and we
+# learn that in a day rather than after porting thirty modules.
+#
+#   ansible-playbook ansible_collections/wasevo/websphere/playbooks/pilot_render_matrix.yml
+#
+# Runs entirely on localhost. Touches no cell, no cluster and no OpenShift API.
+
+- name: Render the pilot model across the three trajectory targets
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    model_dir: "{{ playbook_dir }}/../../../../model/example"
+    targets:
+      - { file: target_phase1_traditional.yml, label: "phase 1 - traditional + IBM Java 8" }
+      - { file: target_phase2_liberty_more.yml, label: "phase 2 - Liberty + Semeru 21" }
+      - { file: target_phase3_liberty_ocp.yml, label: "phase 3 - OpenShift + Liberty + Semeru 21" }
+
+  tasks:
+    - name: Load the shared model
+      ansible.builtin.include_vars:
+        file: "{{ model_dir }}/common.yml"
+
+    - name: Render each target in turn
+      ansible.builtin.include_tasks: tasks/render_one_target.yml
+      loop: "{{ targets }}"
+      loop_control:
+        loop_var: target
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Three targets rendered from one model."
+          - "Phase 1 goes to the traditional back-end (wsadmin module arguments)."
+          - "Phases 2 and 3 go to the Liberty back-end (server.xml, jvm.options, server.env)."
+          - "Compare the datasource in each render: it must describe the same object."

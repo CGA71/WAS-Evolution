@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: forge_preflight
+  description: "Verify every declared forge dependency, control side and target side, before anything is installed."
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+dependencies: []

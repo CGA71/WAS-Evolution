@@ -1,0 +1,255 @@
+---
+# Three things this pipeline proves, in order of how much they cost to get wrong:
+#
+#   1. The model refuses invalid product / JDK pairs, refuses production without
+#      being asked, and refuses an artefact with no version. Static, no cluster.
+#   2. The whole traditional chain - module, payload, wsadmin launch, driver,
+#      handler, JSON, changed/diff - works, against a fake cell. No cluster.
+#   3. The same chain works against real hosts, over a real connection, with
+#      real idempotency: run twice, the second run must report changed=0.
+#      This one needs k3s.
+#
+# The simulation uses Rocky Linux 9 because it is the closest freely
+# redistributable match to the RHEL the estate runs on: same package manager,
+# same systemd, same /etc/security/limits.d semantics.
+#
+# Two namespaces, was-sim-dmgr and was-sim-nodeagents, because the deployment
+# manager and the node agents are different trust zones. A NetworkPolicy makes
+# that boundary testable instead of implied.
+
+stages:
+  - lint
+  - validate
+  - simulate
+  - teardown
+
+variables:
+  ANSIBLE_FORCE_COLOR: "1"
+  COLLECTION: ansible_collections/wasevo/websphere
+  NS_DMGR: was-sim-dmgr
+  NS_NODES: was-sim-nodeagents
+
+# ---------------------------------------------------------------------------
+# Static checks. No cluster, no credentials.
+# ---------------------------------------------------------------------------
+
+.static:
+  image: python:3.12-slim
+  before_script:
+    - pip install --quiet --no-cache-dir ansible-core ansible-lint yamllint
+
+yamllint:
+  extends: .static
+  stage: lint
+  script:
+    - yamllint -s .
+
+ansible-lint:
+  extends: .static
+  stage: lint
+  script:
+    - ansible-lint $COLLECTION
+  # Advisory while the later-wave roles are still stubs.
+  allow_failure: true
+
+syntax:
+  extends: .static
+  stage: lint
+  script:
+    - ansible-playbook --syntax-check $COLLECTION/playbooks/model_validate.yml
+    - ansible-playbook --syntax-check $COLLECTION/playbooks/pilot_render_matrix.yml
+    - ansible-playbook -i inventories/rit --syntax-check $COLLECTION/playbooks/forge_preflight.yml
+    - ansible-playbook -i inventories/rit --syntax-check $COLLECTION/playbooks/traditional_config.yml
+
+# The site facts are duplicated per environment on purpose - Ansible cannot
+# merge a shared group_vars across separate inventories without a symlink,
+# which does not survive a Windows checkout. The duplication is therefore
+# checked rather than trusted.
+site-vars-drift:
+  extends: .static
+  stage: validate
+  script:
+    - |
+      set -e
+      ref=$(sha256sum inventories/rit/group_vars/all/00_site.yml | cut -d' ' -f1)
+      rc=0
+      for f in inventories/*/group_vars/all/00_site.yml; do
+        case "$f" in inventories/k3s_sim/*) continue ;; esac
+        got=$(sha256sum "$f" | cut -d' ' -f1)
+        if [ "$got" != "$ref" ]; then echo "DRIFT: $f"; rc=1; else echo "ok:    $f"; fi
+      done
+      [ $rc -eq 0 ] || { echo; echo "00_site.yml must be identical in every environment."; exit 1; }
+      echo "site facts identical across environments"
+
+# Every environment must validate, production must be refused unless
+# acknowledged, and the diagnostic JDK must be refused unless asked for.
+model-matrix:
+  extends: .static
+  stage: validate
+  script:
+    - |
+      set -e
+      for env in rit ra ru; do
+        echo "=============== $env ==============="
+        ansible-playbook -i inventories/$env $COLLECTION/playbooks/model_validate.yml
+      done
+    - |
+      echo "=============== prd must be refused ==============="
+      if ansible-playbook -i inventories/prd $COLLECTION/playbooks/model_validate.yml; then
+        echo "FAIL: production was accepted without acknowledgement"; exit 1
+      fi
+      echo "refused as expected"
+    - |
+      set -e
+      echo "=============== prd passes once acknowledged ==============="
+      ansible-playbook -i inventories/prd $COLLECTION/playbooks/model_validate.yml \
+        -e model_allow_production=true
+    - |
+      echo "=============== the diagnostic JDK must be refused ==============="
+      if ansible-playbook -i inventories/rit $COLLECTION/playbooks/model_validate.yml \
+           -e model_target=example_diagnostic_only.yml; then
+        echo "FAIL: the diagnostic JDK was accepted without model_allow_diagnostic_jdk"
+        exit 1
+      fi
+      echo "refused as expected"
+
+# One datasource, declared once, rendered for all three phases.
+pilot-render:
+  extends: .static
+  stage: validate
+  script:
+    - ansible-playbook -i inventories/rit $COLLECTION/playbooks/pilot_render_matrix.yml
+  artifacts:
+    paths: [rendered/]
+    expire_in: 1 week
+
+# The driver, the handler and the fake cell, with no cluster and no Ansible.
+# Fast, and it catches most regressions before anything is deployed.
+stub-unit:
+  image: python:3.12-slim
+  stage: validate
+  script:
+    - bash ci/run-stub-tests.sh
+
+# ---------------------------------------------------------------------------
+# Simulation on k3s
+# ---------------------------------------------------------------------------
+
+.k3s:
+  image: python:3.12-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+    - pip install --quiet --no-cache-dir ansible-core kubernetes
+    - ansible-galaxy collection install --force kubernetes.core >/dev/null
+    - curl -sLo /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.4/bin/linux/amd64/kubectl"
+    - chmod +x /usr/local/bin/kubectl
+    # Built from CI variables, never from a kubeconfig in the repository. The
+    # ServiceAccount behind KUBE_TOKEN is scoped to the two simulation
+    # namespaces by namespaced Roles, so a leaked token reaches nothing else.
+    - |
+      set -e
+      echo "$KUBE_CA_B64" | base64 -d > /tmp/k3s-ca.crt
+      kubectl config set-cluster k3s --server="$KUBE_URL" \
+        --certificate-authority=/tmp/k3s-ca.crt --embed-certs=true
+      kubectl config set-credentials ci --token="$KUBE_TOKEN"
+      kubectl config set-context k3s --cluster=k3s --user=ci --namespace="$NS_DMGR"
+      kubectl config use-context k3s
+  rules:
+    # Skipped rather than failed when the cluster credentials are absent, so a
+    # fork or a clone without them still gets the static gates.
+    - if: $KUBE_TOKEN == null
+      when: never
+    - when: on_success
+
+sim:deploy:
+  extends: .k3s
+  stage: simulate
+  script:
+    - |
+      set -e
+      echo "--- clearing pods left by an earlier run ---"
+      kubectl -n $NS_DMGR  delete pod -l was-evolution/sim=true --ignore-not-found --wait=true
+      kubectl -n $NS_NODES delete pod -l was-evolution/sim=true --ignore-not-found --wait=true
+    - kubectl apply -f ci/k3s/10-sim-hosts.yml
+    - kubectl -n $NS_DMGR  wait --for=condition=Ready pod/was-dmgr-01 --timeout=180s
+    - kubectl -n $NS_NODES wait --for=condition=Ready pod/was-node-01 --timeout=180s
+    - kubectl -n $NS_NODES wait --for=condition=Ready pod/was-node-02 --timeout=180s
+    - kubectl get pods -n $NS_DMGR -o wide
+    - kubectl get pods -n $NS_NODES -o wide
+
+sim:preflight:
+  extends: .k3s
+  stage: simulate
+  needs: [sim:deploy]
+  script:
+    # Target-side checks against Rocky 9. Packages are reported, not enforced:
+    # the pod starts from a stock image and prereqs_os is what installs them.
+    - ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/forge_preflight.yml
+
+sim:configure:
+  extends: .k3s
+  stage: simulate
+  needs: [sim:preflight]
+  script:
+    - |
+      echo "=============== dry run first ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
+        --check --diff
+    - |
+      echo "=============== apply ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
+        | tee run1.log
+    - |
+      echo "=============== replay: must change nothing ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
+        | tee run2.log
+      set -e
+      # The second run is the only real proof of idempotency. The legacy
+      # approach could not make this claim: its marker files reported "nothing
+      # to do" whether or not the cell still matched.
+      bad=$(grep -E "^was-(dmgr|node)-[0-9]+ +:" run2.log | grep -v "changed=0" || true)
+      if [ -n "$bad" ]; then
+        echo "IDEMPOTENCY FAILURE - the second run changed something:"
+        echo "$bad"
+        exit 1
+      fi
+      echo "second run reported changed=0 on every host"
+  artifacts:
+    when: always
+    paths: [run1.log, run2.log]
+    expire_in: 1 week
+
+sim:isolation:
+  extends: .k3s
+  stage: simulate
+  needs: [sim:configure]
+  script:
+    # The two namespaces exist to separate trust zones, so the separation is
+    # asserted rather than described.
+    - |
+      set -e
+      echo "--- the simulation identity must NOT reach other namespaces ---"
+      for ns in kube-system ci default; do
+        if kubectl auth can-i create pods/exec -n $ns 2>/dev/null | grep -q "^yes"; then
+          echo "FAIL: the CI identity can exec into $ns"; exit 1
+        fi
+        echo "ok: no exec in $ns"
+      done
+    - |
+      set -e
+      echo "--- the NetworkPolicies must be in place ---"
+      kubectl -n $NS_NODES get networkpolicy deny-ingress-by-default -o name
+      kubectl -n $NS_DMGR  get networkpolicy allow-nodeagent-to-dmgr-soap -o name
+
+sim:teardown:
+  extends: .k3s
+  stage: teardown
+  needs: [sim:configure, sim:isolation]
+  when: always
+  script:
+    # Pods only. The namespaces, the ServiceAccount and the NetworkPolicies are
+    # infrastructure applied once by an administrator; a pipeline that deletes
+    # them makes itself unrunnable.
+    - kubectl -n $NS_DMGR  delete pod -l was-evolution/sim=true --ignore-not-found
+    - kubectl -n $NS_NODES delete pod -l was-evolution/sim=true --ignore-not-found
+    - echo "simulation pods removed, namespaces left in place"

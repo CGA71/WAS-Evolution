@@ -1,0 +1,264 @@
+---
+# Verify every declared forge dependency before anything is installed or
+# configured. Run it as the first node of every workflow.
+#
+# The principle: a missing dependency should be a named assertion failure here,
+# not a cryptic error three roles later. The legacy repository had the opposite
+# shape -- it installed psmisc, which manageprofiles needs for killall, as the
+# very last task of the install playbook, after the profiles that depend on it.
+
+- name: Resolve the environment and the model
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [preflight, always]
+
+- name: Collect the findings
+  ansible.builtin.set_fact:
+    _forge_findings: []
+  tags: [preflight, always]
+
+# ---------------------------------------------------------------------------
+# Control side
+# ---------------------------------------------------------------------------
+
+- name: Control side
+  delegate_to: localhost
+  run_once: true
+  block:
+
+    - name: ansible-core must meet the minimum
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(forge_ansible_core_min, '>=')
+        fail_msg: >-
+          ansible-core {{ ansible_version.full }} is below the required
+          {{ forge_ansible_core_min }}. The collection uses features that are
+          not present in older releases, and the Execution Environment is the
+          place to fix this, not the playbook.
+        success_msg: "ansible-core {{ ansible_version.full }} >= {{ forge_ansible_core_min }}"
+
+    - name: Build the collection list for this plane
+      ansible.builtin.set_fact:
+        _required_collections: >-
+          {{ forge_collections.common + forge_collections[runtime.product] }}
+
+    - name: Read the installed collections
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection list --format json
+      register: _galaxy_list
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Required collections must be installed
+      ansible.builtin.assert:
+        that:
+          - item.name in (_galaxy_list.stdout | from_json | dict2items
+              | map(attribute='value') | map('dict2items') | flatten
+              | map(attribute='key') | list)
+        fail_msg: >-
+          Collection {{ item.name }} ({{ item.version }}) is missing.
+          Install it with
+          "ansible-galaxy collection install -r collections/requirements.yml",
+          or add it to the {{ forge_ee_name | default('relevant') }} Execution
+          Environment.
+      loop: "{{ _required_collections }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: _galaxy_list.rc == 0
+
+    - name: Required Python packages must be importable
+      ansible.builtin.command:
+        cmd: "{{ ansible_playbook_python }} -c 'import {{ item.import_name }}'"
+      loop: >-
+        {{ forge_python_packages.common + forge_python_packages[runtime.product] }}
+      loop_control:
+        label: "{{ item.import_name }}"
+      register: _py_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Report missing Python packages
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+        fail_msg: >-
+          Python package {{ item.item.pip_name }} is not importable in the
+          Execution Environment. The Liberty plane needs it to reach the
+          OpenShift API; the traditional plane does not, which is why the two
+          Execution Environments are separate.
+      loop: "{{ _py_check.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.import_name | default('n/a') }}"
+
+    - name: Required commands must be on PATH
+      ansible.builtin.command:
+        cmd: "command -v {{ item }}"
+      loop: >-
+        {{ forge_control_commands.common + forge_control_commands[runtime.product] }}
+      changed_when: false
+      check_mode: false
+
+    - name: An image builder is required only when one is declared
+      ansible.builtin.command:
+        cmd: "command -v {{ forge_image_builder }}"
+      changed_when: false
+      check_mode: false
+      when: forge_image_builder | length > 0
+
+  tags: [preflight, control]
+
+# ---------------------------------------------------------------------------
+# Target side
+# ---------------------------------------------------------------------------
+
+- name: Target side
+  when:
+    - not forge_preflight_control_only
+    - runtime.product in ['traditional', 'liberty_more']
+  block:
+
+    - name: Gather what the checks need
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "!min"
+          - distribution
+          - hardware
+          - mounts
+      check_mode: false
+
+    - name: The OS family must be one the forge supports
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family in forge_os_packages.keys() | list
+        fail_msg: >-
+          {{ ansible_facts.os_family }} has no package list declared in
+          forge_os_packages. AIX in particular was entirely absent from the
+          legacy repository and its prerequisite list still needs confirming
+          against the IBM statement for the WAS level in use.
+
+    - name: Required OS packages must be present
+      ansible.builtin.include_tasks: check_packages.yml
+
+    - name: Required directories must exist and be writable by the WAS user
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ forge_required_dirs }}"
+      register: _dir_stat
+      check_mode: false
+
+    - name: Report missing directories
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+        fail_msg: >-
+          {{ item.item }} does not exist. It is derived from the paths declared
+          in the inventory, so either the path is wrong or the host was never
+          prepared.
+      loop: "{{ _dir_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Free space must be sufficient before an install or a fixpack
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_facts.mounts
+             | selectattr('mount', 'equalto', _mount_for_path)
+             | map(attribute='size_available') | first | default(0)) / 1048576
+            >= (item.value | int)
+        fail_msg: >-
+          Less than {{ item.value }} MB free for {{ item.key }}. A fixpack that
+          runs out of space mid-apply leaves the installation in a state that
+          costs far more to recover than a refused playbook.
+      vars:
+        _mount_for_path: >-
+          {{ ansible_facts.mounts | map(attribute='mount')
+             | select('in', item.key) | sort(attribute='__len__')
+             | last | default('/') }}
+      loop: "{{ forge_min_free_mb | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: ansible_facts.mounts is defined
+
+    - name: The install binaries repository must be reachable
+      ansible.builtin.stat:
+        path: "{{ was_install_binaries_base_dir }}"
+      register: _binrepo
+      check_mode: false
+
+    - name: Report an unreachable binaries repository
+      ansible.builtin.assert:
+        that:
+          - _binrepo.stat.exists
+        fail_msg: >-
+          {{ was_install_binaries_base_dir }} is not present. Every IBM
+          artefact path in the inventory is relative to it, so nothing can be
+          installed until the share
+          {{ was_binaries_repository | default('declared in the inventory') }}
+          is mounted.
+
+  tags: [preflight, target]
+
+# ---------------------------------------------------------------------------
+# OpenShift
+# ---------------------------------------------------------------------------
+
+- name: OpenShift
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not forge_preflight_control_only
+    - runtime.product == 'liberty_ocp'
+  block:
+
+    - name: The API must answer and the namespace must exist
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: "{{ openshift.namespace }}"
+      register: _ns
+
+    - name: Report a missing namespace
+      ansible.builtin.assert:
+        that:
+          - _ns.resources | length == 1
+        fail_msg: >-
+          Namespace {{ openshift.namespace }} is not reachable. The preflight
+          does not create it: a namespace is a platform-team object, and
+          creating one silently is how environments drift apart.
+
+    - name: The Liberty operator CRD must be installed
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: "{{ item }}"
+      loop: "{{ forge_openshift_required_crds }}"
+      register: _crds
+
+    - name: Report a missing CRD
+      ansible.builtin.assert:
+        that:
+          - item.resources | length == 1
+        fail_msg: >-
+          {{ item.item }} is not installed. Without the WebSphere Liberty
+          operator the deploy role has nothing to apply, and finding that out
+          here is much cheaper than finding it out at the PRD workflow node.
+      loop: "{{ _crds.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+  tags: [preflight, openshift]
+
+- name: Preflight summary
+  ansible.builtin.debug:
+    msg:
+      - "environment : {{ was_environment }} ({{ was_env_long_name }}), tier {{ was_env_tier }}"
+      - "channel     : {{ was_channel }}"
+      - "product     : {{ runtime.product }} / Java {{ runtime.jdk.version }} {{ runtime.jdk.vm }}"
+      - "scope       : {{ 'control only' if forge_preflight_control_only else 'control + target' }}"
+      - "result      : all declared dependencies satisfied"
+  tags: [preflight, always]
