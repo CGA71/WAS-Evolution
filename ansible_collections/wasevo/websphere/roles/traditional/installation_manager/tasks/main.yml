@@ -67,13 +67,52 @@
   tags: [im]
   block:
 
-    - name: Find the Installation Manager archive
+    - name: Find the Installation Manager archive on the target
       ansible.builtin.find:
         paths: "{{ im_media_dir }}"
         patterns: "{{ im_media_pattern }}"
         file_type: file
       register: im_archive
       check_mode: false
+
+    # In production the media arrives on a mounted share and is already on the
+    # target. In a lab it usually sits on the controller, so stage it from
+    # there rather than making someone scp 148 MB by hand before every run.
+    - name: Stage the archive from the controller
+      when:
+        - im_archive.matched == 0
+        - im_media_src | default('') | length > 0
+      block:
+
+        - name: Look for the archive on the controller
+          ansible.builtin.set_fact:
+            _im_src: "{{ lookup('fileglob', im_media_src, wantlist=True) }}"
+
+        - name: Create the media directory on the target
+          ansible.builtin.file:
+            path: "{{ im_media_dir }}"
+            state: directory
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0755"
+          become: true
+          when: _im_src | length > 0
+
+        - name: Copy the archive to the target
+          ansible.builtin.copy:
+            src: "{{ _im_src | first }}"
+            dest: "{{ im_media_dir }}/"
+            mode: "0644"
+          become: true
+          when: _im_src | length > 0
+
+        - name: Find it again, now that it is staged
+          ansible.builtin.find:
+            paths: "{{ im_media_dir }}"
+            patterns: "{{ im_media_pattern }}"
+            file_type: file
+          register: im_archive
+          check_mode: false
 
     - name: Refuse clearly when the archive is missing
       ansible.builtin.fail:
