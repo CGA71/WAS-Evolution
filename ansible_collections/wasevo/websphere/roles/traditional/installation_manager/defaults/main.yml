@@ -4,8 +4,14 @@
 im_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_im"
 im_media_pattern: "*.zip"
 
-# WAS 9.0 fix packs require Installation Manager 1.8.5 or later. 1.9.2 is the
-# level the source inventory declared.
-im_required_version: "1.9.2"
+# Optional. A glob on the CONTROLLER. When the target has no archive and this
+# is set, the role stages the file across. Production leaves it empty - the
+# media arrives on a mounted share - and a lab points it at a local copy.
+im_media_src: ""
+
+# WAS 9.0 fix packs require Installation Manager 1.8.5 or later. That is the
+# floor, not a pin: the lab is running 1.10.1004 and anything at or above the
+# floor is accepted. The source inventory declared 1.9.2, which also passes.
+im_required_version: "1.8.5"
 
 im_unpack_dir: /tmp/im-installer

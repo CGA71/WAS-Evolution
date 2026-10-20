@@ -9,6 +9,8 @@
 # Media staged here on the VM, by hand - see the README. Neither artefact can
 # be downloaded without an IBMid.
 im_media_dir: /mnt/binaries/IBM/install_im
+# The archive lives on the controller in this lab, so the role stages it.
+im_media_src: "/mnt/binaries/IBM/install_im/*.zip"
 was_media_dir: /mnt/binaries/IBM/install_was90
 
 # 9.0.0.0 is what the base Developers install yields. The 9.0.5.x level comes
