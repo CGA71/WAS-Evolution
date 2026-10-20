@@ -26,6 +26,13 @@ stages:
 variables:
   ANSIBLE_FORCE_COLOR: "1"
   COLLECTION: ansible_collections/wasevo/websphere
+  # GitLab checks out into a world-writable directory, so Ansible refuses to
+  # read ansible.cfg from it - every setting in that file is silently ignored
+  # here. The two that matter are therefore passed as environment variables.
+  # The repository root is the collections path because it is the directory
+  # that CONTAINS ansible_collections/, which is what Ansible looks for.
+  ANSIBLE_COLLECTIONS_PATH: "$CI_PROJECT_DIR"
+  ANSIBLE_ROLES_PATH: "$CI_PROJECT_DIR/ansible_collections/wasevo/websphere/roles"
   NS_DMGR: was-sim-dmgr
   NS_NODES: was-sim-nodeagents
 

@@ -1,8 +1,12 @@
 ---
-# Apply the WebSphereLibertyApplication CR, ConfigMap and Secret through kubernetes.core. Never merge with config_render: this is the GitOps boundary.
+# Apply the WebSphereLibertyApplication CR, ConfigMap and Secret through
+# kubernetes.core. Never merge this role with config_render: config_render has
+# no cluster access, and that separation is the GitOps boundary.
 #
 # Scheduled for: wave 5
-# Source material: replaces pbk_deploiement_ressource.yml, which SSHes to a master and runs kubectl apply - that pattern does not survive OpenShift
+# Source material: replaces pbk_deploiement_ressource.yml, which SSHes to the
+#   first master and runs kubectl apply. That pattern does not survive
+#   OpenShift: you do not SSH to an RHCOS control-plane node.
 #
 # Not implemented yet. This file exists so the role is tracked, so the wave it
 # belongs to is recorded next to the code, and so a playbook that references it

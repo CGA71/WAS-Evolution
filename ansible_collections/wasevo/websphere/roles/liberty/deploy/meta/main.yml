@@ -1,7 +1,10 @@
 ---
 galaxy_info:
   role_name: liberty_deploy
-  description: "Apply the WebSphereLibertyApplication CR, ConfigMap and Secret through kubernetes.core. Never merge with config_render: this is the GitOps boundary."
+  description: >-
+    Apply the WebSphereLibertyApplication CR, ConfigMap and Secret through
+    kubernetes.core. Kept separate from config_render, which has no cluster
+    access; that separation is the GitOps boundary.
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"
 dependencies: []
