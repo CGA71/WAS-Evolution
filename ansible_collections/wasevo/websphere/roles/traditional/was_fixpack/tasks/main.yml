@@ -1,16 +1,307 @@
 ---
-# WAS and SDK fixpack application.
+# Apply fixpacks to every IBM product Installation Manager knows about.
 #
-# Scheduled for: wave 1
-# Source material: pbk_install_ibm_websphere_application_server_fixpack.yml, pbk_upgrade_fixpack.yml
+# This role is placed TWICE in the workflow: once immediately after
+# Installation Manager is installed, once at the end after the products are in.
+# One job can only be correct at both positions if it DISCOVERS what is
+# installed rather than being handed a list - on the first pass only
+# Installation Manager is there, on the second everything is.
 #
-# Not implemented yet. This file exists so the role is tracked, so the wave it
-# belongs to is recorded next to the code, and so a playbook that references it
-# fails with a clear message rather than a missing-role error.
+# The first pass is not a wasted run: it brings Installation Manager up to the
+# level WAS 9.0 fixpacks require, which is why it belongs before the products
+# rather than after them.
 
-- name: Role not implemented yet
-  ansible.builtin.fail:
+- name: Resolve the model and the environment
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [fixpack, always]
+
+- name: Liberty on OpenShift has no fixpack concept
+  ansible.builtin.debug:
     msg: >-
-      wasevo.websphere.traditional/was_fixpack is scheduled for wave 1 and is not implemented.
-      See README section 5 to 7 for the action list of that wave.
-  when: not (allow_unimplemented_roles | default(false))
+      runtime.product is {{ runtime.product }}, where the level IS the image
+      tag: there is nothing for Installation Manager to patch. Change the tag
+      in the model and rebuild instead. Skipping.
+  when: runtime.product == 'liberty_ocp'
+  tags: [fixpack]
+
+- name: Fixpacks
+  when: runtime.product != 'liberty_ocp'
+  tags: [fixpack]
+  block:
+
+    - name: Installation Manager must be present
+      ansible.builtin.stat:
+        path: "{{ im_installer_cmd }}"
+      register: fp_imcl
+      check_mode: false
+
+    - name: Refuse clearly when Installation Manager is missing
+      ansible.builtin.fail:
+        msg: >-
+          No imcl at {{ im_installer_cmd }}. Fixpacks are applied through
+          Installation Manager, so job 1 has to succeed before this job can do
+          anything.
+      when: not fp_imcl.stat.exists
+
+    - name: Read what is installed
+      ansible.builtin.command:
+        cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+      register: fp_installed
+      changed_when: false
+      check_mode: false
+      become: true
+
+    - name: Show what is installed
+      ansible.builtin.debug:
+        msg: "{{ fp_installed.stdout_lines | default(['(nothing)']) }}"
+
+    # -----------------------------------------------------------------------
+    # The fixpack repositories
+    # -----------------------------------------------------------------------
+
+    - name: Find fixpack repositories on the target
+      ansible.builtin.find:
+        paths: "{{ was_fixpack_media_dir }}"
+        patterns: "repository.config,repository.xml"
+        recurse: true
+        file_type: file
+      register: fp_repos_present
+      check_mode: false
+
+    - name: Stage fixpack media from the controller
+      when:
+        - fp_repos_present.matched == 0
+        - was_fixpack_media_src | default('') | length > 0
+      block:
+
+        - name: Look for fixpack archives on the controller
+          ansible.builtin.set_fact:
+            _fp_src: "{{ lookup('fileglob', was_fixpack_media_src, wantlist=True) }}"
+
+        - name: Create the fixpack media directory
+          ansible.builtin.file:
+            path: "{{ was_fixpack_media_dir }}"
+            state: directory
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0755"
+          become: true
+          when: _fp_src | length > 0
+
+        - name: Unpack each fixpack archive into its own directory
+          # Each archive is one Installation Manager repository, and they must
+          # not be unpacked on top of each other: two repository.config files
+          # in one directory and imcl reads whichever it finds first.
+          ansible.builtin.unarchive:
+            src: "{{ item }}"
+            dest: "{{ was_fixpack_media_dir }}/{{ item | basename | regex_replace('[.]zip$', '') }}"
+            remote_src: false
+            creates: "{{ was_fixpack_media_dir }}/{{ item | basename | regex_replace('[.]zip$', '') }}/repository.config"
+          loop: "{{ _fp_src }}"
+          loop_control:
+            label: "{{ item | basename }}"
+          become: true
+
+        - name: Find the repositories again
+          ansible.builtin.find:
+            paths: "{{ was_fixpack_media_dir }}"
+            patterns: "repository.config,repository.xml"
+            recurse: true
+            file_type: file
+          register: fp_repos_staged
+          check_mode: false
+
+    # Two finds, two names. A skipped task carrying `register` still overwrites
+    # the variable, with a result that has no `matched` key - which is exactly
+    # how the install role broke on its second run.
+    - name: Settle the repository list
+      ansible.builtin.set_fact:
+        fp_repositories: >-
+          {{ ((fp_repos_present.files | default([]) | map(attribute='path') | list)
+              + (fp_repos_staged.files | default([]) | map(attribute='path') | list))
+             | map('dirname') | unique | list }}
+
+    - name: Report when there is nothing to apply
+      ansible.builtin.debug:
+        msg: |
+          No Installation Manager repository under {{ was_fixpack_media_dir }}.
+
+          This is not an error. A forge with no fixpack staged has nothing to
+          apply, and this job sits where it may legitimately find nothing on
+          the first pass.
+
+          To apply fixpacks, download them from IBM Fix Central - they need an
+          IBMid - and either unpack each one into its own subdirectory of
+          {{ was_fixpack_media_dir }}, or leave the zips on the controller and
+          point was_fixpack_media_src at them.
+      when: fp_repositories | length == 0
+
+    - name: Apply
+      when: fp_repositories | length > 0
+      block:
+
+        - name: Ask the repositories what they offer
+          ansible.builtin.command:
+            cmd: >-
+              {{ im_installer_cmd }} listAvailablePackages
+              -repositories {{ fp_repositories | join(',') }}
+              -long
+          register: fp_available
+          changed_when: false
+          check_mode: false
+          become: true
+
+        - name: Show what the repositories offer
+          ansible.builtin.debug:
+            msg: "{{ fp_available.stdout_lines }}"
+
+        # Intersect: a product is updated only if it is installed AND the
+        # repositories carry a build of it. That intersection is what makes one
+        # job correct at both ends of the workflow.
+        - name: Work out what can be updated
+          ansible.builtin.set_fact:
+            fp_plan: >-
+              {{ was_fixpack_products | dict2items
+                 | selectattr('value.prefix', 'in', _installed)
+                 | selectattr('value.prefix', 'in', _offered)
+                 | list | sort(attribute='value.order') }}
+          vars:
+            _installed: >-
+              {{ was_fixpack_products | dict2items | map(attribute='value.prefix')
+                 | select('in', fp_installed.stdout) | list }}
+            _offered: >-
+              {{ was_fixpack_products | dict2items | map(attribute='value.prefix')
+                 | select('in', fp_available.stdout) | list }}
+
+        - name: Report the plan
+          ansible.builtin.debug:
+            msg:
+              - "repositories : {{ fp_repositories | length }}"
+              - "to update    : {{ fp_plan | map(attribute='value.label') | list | join(', ') | default('nothing', true) }}"
+
+        - name: A WAS fixpack without a matching SDK fixpack is refused
+          # Their levels are coupled. Applying one without the other produces a
+          # server that will not start, and the failure surfaces far from here.
+          ansible.builtin.assert:
+            that:
+              - "'com.ibm.java.jdk' in (fp_plan | map(attribute='value.prefix') | join(' '))"
+            fail_msg: >-
+              The repositories offer a WAS fixpack but no SDK fixpack, and the
+              two levels are coupled. Stage the matching SDK fixpack as well,
+              or set was_fixpack_require_sdk_with_was=false - which is only
+              right when IBM's notes for this level say the SDK is unchanged.
+          vars:
+            _was_in_plan: >-
+              {{ fp_plan | map(attribute='value.prefix')
+                 | select('search', 'com[.]ibm[.]websphere[.](ND|BASE|DEVELOPERS)') | list }}
+          when:
+            - was_fixpack_require_sdk_with_was
+            - _was_in_plan | length > 0
+
+        - name: Gather what the disk check needs
+          ansible.builtin.setup:
+            gather_subset: ["!all", "!min", "hardware"]
+          check_mode: false
+
+        - name: Refuse when disk is short
+          ansible.builtin.assert:
+            that:
+              - _free_mb | int >= was_fixpack_min_free_mb | int
+            fail_msg: >-
+              {{ _free_mb | int }} MB free, below the
+              {{ was_fixpack_min_free_mb }} MB required. A fixpack that runs
+              out of disk halfway leaves an installation that costs far more to
+              recover than a refused playbook.
+          vars:
+            _free_mb: >-
+              {{ (ansible_facts.mounts | selectattr('mount', 'equalto', '/')
+                  | map(attribute='size_available') | first | default(0)) // 1048576 }}
+          when: ansible_facts.mounts is defined
+
+        # -------------------------------------------------------------------
+        # Installation Manager first, on its own
+        # -------------------------------------------------------------------
+
+        - name: Update Installation Manager itself
+          # Alone and first. imcl cannot rewrite the directory it is running
+          # from in the same transaction as other offerings, and every later
+          # update is applied by the imcl this step produces.
+          ansible.builtin.command:
+            cmd: >-
+              {{ im_installer_cmd }} install com.ibm.cic.agent
+              -repositories {{ fp_repositories | join(',') }}
+              -installationDirectory {{ im_installer_dir }}
+              -dataLocation {{ im_agent_data_dir }}
+              -log {{ im_install_log_dir }}/fixpack_im.log
+              -acceptLicense
+          become: true
+          async: 2700
+          poll: 15
+          register: fp_im_update
+          vars:
+            _self_update: >-
+              {{ fp_plan | selectattr('value.self_update', 'defined')
+                 | selectattr('value.self_update') | list }}
+          when: _self_update | length > 0
+
+        # -------------------------------------------------------------------
+        # Then the products
+        # -------------------------------------------------------------------
+
+        - name: Update the products
+          ansible.builtin.command:
+            cmd: >-
+              {{ im_installer_cmd }} updateAll
+              -repositories {{ fp_repositories | join(',') }}
+              -dataLocation {{ im_agent_data_dir }}
+              -log {{ im_install_log_dir }}/fixpack_products.log
+              -acceptLicense
+              -nl {{ im_install_locale }}
+          become: true
+          async: 5400
+          poll: 20
+          register: fp_products_update
+          vars:
+            _product_update: >-
+              {{ fp_plan | rejectattr('value.self_update', 'defined') | list }}
+          when: _product_update | length > 0
+
+        - name: Show the tail of the fixpack output
+          ansible.builtin.debug:
+            msg: "{{ (fp_products_update.stdout_lines | default([]))[-25:] }}"
+          when: fp_products_update.stdout_lines is defined
+
+    # -----------------------------------------------------------------------
+    # Verify, every run, applied or not
+    # -----------------------------------------------------------------------
+
+    - name: Read the installed levels back
+      ansible.builtin.command:
+        cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+      register: fp_verify
+      changed_when: false
+      check_mode: false
+      become: true
+
+    - name: The target level must be reached where one is declared
+      ansible.builtin.assert:
+        that:
+          - was_fixpack_target_version in fp_verify.stdout
+        fail_msg: >-
+          {{ was_fixpack_target_version }} is not among the installed levels.
+          What is installed:
+          {{ fp_verify.stdout_lines | default([]) | join(' | ') }}
+        success_msg: "{{ was_fixpack_target_version }} is installed"
+      when: was_fixpack_target_version | length > 0
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "host         : {{ inventory_hostname }}"
+          - "environment  : {{ was_environment }} ({{ was_env_long_name }})"
+          - "repositories : {{ fp_repositories | default([]) | length }}"
+          - "updated      : {{ fp_plan | default([]) | map(attribute='value.label') | list | join(', ') | default('nothing', true) }}"
+          - "im changed   : {{ fp_im_update.changed | default(false) }}"
+          - "products     : {{ fp_products_update.changed | default(false) }}"
+          - "packages now : {{ fp_verify.stdout_lines | default([]) | length }}"

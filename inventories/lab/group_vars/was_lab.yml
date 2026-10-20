@@ -20,3 +20,13 @@ was_expected_version: "9.0.0.0"
 
 was_node_name: "LabNode01"
 was_service_name: wasserver
+
+# Fixpacks. Same arrangement as the install media: drop the zips here on the
+# controller and the role unpacks each into its own repository directory on the
+# target. Finding none is a normal outcome - the job reports it and exits green.
+was_fixpack_media_src: "/mnt/binaries/IBM/fixes/*.zip"
+
+# No target level declared for the lab: whatever the repositories offer is what
+# the lab gets. An estate should pin this per environment, which is also how
+# PRD stays a fixpack behind RIT on purpose.
+was_fixpack_target_version: ""
