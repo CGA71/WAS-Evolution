@@ -1,0 +1,8 @@
+---
+# The lab VM only accepts the cloud-init account and its key. Without this the
+# run connects as whoever launched it and fails on publickey, which reads like
+# a key problem rather than a missing setting.
+ansible_user: "{{ site_was_user }}"
+
+# The private key is supplied by the AWX Machine Credential, or by
+# --private-key on a command-line run. It is never named here.
