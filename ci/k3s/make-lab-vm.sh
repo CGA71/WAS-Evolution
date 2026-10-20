@@ -48,7 +48,9 @@ packages:
   # prerequisites, and psmisc is the one the legacy playbooks installed last
   # instead of first - manageprofiles needs killall.
   - python3
-  - python3-libdnf5
+  # NOT python3-libdnf5: that is a dnf5 package and does not exist on Rocky 9.
+  # One bad name fails the whole cloud-init package transaction, which is how
+  # this VM came up with seven of eight packages and no unzip.
   - unzip
   - tar
   - gzip
