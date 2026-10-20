@@ -1,0 +1,17 @@
+---
+config_render_dir: "{{ model_render_dir | default(playbook_dir ~ '/../rendered') }}/{{ server_name }}"
+
+server_name: defaultServer
+
+# Declared explicitly rather than inherited from a `full` image, so the
+# feature set is reviewable and the image can stay on a `kernel` tag.
+liberty_features:
+  - javaee-8.0
+  - monitor-1.0
+
+liberty_http_port: 9080
+liberty_https_port: 9443
+
+# Raw flags that bypass the translation table. Keep this empty: anything here
+# will not follow a VM change or the move into a container.
+liberty_extra_jvm_options: []

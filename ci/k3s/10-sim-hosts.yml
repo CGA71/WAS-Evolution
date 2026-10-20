@@ -1,0 +1,104 @@
+---
+# The simulated WAS hosts.
+#
+# Rocky Linux 9 is used because it is the closest freely redistributable match
+# to the RHEL the real estate runs on: same package manager, same systemd, same
+# library layout, same /etc/security/limits.d semantics. That makes the
+# prereqs_os logic exercisable in CI without a RHEL entitlement.
+#
+# The image is stock. Nothing is baked in, which means no registry dependency
+# and no image to keep up to date: the packages, the Jython driver and the
+# wsadmin stub are all put in place by Ansible, through the same roles that
+# will run against the real estate. That is the point - CI exercises the real
+# staging path, not a special one.
+#
+# There is no sshd and no private key in these pods. Ansible reaches them with
+# the kubernetes.core.kubectl connection plugin, over pods/exec.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: was-dmgr-01
+  namespace: was-sim-dmgr
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/role: dmgr
+    was-evolution/sim: "true"
+spec:
+  # Fail fast rather than loop: a simulation pod that cannot start should break
+  # the pipeline, not restart quietly behind a green job.
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  containers:
+    - name: host
+      image: rockylinux/rockylinux:9
+      command: ["/bin/sh", "-c", "sleep infinity"]
+      resources:
+        requests: { memory: 256Mi, cpu: 100m }
+        limits: { memory: 1Gi, cpu: "1" }
+      volumeMounts:
+        - { name: app, mountPath: /app }
+        - { name: exploit, mountPath: /opt/exploit }
+        - { name: binaries, mountPath: /mnt/binaries }
+  volumes:
+    # emptyDir rather than a PVC: the simulation is disposable by design, and a
+    # pipeline that leaves PersistentVolumes behind becomes a cleanup problem.
+    - { name: app, emptyDir: {} }
+    - { name: exploit, emptyDir: {} }
+    - { name: binaries, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: was-node-01
+  namespace: was-sim-nodeagents
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/role: nodeagent
+    was-evolution/sim: "true"
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  containers:
+    - name: host
+      image: rockylinux/rockylinux:9
+      command: ["/bin/sh", "-c", "sleep infinity"]
+      resources:
+        requests: { memory: 256Mi, cpu: 100m }
+        limits: { memory: 1Gi, cpu: "1" }
+      volumeMounts:
+        - { name: app, mountPath: /app }
+        - { name: exploit, mountPath: /opt/exploit }
+        - { name: binaries, mountPath: /mnt/binaries }
+  volumes:
+    - { name: app, emptyDir: {} }
+    - { name: exploit, emptyDir: {} }
+    - { name: binaries, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: was-node-02
+  namespace: was-sim-nodeagents
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/role: nodeagent
+    was-evolution/sim: "true"
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  containers:
+    - name: host
+      image: rockylinux/rockylinux:9
+      command: ["/bin/sh", "-c", "sleep infinity"]
+      resources:
+        requests: { memory: 256Mi, cpu: 100m }
+        limits: { memory: 1Gi, cpu: "1" }
+      volumeMounts:
+        - { name: app, mountPath: /app }
+        - { name: exploit, mountPath: /opt/exploit }
+        - { name: binaries, mountPath: /mnt/binaries }
+  volumes:
+    - { name: app, emptyDir: {} }
+    - { name: exploit, emptyDir: {} }
+    - { name: binaries, emptyDir: {} }

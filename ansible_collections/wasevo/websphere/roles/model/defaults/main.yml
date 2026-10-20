@@ -1,0 +1,15 @@
+---
+# Allow the wave-3 diagnostic step (Liberty on IBM Java 8) to run.
+# Off by default on purpose: it is a bisection tool for telling a runtime
+# problem apart from a JDK problem, valid on machines only and never as an
+# image, and it is abandoned as soon as the diagnosis is made.
+model_allow_diagnostic_jdk: false
+
+# Where rendered artefacts are written. Nothing here is committed; the
+# directory is in .gitignore.
+model_render_dir: "{{ playbook_dir }}/../rendered"
+
+# A production run must be asked for. Guards against reaching PRD by typing the
+# wrong inventory path; the AAP workflow carries an Approval Node for the same
+# purpose at the other end.
+model_allow_production: false

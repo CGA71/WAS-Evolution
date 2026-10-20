@@ -1,0 +1,17 @@
+---
+# The first node of every workflow.
+#
+#   ansible-playbook -i inventories/rit \
+#       ansible_collections/wasevo/websphere/playbooks/forge_preflight.yml
+#
+# Control-side only, when no target is reachable (CI, or a laptop):
+#   ... -e forge_preflight_control_only=true
+
+- name: Verify the forge dependencies
+  hosts: "{{ forge_preflight_hosts | default('was_traditional') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Preflight
+      ansible.builtin.include_role:
+        name: wasevo.websphere.forge_preflight

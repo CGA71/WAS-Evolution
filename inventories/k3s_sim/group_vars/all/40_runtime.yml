@@ -1,0 +1,24 @@
+---
+# Phase 1, because the simulation exists to exercise the wsadmin plane.
+runtime:
+  product: traditional
+  jdk:
+    version: 8
+    vm: j9
+
+was_cell_name: "{{ was_channel }}_{{ was_env_upper }}"
+was_cluster_name: "ClusterEXT"
+was_console_label: "{{ was_channel }} {{ was_env_upper }}"
+
+was_dmgr_soap_port: 30005
+was_base_port: 30000
+was_server_base_port: 10000
+
+# Turn the simulation on. The config role then installs the wsadmin stub, and
+# the preflight relaxes the checks that cannot hold in a container - there is
+# no IBM media share and no systemd.
+was_simulation: true
+
+# Packages are installed from the Rocky repositories, which requires egress
+# from the pod. Set false to skip and still exercise everything else.
+was_simulation_install_packages: true

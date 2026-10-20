@@ -1,0 +1,90 @@
+---
+# Stage the Jython driver and its handlers on the target.
+#
+# The modules invoke wsadmin on the target, and wsadmin needs the driver on the
+# target filesystem. The Execution Environment carries no Java and no Jython:
+# the driver is data that ships to the host and runs inside the host own
+# wsadmin. This role is what puts it there, and was_cluster fails with an
+# explicit message if it has not run.
+
+- name: Create the Jython directory
+  ansible.builtin.file:
+    path: "{{ was_jython_dir }}"
+    state: directory
+    owner: "{{ was_admin_user }}"
+    group: "{{ was_admin_group }}"
+    mode: "0750"
+  become: true
+  tags: [stage, always]
+
+- name: Stage the driver and its handlers
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../plugins/jython/"
+    dest: "{{ was_jython_dir }}/"
+    owner: "{{ was_admin_user }}"
+    group: "{{ was_admin_group }}"
+    mode: "0640"
+    directory_mode: "0750"
+  become: true
+  # The driver is code, not configuration: staging it is not a change to the
+  # cell, and it must happen even in check mode or every dry run fails.
+  check_mode: false
+  tags: [stage, always]
+
+- name: Confirm the driver landed
+  ansible.builtin.stat:
+    path: "{{ was_jython_dir }}/driver.py"
+  register: driver_stat
+  check_mode: false
+  tags: [stage, always]
+
+- name: Fail clearly if it did not
+  ansible.builtin.assert:
+    that:
+      - driver_stat.stat.exists
+    fail_msg: >-
+      The Jython driver is not present at {{ was_jython_dir }}/driver.py.
+      Every traditional-plane module depends on it.
+  tags: [stage, always]
+
+# ---------------------------------------------------------------------------
+# Simulation only
+# ---------------------------------------------------------------------------
+# In CI there is no WAS ND - it cannot be shipped in a container image, for
+# licensing reasons and because it is several gigabytes. The stub below stands
+# in for wsadmin.sh so that the whole chain still runs for real:
+#
+#   module -> argument validation -> payload file -> wsadmin launch ->
+#   driver dispatch -> handler read/plan/write -> JSON -> changed / diff
+#
+# It does not pretend to validate WAS API usage. Only a real cell does that.
+
+- name: Simulation
+  when: was_simulation | default(false)
+  tags: [stage, simulation]
+  block:
+
+    - name: Create the fake profile tree
+      ansible.builtin.file:
+        path: "{{ was_profile_path }}/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Install the wsadmin stub
+      ansible.builtin.copy:
+        src: "wsadmin-stub/{{ item.name }}"
+        dest: "{{ was_profile_path }}/bin/{{ item.name }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { name: wsadmin.sh, mode: "0755" }
+        - { name: shim.py, mode: "0644" }
+        - { name: fake_admin.py, mode: "0644" }
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Point the fake cell state at a writable path
+      ansible.builtin.lineinfile:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+        insertafter: "^set -e$"
+        line: 'WAS_SIM_STATE="{{ was_exploit_base_dir }}/was-sim-state.json"; export WAS_SIM_STATE'
+        state: present

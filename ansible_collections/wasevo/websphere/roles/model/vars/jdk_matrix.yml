@@ -1,0 +1,77 @@
+---
+# Product x JDK validity matrix, enforced at render time rather than discovered
+# on a live cell.
+#
+# The decisive fact: WAS ND 9.0 traditional is locked to IBM SDK Java
+# Technology Edition 8. Java 17 and 21 are not available on the traditional
+# engine; they are reachable only through Liberty. The JDK dimension is
+# therefore not orthogonal to the product dimension, and three of the four
+# obvious combinations are valid.
+#
+# Sources:
+#   https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html
+#   https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html
+#   https://github.com/WASdev/ci.docker/blob/main/docs/icr-images.md
+
+jdk_matrix:
+
+  traditional:
+    phase: 1
+    admin_plane: wsadmin
+    allowed:
+      - { version: 8, vm: j9, note: "IBM SDK Java Technology Edition 8 - the only supported option" }
+    rejected:
+      - { version: 17, vm: openj9, reason: "not supported on the traditional engine" }
+      - { version: 21, vm: openj9, reason: "not supported on the traditional engine" }
+      - { version: 25, vm: openj9, reason: "not supported on the traditional engine" }
+
+  liberty_more:
+    phase: 2
+    admin_plane: wsadmin
+    allowed:
+      - { version: 21, vm: openj9, requires: "ND >= 9.0.5.25", note: "phase 2 target" }
+      - { version: 25, vm: openj9, requires: "ND >= 9.0.5.29" }
+      - { version: 17, vm: openj9, requires: "ND >= 9.0.5.23", warn: "Java SE 17 end of support October 2027 - prefer 21" }
+      - version: 8
+        vm: j9
+        diagnostic_only: true
+        warn: >-
+          Diagnostic step only, on machines, never as an image. Used to
+          separate a runtime problem from a JDK problem during wave 3.
+          Abandon as soon as the diagnosis is made.
+
+  liberty_ocp:
+    phase: 3
+    admin_plane: kubernetes
+    allowed:
+      - { version: 21, vm: openj9, image: "kernel-java21-openj9-ubi-minimal", note: "target" }
+      - { version: 25, vm: openj9, image: "kernel-java25-openj9-ubi-minimal" }
+      - { version: 17, vm: openj9, image: "kernel-java17-openj9-ubi-minimal", warn: "end of support October 2027" }
+      - { version: 11, vm: openj9, image: "kernel-java11-openj9-ubi-minimal" }
+    rejected:
+      - version: 8
+        vm: j9
+        reason: >-
+          IBM Java 8 JRE exists only in the ibmjava image type, on UBI
+          Standard, and UBI Standard is retired after Liberty 26.0.0.12.
+          Building a Liberty image on it means building on a base the vendor
+          is removing. Use liberty_more for the diagnostic step instead.
+    rejected_vm:
+      - vm: hotspot
+        reason: >-
+          No HotSpot/Temurin variant exists in the official WebSphere Liberty
+          image set. Building one means redoing the whole JVM tuning: on
+          HotSpot, -Xgcpolicy, -Xmns/-Xmnx, -Xshareclasses, -Xdisableexplicitgc
+          and -Xverbosegclog all fail or are silently ignored.
+
+
+# Preferred container base image variants, most to least preferred.
+liberty_image_variants:
+  - suffix: ubi-micro
+    since: "26.0.0.9"
+    note: "Smallest UBI image, no package manager. IBM recommends this where possible."
+  - suffix: ubi-minimal
+    note: "Includes microdnf. UBI 10 Minimal since 26.0.0.7."
+  - suffix: ubi
+    deprecated_after: "26.0.0.12"
+    note: "Retired. The only variant carrying IBM Java 8, which is why that combination is ruled out."

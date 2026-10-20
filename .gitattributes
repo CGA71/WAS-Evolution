@@ -1,0 +1,27 @@
+# This repository is authored on Windows and consumed on Linux and AIX: the CI
+# runner, the Execution Environments, and the WAS hosts the Jython driver is
+# staged onto. A CRLF line ending survives none of those well - a shell script
+# dies on its shebang, and wsadmin reads the driver as a single broken line.
+#
+# Force LF for everything textual, regardless of the local core.autocrlf.
+* text=auto eol=lf
+
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.py    text eol=lf
+*.j2    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.cfg   text eol=lf
+*.xml   text eol=lf
+
+# Nothing binary should ever reach this repository - no keystore, no installer,
+# no application archive. These are declared so that if one slips in, git does
+# not mangle it while .gitignore is being fixed.
+*.p12   binary
+*.jks   binary
+*.kdb   binary
+*.jar   binary
+*.war   binary
+*.ear   binary
+*.zip   binary

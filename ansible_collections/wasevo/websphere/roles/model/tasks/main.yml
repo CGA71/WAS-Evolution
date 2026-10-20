@@ -1,0 +1,250 @@
+---
+# Validate the shared model and render the JVM intents for the declared target.
+#
+# This role never touches a cell or a cluster. It runs anywhere, including in a
+# pipeline with no access to anything, which is what makes it the first gate:
+# an invalid combination is rejected here rather than discovered halfway
+# through a deployment.
+
+- name: Load the catalogues and the translation tables
+  ansible.builtin.include_vars:
+    file: "{{ item }}"
+  loop:
+    - environments.yml
+    - jvm_flags.yml
+    - jdk_matrix.yml
+  tags: [model, always]
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+# One declared code, everything else looked up. The source inventory needed
+# eight hand-written variables for this, two of which held the same string.
+
+- name: The inventory must declare an environment and a channel
+  ansible.builtin.assert:
+    that:
+      - was_environment is defined
+      - was_channel is defined
+    fail_msg: >-
+      The inventory must declare was_environment and was_channel. See
+      inventories/<env>/group_vars/all/10_environment.yml - it is two lines.
+  tags: [model, validate, environment]
+
+- name: The environment must exist in the catalogue
+  ansible.builtin.assert:
+    that:
+      - was_environment in was_environment_catalog
+    fail_msg: >-
+      Unknown environment {{ was_environment }}. Known:
+      {{ was_environment_catalog.keys() | list | join(', ') }}.
+      To add one, add a catalogue entry in roles/model/vars/environments.yml
+      and copy an inventory directory.
+  tags: [model, validate, environment]
+
+- name: The channel must exist in the catalogue
+  ansible.builtin.assert:
+    that:
+      - was_channel in was_channel_catalog
+    fail_msg: >-
+      Unknown channel {{ was_channel }}. Known:
+      {{ was_channel_catalog.keys() | list | join(', ') }}.
+  tags: [model, validate, environment]
+
+- name: Warn about catalogue entries that were never confirmed
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.what }} {{ item.name }} is marked confirmed: false. Only RIT was
+      ever declared in the source inventory, where the letter was "I"; the
+      other values are plausible but unverified. Check them against the naming
+      standard and set confirmed: true.
+  loop:
+    - what: Environment
+      name: "{{ was_environment }}"
+      ok: "{{ was_environment_catalog[was_environment].confirmed | default(false) }}"
+    - what: Channel
+      name: "{{ was_channel }}"
+      ok: "{{ was_channel_catalog[was_channel].confirmed | default(false) }}"
+  loop_control:
+    label: "{{ item.what }} {{ item.name }}"
+  when: not (item.ok | bool)
+  tags: [model, validate, environment]
+
+- name: Production requires a deliberate acknowledgement
+  ansible.builtin.assert:
+    that:
+      - model_allow_production | bool
+    fail_msg: >-
+      {{ was_environment }} is tier prod. Pass -e model_allow_production=true,
+      or use the AAP workflow, which carries an Approval Node for exactly this.
+      A production run should never be something that happens by typing the
+      wrong inventory path.
+  when: was_environment_catalog[was_environment].tier == 'prod'
+  tags: [model, validate, environment]
+
+# ---------------------------------------------------------------------------
+# Installation artefacts
+# ---------------------------------------------------------------------------
+
+- name: Every declared artefact must carry a non-empty verify_version
+  ansible.builtin.assert:
+    that:
+      - item.value.verify_version is defined
+      - item.value.verify_version | default('') | length > 0
+    fail_msg: >-
+      Artefact {{ item.key }} has no verify_version. The source inventory
+      shipped "verifVersionSdk:" with no value, so it was None and every
+      reference rendered the string "None" - and with shell: and no validation,
+      nothing ever reported it. That is the bug this assertion makes
+      unshippable.
+  loop: "{{ (was_ibm_artifacts | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  tags: [model, validate, install]
+
+- name: The model must declare a runtime
+  ansible.builtin.assert:
+    that:
+      - runtime is defined
+      - runtime.product is defined
+      - runtime.jdk is defined
+      - runtime.jdk.version is defined
+      - runtime.jdk.vm is defined
+    fail_msg: >-
+      The model must declare runtime.product and runtime.jdk.{version,vm}.
+      See README section 4 for the valid combinations.
+  tags: [model, validate]
+
+- name: The product must be one this collection knows
+  ansible.builtin.assert:
+    that:
+      - runtime.product in jdk_matrix.keys() | list
+    fail_msg: >-
+      Unknown runtime.product {{ runtime.product | default('<undefined>') }}.
+      Valid values: {{ jdk_matrix.keys() | list | join(', ') }}.
+  tags: [model, validate]
+
+- name: Resolve the declared JDK against the matrix
+  ansible.builtin.set_fact:
+    _jdk_allowed: >-
+      {{ jdk_matrix[runtime.product].allowed
+         | selectattr('version', 'equalto', runtime.jdk.version | int)
+         | selectattr('vm', 'equalto', runtime.jdk.vm)
+         | list }}
+    _jdk_rejected: >-
+      {{ jdk_matrix[runtime.product].rejected | default([])
+         | selectattr('version', 'equalto', runtime.jdk.version | int)
+         | list }}
+  tags: [model, validate]
+
+- name: Refuse a JDK the product does not support
+  ansible.builtin.fail:
+    msg: >-
+      {{ runtime.product }} does not support Java {{ runtime.jdk.version }}
+      ({{ runtime.jdk.vm }}).
+      {{ (_jdk_rejected | first).reason | default('See README section 4.') }}
+  when: _jdk_allowed | length == 0
+  tags: [model, validate]
+
+- name: Surface the vendor warnings attached to the chosen JDK
+  ansible.builtin.debug:
+    msg: "{{ (_jdk_allowed | first).warn }}"
+  when: (_jdk_allowed | first).warn is defined
+  tags: [model, validate]
+
+- name: Refuse a diagnostic-only JDK outside an explicit diagnostic run
+  ansible.builtin.fail:
+    msg: >-
+      Java {{ runtime.jdk.version }} on {{ runtime.product }} is a diagnostic
+      step only. Set model_allow_diagnostic_jdk=true to run it deliberately,
+      and remember it is valid on machines only, never as an image.
+  when:
+    - (_jdk_allowed | first).diagnostic_only | default(false)
+    - not model_allow_diagnostic_jdk
+  tags: [model, validate]
+
+# ---------------------------------------------------------------------------
+# JVM intents
+# ---------------------------------------------------------------------------
+
+- name: Refuse intents that have no equivalent on the target product
+  ansible.builtin.fail:
+    msg: >-
+      Intent {{ item.key }} ({{ item.value.legacy_flag }}) cannot be expressed
+      on {{ runtime.product }}. {{ item.value.reason }}
+      Replacement: {{ item.value.replacement }}
+  loop: "{{ jvm_unsupported | dict2items }}"
+  when:
+    - item.key in (jvm | default({}))
+    - runtime.product in item.value.products
+  tags: [model, validate, jvm]
+
+- name: A container target must express the heap as a percentage, not a fixed size
+  ansible.builtin.fail:
+    msg: >-
+      {{ item }} is forbidden on {{ runtime.product }}: a fixed heap against a
+      pod memory limit is a guaranteed OOMKilled. Declare jvm.heap_percent
+      instead.
+  loop: [heap_min, heap_max]
+  when:
+    - runtime.product == 'liberty_ocp'
+    - item in (jvm | default({}))
+  tags: [model, validate, jvm]
+
+- name: A container target must declare the heap percentage
+  ansible.builtin.assert:
+    that:
+      - jvm.heap_percent is defined
+    fail_msg: >-
+      liberty_ocp requires jvm.heap_percent so the JVM sizes itself from the
+      pod memory limit.
+  when: runtime.product == 'liberty_ocp'
+  tags: [model, validate, jvm]
+
+- name: Warn about intents that need a persistent volume in a container
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.key }} needs a persistent volume on {{ runtime.product }},
+      otherwise it is lost or rebuilt on every pod restart.
+  loop: "{{ jvm_intents | dict2items }}"
+  when:
+    - runtime.product == 'liberty_ocp'
+    - item.key in (jvm | default({}))
+    - item.value.container | default('') == 'needs_volume'
+  tags: [model, jvm]
+
+- name: Render the JVM options for the declared VM
+  ansible.builtin.set_fact:
+    jvm_options_rendered: "{{ _rendered | reject('equalto', None) | reject('equalto', '') | list }}"
+  vars:
+    # j9 and openj9 share the same option surface for everything in the table;
+    # only hotspot differs, so it is the one that needs its own column.
+    _vm: "{{ 'hotspot' if runtime.jdk.vm == 'hotspot' else 'openj9' }}"
+    _rendered: >-
+      {%- set out = [] -%}
+      {%- for key, value in (jvm | default({})).items() -%}
+        {%- set spec = jvm_intents.get(key, {}).get(_vm, {}) -%}
+        {%- if spec.map is defined -%}
+          {%- set _ = out.append(spec.map.get(value | string, '')) -%}
+        {%- elif spec.flag is defined and spec.flag -%}
+          {%- if '%s' in spec.flag -%}
+            {%- set _ = out.append(spec.flag % (value | string)) -%}
+          {%- else -%}
+            {%- set _ = out.append(spec.flag) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [model, jvm]
+
+- name: Report the resolved target
+  ansible.builtin.debug:
+    msg:
+      - "environment : {{ was_environment }} - {{ was_env_long_name }} (letter {{ was_env_letter_upper }}, tier {{ was_env_tier }}, rank {{ was_env_rank }})"
+      - "channel     : {{ was_channel }} / {{ was_channel_lower }}"
+      - "cell        : {{ was_cell_name | default('n/a') }}"
+      - "product     : {{ runtime.product }} (phase {{ jdk_matrix[runtime.product].phase }})"
+      - "jdk         : Java {{ runtime.jdk.version }} / {{ runtime.jdk.vm }}"
+      - "admin plane : {{ jdk_matrix[runtime.product].admin_plane }}"
+      - "jvm options : {{ jvm_options_rendered | default([]) | join(' ') }}"
+  tags: [model]

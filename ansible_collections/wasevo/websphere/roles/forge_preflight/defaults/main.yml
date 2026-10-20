@@ -1,0 +1,141 @@
+---
+# Everything the WAS Evolution forge needs in order to run, declared in one
+# place so that a missing dependency is a named assertion failure instead of a
+# cryptic error three roles later.
+#
+# "Forge" covers two sides, and they have nothing in common:
+#
+#   control side - the Execution Environment or control node that runs Ansible
+#   target side  - the WAS/IHS hosts, and the OpenShift API for the Liberty plane
+#
+# Scope is driven by runtime.product, because the two planes need different
+# things: the traditional plane needs SSH and a staged Jython driver, the
+# Liberty plane needs an API endpoint and no SSH at all.
+
+# ---------------------------------------------------------------------------
+# Control side
+# ---------------------------------------------------------------------------
+
+forge_ansible_core_min: "2.15.0"
+
+# Collections, per plane. The traditional plane deliberately needs almost
+# nothing: the whole point of shipping a Jython driver as data is that the
+# Execution Environment carries no Java and no Jython.
+forge_collections:
+  common:
+    - { name: ansible.posix, version: ">=1.5.4" }
+    - { name: community.general, version: ">=8.0.0" }
+  traditional: []
+  liberty_more: []
+  liberty_ocp:
+    - { name: kubernetes.core, version: ">=3.0.0" }
+    - { name: redhat.openshift, version: ">=2.3.0" }
+
+# Python packages that must be importable in the Execution Environment.
+forge_python_packages:
+  common: []
+  traditional: []
+  liberty_more: []
+  liberty_ocp:
+    - { import_name: kubernetes, pip_name: kubernetes }
+    - { import_name: yaml, pip_name: PyYAML }
+
+# Command-line tools that must be on PATH. Kept short on purpose: anything
+# reachable through a module should go through the module, not a shell call.
+forge_control_commands:
+  common: []
+  traditional: []
+  liberty_more: []
+  liberty_ocp: []
+
+# Only needed by liberty/image_build (wave 4). Left empty by default because a
+# forge that delegates image builds to a BuildConfig or a Tekton pipeline has
+# no builder of its own, which is the preferred arrangement.
+forge_image_builder: ""          # "" | podman | buildah
+
+# ---------------------------------------------------------------------------
+# Target side - WAS and IHS hosts
+# ---------------------------------------------------------------------------
+
+# OS packages, per distribution family. Grounded in what the legacy playbooks
+# actually installed or implicitly relied on:
+#   psmisc  - provides killall, which manageprofiles needs. The legacy
+#             was_install playbook installed it as its very last task, after
+#             the profiles it is a prerequisite for.
+#   unzip, tar, gzip - Installation Manager unpacks with them
+#   gettext - imcl localisation (the legacy install passed -nl fr)
+forge_os_packages:
+  RedHat:
+    - psmisc
+    - unzip
+    - tar
+    - gzip
+    - gettext
+    - net-tools
+  Debian:
+    - psmisc
+    - unzip
+    - tar
+    - gzip
+    - gettext-base
+    - net-tools
+  AIX:
+    # AIX was entirely absent from the source repository - zero occurrences.
+    # These are the install-time prerequisites to confirm against the IBM
+    # prerequisite statement for the WAS level in use before wave 1 ships.
+    - bos.adt.libm
+    - bos.perf.perfstat
+    - xlC.aix61.rte
+
+# Kernel and shell limits the legacy repository deployed as files into
+# /etc/security/limits.d/. Declared as data so AIX can be given its own
+# equivalent rather than silently inheriting Linux values.
+forge_limits:
+  - { domain: "{{ was_admin_user }}", type: soft, item: nofile, value: 65536 }
+  - { domain: "{{ was_admin_user }}", type: hard, item: nofile, value: 65536 }
+  - { domain: "{{ was_admin_user }}", type: soft, item: nproc, value: 16384 }
+  - { domain: "{{ was_admin_user }}", type: hard, item: nproc, value: 16384 }
+
+# Directories that must exist before any install step. Derived from the paths
+# declared in the inventory, so changing a base path moves all of them.
+forge_required_dirs:
+  - "{{ was_app_base_dir }}"
+  - "{{ was_binaries_base_dir }}"
+  - "{{ was_profiles_base_dir }}"
+  - "{{ was_logs_base_dir }}"
+  - "{{ was_jython_dir }}"
+
+# Free space required, in megabytes, checked before an install or a fixpack.
+# A fixpack that runs out of space mid-apply leaves the installation in a state
+# that is far more expensive to recover than a refused playbook.
+forge_min_free_mb:
+  "{{ was_binaries_base_dir }}": 6144
+  "{{ was_logs_base_dir }}": 2048
+
+# ---------------------------------------------------------------------------
+# Target side - OpenShift
+# ---------------------------------------------------------------------------
+
+# Checked by name only. The preflight confirms the API answers and the
+# namespace is reachable; it does not create anything.
+forge_openshift_required_api_groups:
+  - apps.openshift.io
+  - route.openshift.io
+
+# The operator supplies the WebSphereLibertyApplication CRD. Without it the
+# deploy role has nothing to apply, and that is worth finding out before the
+# promotion workflow starts rather than at the PRD node.
+forge_openshift_required_crds:
+  - webspherelibertyapplications.liberty.websphere.ibm.com
+
+# ---------------------------------------------------------------------------
+# Behaviour
+# ---------------------------------------------------------------------------
+
+# When false, missing dependencies are reported and the play continues. Useful
+# for a first survey of an estate; never in a pipeline.
+forge_preflight_strict: true
+
+# Set true to skip the target-side checks, e.g. when validating only the model
+# and the control side in CI where no WAS host is reachable.
+forge_preflight_control_only: false

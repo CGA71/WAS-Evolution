@@ -1,0 +1,23 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 140
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  truthy:
+    # The model deliberately carries the strings "true" and "false" where WAS
+    # expects them literally; YAML turning those into booleans is the bug this
+    # project exists to avoid.
+    allowed-values: ["true", "false", "yes", "no"]
+  braces:
+    max-spaces-inside: 1
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+ignore: |
+  collections/ansible_collections/
+  rendered/

@@ -1,0 +1,11 @@
+---
+# Simulation site facts. Deliberately NOT a copy of the real 00_site.yml: there
+# is no file share and no DNS domain here, and pretending otherwise would make
+# the simulation lie about what it proves.
+site_dns_domain: was-sim.svc.cluster.local
+site_binaries_repository: "(none - the simulation has no IBM media)"
+site_binaries_repository_type: none
+site_timezone: Europe/Paris
+site_was_user: root
+site_was_group: root
+site_jython_dirname: jython-ansible

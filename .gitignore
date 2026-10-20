@@ -1,0 +1,36 @@
+# Ansible
+*.retry
+.ansible/
+collections/ansible_collections/
+*.pyc
+__pycache__/
+
+# Secrets - nothing of this kind belongs in this repository
+*.p12
+*.jks
+*.kdb
+*.rdb
+*.sth
+*.key
+*.pem
+vault-password*
+.vault_pass*
+
+# IBM binaries and installers - never versioned
+*.zip
+*.jar
+*.ear
+*.war
+repository.config
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.project
+.pydevproject
+.settings/
+
+# Local renders
+build/
+rendered/

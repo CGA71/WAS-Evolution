@@ -1,0 +1,16 @@
+---
+# Node agent profile creation, federation and configuration.
+#
+# Scheduled for: wave 1
+# Source material: pbk_nodeagent_creation_profil.yml, pbk_nodeagent_configure_profil.yml
+#
+# Not implemented yet. This file exists so the role is tracked, so the wave it
+# belongs to is recorded next to the code, and so a playbook that references it
+# fails with a clear message rather than a missing-role error.
+
+- name: Role not implemented yet
+  ansible.builtin.fail:
+    msg: >-
+      wasevo.websphere.traditional/profile_nodeagent is scheduled for wave 1 and is not implemented.
+      See README section 5 to 7 for the action list of that wave.
+  when: not (allow_unimplemented_roles | default(false))

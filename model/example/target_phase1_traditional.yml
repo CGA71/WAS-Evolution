@@ -1,0 +1,16 @@
+---
+# Phase 1 target: WAS ND 9.0 traditional on IBM SDK Java 8.
+# The only JDK the traditional engine supports.
+runtime:
+  product: traditional
+  jdk:
+    version: 8
+    vm: j9
+
+jvm:
+  heap_min: 2048M
+  heap_max: 2048M
+
+cell_name: Extranet_RIT
+cluster_name: ClusterEXT
+profile_path: /app/profiles/AppSrv

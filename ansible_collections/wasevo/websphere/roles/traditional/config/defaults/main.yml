@@ -1,0 +1,4 @@
+---
+was_jython_dir: /opt/exploit/scripts/jython-ansible
+was_admin_user: wsadmin
+was_admin_group: wsadmin

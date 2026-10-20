@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: liberty_image_build
+  description: "Build the Liberty image on a kernel-javaNN-openj9-ubi base, tag it, push it to the registry."
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+dependencies: []

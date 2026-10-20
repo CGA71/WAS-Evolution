@@ -1,0 +1,5 @@
+---
+# The simulation runs as RIT so the derived names match what the real RIT
+# inventory produces, which makes the rendered output comparable.
+was_environment: RIT
+was_channel: Extranet

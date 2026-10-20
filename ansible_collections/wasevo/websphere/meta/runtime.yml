@@ -1,0 +1,19 @@
+---
+requires_ansible: ">=2.15.0"
+
+action_groups:
+  # Every module that reaches a cell through wsadmin. Lets a play set
+  # module_defaults once for the whole traditional plane.
+  traditional:
+    - was_cluster
+    - was_cluster_member
+    - was_datasource
+    - was_jdbc_provider
+    - was_j2c_alias
+    - was_jvm_property
+    - was_jvm_env_var
+    - was_keystore
+    - was_virtualhost
+    - was_sibus
+    - was_webserver
+    - was_application

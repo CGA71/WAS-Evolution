@@ -1,0 +1,16 @@
+---
+# Read-only drift report: declared state versus live cell, runnable as --check --diff.
+#
+# Scheduled for: wave 1
+# Source material: new - the source repo has no verification plane at all
+#
+# Not implemented yet. This file exists so the role is tracked, so the wave it
+# belongs to is recorded next to the code, and so a playbook that references it
+# fails with a clear message rather than a missing-role error.
+
+- name: Role not implemented yet
+  ansible.builtin.fail:
+    msg: >-
+      wasevo.websphere.traditional/audit is scheduled for wave 1 and is not implemented.
+      See README section 5 to 7 for the action list of that wave.
+  when: not (allow_unimplemented_roles | default(false))

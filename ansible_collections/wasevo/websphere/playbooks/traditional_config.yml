@@ -1,0 +1,40 @@
+---
+# Traditional plane configuration. Always run with --check --diff first: the
+# whole point of the module approach is that the dry run tells the truth, which
+# the legacy marker-file approach could not.
+#
+#   ansible-playbook -i inventories/example \
+#       ansible_collections/wasevo/websphere/playbooks/traditional_config.yml \
+#       --check --diff
+
+- name: Configure a WAS ND cell
+  hosts: dmgr
+  gather_facts: true
+
+  module_defaults:
+    group/wasevo.websphere.traditional:
+      profile_path: "{{ was_profile_path }}"
+      admin_user: "{{ was_admin_user }}"
+      admin_password: "{{ was_admin_password }}"
+      jython_dir: "{{ was_jython_dir }}"
+
+  tasks:
+    - name: Stage the Jython driver on the target
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    - name: Validate the model before touching the cell
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+
+    - name: Declare the cluster
+      wasevo.websphere.was_cluster:
+        name: "{{ cluster_name }}"
+        cell_name: "{{ cell_name }}"
+        prefer_local: "true"
+        state: present
+      register: cluster_result
+
+    - name: Report
+      ansible.builtin.debug:
+        var: cluster_result.cluster
