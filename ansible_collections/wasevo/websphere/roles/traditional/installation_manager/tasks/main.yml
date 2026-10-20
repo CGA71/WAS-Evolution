@@ -188,7 +188,8 @@
           {{ im_unpack_dir }}/installc
           -acceptLicense
           -installationDirectory {{ im_installer_dir }}
-          -dataLocation {{ im_data_dir }}
+          -dataLocation {{ im_agent_data_dir }}
+          {{ ('-preferences ' ~ im_preferences_dir) if (im_preferences_dir | default('') | length > 0) else '' }}
           -log {{ im_install_log_dir }}/install_im.log
           -sVP
         creates: "{{ im_installer_cmd }}"
