@@ -1,0 +1,15 @@
+---
+# Phase 1. The lab exists to prove the traditional install plane.
+runtime:
+  product: traditional
+  jdk:
+    version: 8
+    vm: j9
+
+was_cell_name: "{{ was_channel }}_{{ was_env_upper }}"
+was_cluster_name: "ClusterEXT"
+was_console_label: "{{ was_channel }} {{ was_env_upper }} lab"
+
+was_base_port: 30000
+was_dmgr_soap_port: "{{ was_base_port | int + 5 }}"
+was_server_base_port: "{{ was_base_port | int - 20000 }}"

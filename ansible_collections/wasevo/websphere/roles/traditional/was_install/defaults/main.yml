@@ -1,0 +1,29 @@
+---
+# WebSphere Application Server for Developers v9.0.5.
+#
+# The offering id is DISCOVERED from the repository rather than hardcoded. The
+# editions differ only by that id - com.ibm.websphere.ND.v90,
+# com.ibm.websphere.BASE.v90, com.ibm.websphere.DEVELOPERS.v90 - and guessing
+# it produces an imcl error that reads like a licence problem. Asking the
+# repository what it contains is both correct and self-documenting.
+was_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_was90"
+
+# Restrict discovery to a WAS offering, so a repository that also carries the
+# SDK or the plugin does not match the wrong thing.
+was_package_filter: "com.ibm.websphere."
+
+# Set this to pin a specific offering when a repository contains more than one
+# WAS edition. Left empty, the role discovers it and fails if the choice is
+# ambiguous rather than picking one.
+was_package_id: ""
+
+# The level expected after install, asserted at the end. For the Developers
+# base install this is 9.0.0.0; the 9.0.5.x level comes from the fix pack,
+# which is the was_fixpack role.
+was_expected_version: "9.0.0.0"
+
+# The SDK is a separate offering in the same repository and is installed in the
+# same imcl call, because installing it afterwards means a second several-minute
+# Installation Manager run for no reason.
+was_install_sdk: true
+was_sdk_package_filter: "com.ibm.java.jdk."

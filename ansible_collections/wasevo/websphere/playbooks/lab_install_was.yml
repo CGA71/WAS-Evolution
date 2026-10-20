@@ -1,0 +1,28 @@
+---
+# Job 2 of the install workflow: WebSphere Application Server for Developers.
+#
+#   ansible-playbook -i inventories/lab \
+#       ansible_collections/wasevo/websphere/playbooks/lab_install_was.yml
+#
+# In AWX this is "WAS lab - 2. Install WAS for Developers", reached only on
+# success of job 1. It checks for imcl anyway: a job template can be launched
+# on its own, and the failure should name what is missing rather than die
+# inside a shell call.
+
+- name: Install WebSphere Application Server for Developers
+  hosts: "{{ lab_hosts | default('was_lab') }}"
+  gather_facts: true
+
+  pre_tasks:
+    - name: The media directory must exist before anything else
+      ansible.builtin.file:
+        path: "{{ was_media_dir }}"
+        state: directory
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "0755"
+      become: true
+      tags: [was]
+
+  roles:
+    - role: wasevo.websphere.traditional.was_install

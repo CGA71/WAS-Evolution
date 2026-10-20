@@ -1,0 +1,28 @@
+---
+# Job 1 of the install workflow: IBM Installation Manager.
+#
+#   ansible-playbook -i inventories/lab \
+#       ansible_collections/wasevo/websphere/playbooks/lab_install_im.yml
+#
+# In AWX this is "WAS lab - 1. Install IBM Installation Manager", and the
+# workflow runs job 2 only if this one succeeds. That edge is the whole reason
+# the two are separate playbooks: nothing downstream can work without imcl, and
+# a half-installed Installation Manager is worse than none.
+
+- name: Install IBM Installation Manager
+  hosts: "{{ lab_hosts | default('was_lab') }}"
+  gather_facts: true
+
+  pre_tasks:
+    - name: The media directory must exist before anything else
+      ansible.builtin.file:
+        path: "{{ im_media_dir }}"
+        state: directory
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "0755"
+      become: true
+      tags: [im]
+
+  roles:
+    - role: wasevo.websphere.traditional.installation_manager

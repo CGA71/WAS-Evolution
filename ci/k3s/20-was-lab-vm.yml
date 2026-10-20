@@ -1,0 +1,117 @@
+---
+# The lab VM: a real Rocky Linux 9 machine for a real IBM Installation Manager
+# and WAS for Developers install.
+#
+# Why a VM and not a container. The CI simulation uses Rocky 9 pods and a
+# wsadmin stub, which exercises the plumbing but installs nothing. Installation
+# Manager is different: it writes to /opt, registers an installation registry,
+# needs a genuine filesystem layout and enough disk, and manageprofiles expects
+# a working process tree. A container is the wrong shape for that; a VM is the
+# shape the real estate has.
+#
+# KubeVirt and CDI are already running on this cluster, so the VM costs nothing
+# extra to operate and is destroyed by deleting two objects.
+#
+# The cloud-init user data lives in a Secret, not in this file, so the SSH
+# public key is not carried in the repository:
+#
+#   kubectl -n was-lab create secret generic was-lab-cloudinit \
+#     --from-file=userdata=/path/to/userdata.yaml
+#
+# ci/k3s/make-lab-vm.sh builds that Secret and applies this manifest.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: was-lab
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/purpose: install-lab
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: was-lab-disk
+  namespace: was-lab
+  annotations:
+    # local-path binds WaitForFirstConsumer, so CDI is told to import now
+    # rather than wait for the VM to be scheduled.
+    cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+spec:
+  source:
+    http:
+      url: https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2
+  pvc:
+    accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        # The image is ~620 MB; the rest is for IM, the WAS binaries
+        # (~2.5 GB), a profile, and room for logs and a fixpack later.
+        storage: 40Gi
+    storageClassName: local-path
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: was-lab-01
+  namespace: was-lab
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+    was-evolution/role: was-lab
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: was-lab-01
+        was-evolution/role: was-lab
+    spec:
+      domain:
+        cpu:
+          cores: 4
+        resources:
+          requests:
+            # WAS 9.0 wants 2 GB minimum and is miserable there. A deployment
+            # manager plus one application server on 6 GB is comfortable for a
+            # lab, and the node has the headroom.
+            memory: 6Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+            - name: cloudinit
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+          networkInterfaceMultiqueue: true
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: was-lab-disk
+        - name: cloudinit
+          cloudInitNoCloud:
+            secretRef:
+              name: was-lab-cloudinit
+      terminationGracePeriodSeconds: 60
+---
+# Reachable from inside the cluster, which is where the AWX job pods run.
+apiVersion: v1
+kind: Service
+metadata:
+  name: was-lab-01
+  namespace: was-lab
+spec:
+  selector:
+    kubevirt.io/domain: was-lab-01
+  ports:
+    - { name: ssh, port: 22, targetPort: 22, protocol: TCP }
+    # The WAS administrative console and the default HTTP transport, so a
+    # smoke test can reach them without a Route.
+    - { name: wasadmin, port: 9043, targetPort: 9043, protocol: TCP }
+    - { name: washttp, port: 9080, targetPort: 9080, protocol: TCP }
