@@ -225,7 +225,8 @@
           -repositories {{ was_repository }}
           -installationDirectory {{ was_home }}
           -sharedResourcesDirectory {{ im_shared_resources_dir }}
-          -dataLocation {{ im_data_dir }}
+          -dataLocation {{ im_agent_data_dir }}
+          {{ ('-preferences ' ~ im_preferences_dir) if (im_preferences_dir | default('') | length > 0) else '' }}
           -log {{ im_install_log_dir }}/install_was.log
           -acceptLicense
           -nl {{ im_install_locale }}

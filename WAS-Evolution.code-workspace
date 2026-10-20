@@ -1,0 +1,39 @@
+{
+  "folders": [
+    { "name": "WAS Evolution", "path": "." }
+  ],
+  "settings": {
+    "files.associations": {
+      "*.yml": "ansible",
+      "*.yaml": "ansible",
+      "hosts.yml": "ansible",
+      "*.j2": "jinja"
+    },
+    "yaml.schemas": {
+      "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/playbook": [
+        "ansible_collections/wasevo/websphere/playbooks/*.yml"
+      ],
+      "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks": [
+        "ansible_collections/wasevo/websphere/roles/**/tasks/*.yml"
+      ]
+    },
+    "files.exclude": {
+      "**/__pycache__": true,
+      "rendered": true
+    },
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+      "README.md": "*.code-workspace, .gitignore, .gitattributes, .yamllint, ansible.cfg"
+    },
+    "editor.rulers": [80, 140],
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.eol": "\n"
+  },
+  "extensions": {
+    "recommendations": [
+      "redhat.ansible",
+      "redhat.vscode-yaml"
+    ]
+  }
+}

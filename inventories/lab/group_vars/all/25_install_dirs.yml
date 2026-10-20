@@ -1,0 +1,70 @@
+---
+# Installation directories. Every one of them, in one place.
+#
+# They were previously mixed into 20_paths.yml alongside log, dump and media
+# paths, which made them hard to find and left two of them declared only in a
+# role default - overridable in principle, invisible in practice.
+#
+# Each entry below names the Installation Manager or WAS flag it feeds, so the
+# mapping between an inventory variable and what IBM actually does with it is
+# written down rather than inferred from the role.
+#
+#   variable                   flag / meaning
+#   -------------------------  ------------------------------------------------
+#   im_installer_dir           installc -installationDirectory
+#                              where Installation Manager itself lives
+#   im_shared_resources_dir    imcl -sharedResourcesDirectory
+#                              shared across every IBM product on the host
+#   im_agent_data_dir          imcl -dataLocation
+#                              Installation Manager's own agent data and the
+#                              installation registry. Admin installs default
+#                              this to /var/ibm/InstallationManager; declaring
+#                              it keeps the whole footprint inside {{ was_app_base_dir }}
+#   im_install_log_dir         imcl -log
+#   im_unpack_dir              where the installer archive is unpacked before
+#                              installc runs. Scratch, removed afterwards
+#   im_preferences_dir         imcl -preferences, for repository and proxy
+#                              preferences. Empty means IBM's default
+#   was_home                   imcl -installationDirectory for WAS itself
+#   was_profiles_base_dir      manageprofiles -profilePath parent
+#
+# Changing a base in 20_paths.yml moves all of these with it; changing one here
+# moves only that one.
+
+# --- IBM Installation Manager --------------------------------------------
+
+im_installer_dir: "{{ was_binaries_base_dir }}/InstallationManager"
+im_installer_cmd: "{{ im_installer_dir }}/eclipse/tools/imcl"
+
+im_shared_resources_dir: "{{ was_binaries_base_dir }}/IMShared"
+
+# Agent data and the installation registry. An admin install puts this under
+# /var/ibm by default, which splits the product across two filesystems; keeping
+# it under the application base means one mount holds the whole installation.
+im_agent_data_dir: "{{ was_data_base_dir }}/IM/agentdata"
+
+im_install_log_dir: "{{ was_logs_base_dir }}/IM"
+
+# Scratch space for unpacking the installer archive. Removed after the install.
+im_unpack_dir: /tmp/im-installer
+
+# Optional. Empty means Installation Manager's own defaults; set it to point at
+# a preferences file carrying repository or proxy settings.
+im_preferences_dir: ""
+
+# --- WebSphere Application Server -----------------------------------------
+
+was_home: "{{ was_binaries_base_dir }}/was{{ was_version_short }}"
+was_manageprofiles_cmd: "{{ was_home }}/bin/manageprofiles.sh"
+was_managesdk_cmd: "{{ was_home }}/bin/managesdk.sh"
+was_jdbc_provider_dir: "{{ was_home }}/jdbcprovider"
+
+was_profiles_base_dir: "{{ was_app_base_dir }}/profiles"
+
+# --- Where the IBM media is staged ----------------------------------------
+# Not an installation directory, but it belongs next to them: these are the
+# two paths an operator has to put files into, and they were previously only
+# in a role default.
+
+im_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_im"
+was_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_was90"
