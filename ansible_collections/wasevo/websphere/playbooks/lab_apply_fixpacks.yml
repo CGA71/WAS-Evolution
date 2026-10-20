@@ -1,0 +1,25 @@
+---
+# The fixpack job. It appears TWICE in the workflow.
+#
+#   1. IM install
+#   2. THIS, pass 1   -> brings Installation Manager to the level WAS needs
+#   3. WAS / SDK / IHS / plugin install
+#   4. THIS, pass 2   -> patches what step 3 just installed
+#
+# One job template, two workflow nodes. That only works because the role
+# discovers what is installed rather than being handed a list: on pass 1 only
+# Installation Manager is there, on pass 2 everything is.
+#
+#   ansible-playbook -i inventories/lab \
+#       ansible_collections/wasevo/websphere/playbooks/lab_apply_fixpacks.yml \
+#       -e was_environment=RIT
+#
+# Finding no fixpack repository is a normal outcome, not a failure. The job
+# says what it found and where to put media, and exits green.
+
+- name: Apply IBM fixpacks
+  hosts: "{{ lab_hosts | default('was_lab') }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.was_fixpack

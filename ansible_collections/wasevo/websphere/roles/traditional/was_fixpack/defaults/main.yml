@@ -1,0 +1,82 @@
+---
+# Fixpack application, for every IBM product Installation Manager knows about.
+#
+# Discovery-driven on purpose. The job is placed TWICE in the workflow - once
+# right after Installation Manager, once at the end after the products are in -
+# and a single job can only be correct at both positions if it works out what
+# is installed rather than being handed a list. On the first pass only
+# Installation Manager is there; on the second, WAS, the SDK, IHS and the
+# plugin are too.
+
+# Where fixpack repositories are staged. Each subdirectory is an Installation
+# Manager repository: the role looks for repository.config, not for a name.
+was_fixpack_media_dir: "{{ was_install_binaries_base_dir }}/IBM/fixes"
+
+# Optional glob on the CONTROLLER, staged to the target when the target has
+# none. Same arrangement as the install media.
+was_fixpack_media_src: ""
+
+# Products the role will consider, by offering-id prefix. Anything installed
+# whose id starts with one of these is a candidate for update.
+#
+# Liberty appears here because a Liberty installed THROUGH Installation Manager
+# is fixpacked like any other offering. Liberty running as a container image is
+# not: there the level is the image tag and there is nothing to patch, so the
+# role skips itself for runtime.product == liberty_ocp rather than failing.
+was_fixpack_products:
+  installation_manager:
+    prefix: com.ibm.cic.agent
+    label: IBM Installation Manager
+    # Installation Manager updates itself, so it goes first and alone. imcl
+    # cannot rewrite the directory it is running from in the same transaction
+    # as other offerings.
+    order: 10
+    self_update: true
+  sdk:
+    prefix: com.ibm.java.jdk
+    label: IBM SDK Java
+    # The SDK goes with WAS in one transaction: their levels are coupled and a
+    # WAS fixpack expects a matching SDK.
+    order: 30
+  was:
+    prefix: com.ibm.websphere.ND
+    label: WAS Network Deployment
+    order: 30
+  was_base:
+    prefix: com.ibm.websphere.BASE
+    label: WAS Base
+    order: 30
+  was_developers:
+    prefix: com.ibm.websphere.DEVELOPERS
+    label: WAS for Developers
+    order: 30
+  liberty:
+    prefix: com.ibm.websphere.liberty
+    label: WebSphere Liberty
+    order: 30
+  ihs:
+    prefix: com.ibm.websphere.IHS
+    label: IBM HTTP Server
+    order: 40
+  plugin:
+    prefix: com.ibm.websphere.PLG
+    label: WAS web server plugin
+    order: 40
+
+# Refuse to apply a WAS fixpack without a matching SDK fixpack in the same
+# repository set. Mismatched levels are a documented foot-gun and the failure
+# surfaces much later, on a server that will not start.
+was_fixpack_require_sdk_with_was: true
+
+# The level the estate should reach. Asserted after the run for the products
+# that were updated. Empty means "whatever the repositories offer", which is
+# right for a lab and wrong for an estate - set it per environment.
+was_fixpack_target_version: ""
+
+# A fixpack that runs out of disk halfway leaves an installation that costs far
+# more to recover than a refused playbook.
+was_fixpack_min_free_mb: 4096
+
+# Installation Manager can roll back an update it applied, but only if the
+# rollback data was kept. Keeping it costs disk and is worth it.
+was_fixpack_keep_rollback: true
