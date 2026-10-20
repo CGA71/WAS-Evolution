@@ -1,31 +1,25 @@
 ---
-# The first gate. Validates the model against the product x JDK matrix and the
-# JVM intent table without touching anything.
+# The first gate. Validates the model against the environment catalogue, the
+# product x JDK matrix and the JVM intent table, without touching anything.
 #
-#   ansible-playbook ansible_collections/wasevo/websphere/playbooks/model_validate.yml \
-#       -e model_target=target_phase2_liberty_more.yml
+#   ansible-playbook -i inventories/was \
+#       ansible_collections/wasevo/websphere/playbooks/model_validate.yml \
+#       -e was_environment=RA
 #
-# Run this in CI on every merge request: an invalid combination is rejected
+# Run this in CI for every environment: an invalid combination is rejected
 # here rather than discovered halfway through a deployment.
+#
+# It runs on localhost but reads the inventory, so the environment group vars
+# are the ones that will actually apply at run time.
 
-- name: Validate the shared model
-  hosts: localhost
-  connection: local
+- name: Validate the model for one environment
+  hosts: "{{ was_environment | default('rit') | lower }}"
   gather_facts: false
-
-  vars:
-    model_dir: "{{ playbook_dir }}/../../../../model/example"
-    model_target: target_phase2_liberty_more.yml
+  # One host is enough: the model is per environment, not per host.
+  run_once: true
+  connection: local
 
   tasks:
-    - name: Load the shared model
-      ansible.builtin.include_vars:
-        file: "{{ model_dir }}/common.yml"
-
-    - name: Load the target definition
-      ansible.builtin.include_vars:
-        file: "{{ model_dir }}/{{ model_target }}"
-
     - name: Validate
       ansible.builtin.include_role:
         name: wasevo.websphere.model

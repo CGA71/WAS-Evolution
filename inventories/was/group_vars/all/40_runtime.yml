@@ -1,0 +1,25 @@
+---
+# Runtime defaults. An environment moving along the trajectory overrides this
+# in its own group_vars/<env>.yml - see ra.yml, which is the phase 2 pilot.
+#
+# This is the single switch that decides which back-end runs: wsadmin modules,
+# or render plus kubernetes.core. The model role refuses an invalid
+# product / JDK pair at render time.
+
+runtime:
+  product: traditional
+  jdk:
+    version: 8
+    vm: j9
+
+# WAS object names, derived from the two inputs. Change was_environment at
+# launch and all of these follow.
+was_cell_name: "{{ was_channel }}_{{ was_env_upper }}"
+was_cluster_name: "Cluster{{ was_channel[:3] | upper }}"
+was_console_label: "{{ was_channel }} {{ was_env_upper }}"
+
+# Port base, offset per environment so two can share a host during a
+# migration. Overridden per environment.
+was_base_port: 30000
+was_dmgr_soap_port: "{{ was_base_port | int + 5 }}"
+was_server_base_port: "{{ was_base_port | int - 20000 }}"

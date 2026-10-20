@@ -19,6 +19,7 @@ tags:
   - middleware
 dependencies:
   kubernetes.core: ">=3.0.0"
+  community.okd: ">=2.0.0"
   ansible.posix: ">=1.5.4"
 repository: https://github.com/CGA71/WAS-Evolution
 build_ignore:

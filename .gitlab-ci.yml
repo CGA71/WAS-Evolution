@@ -65,58 +65,48 @@ syntax:
   script:
     - ansible-playbook --syntax-check $COLLECTION/playbooks/model_validate.yml
     - ansible-playbook --syntax-check $COLLECTION/playbooks/pilot_render_matrix.yml
-    - ansible-playbook -i inventories/rit --syntax-check $COLLECTION/playbooks/forge_preflight.yml
-    - ansible-playbook -i inventories/rit --syntax-check $COLLECTION/playbooks/traditional_config.yml
-
-# The site facts are duplicated per environment on purpose - Ansible cannot
-# merge a shared group_vars across separate inventories without a symlink,
-# which does not survive a Windows checkout. The duplication is therefore
-# checked rather than trusted.
-site-vars-drift:
-  extends: .static
-  stage: validate
-  script:
-    - |
-      set -e
-      ref=$(sha256sum inventories/rit/group_vars/all/00_site.yml | cut -d' ' -f1)
-      rc=0
-      for f in inventories/*/group_vars/all/00_site.yml; do
-        case "$f" in inventories/k3s_sim/*) continue ;; esac
-        got=$(sha256sum "$f" | cut -d' ' -f1)
-        if [ "$got" != "$ref" ]; then echo "DRIFT: $f"; rc=1; else echo "ok:    $f"; fi
-      done
-      [ $rc -eq 0 ] || { echo; echo "00_site.yml must be identical in every environment."; exit 1; }
-      echo "site facts identical across environments"
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/forge_preflight.yml
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_config.yml
 
 # Every environment must validate, production must be refused unless
 # acknowledged, and the diagnostic JDK must be refused unless asked for.
+# The environment is a launch input, so the loop passes it as one - exactly as
+# the AWX Survey will.
 model-matrix:
   extends: .static
   stage: validate
   script:
     - |
       set -e
-      for env in rit ra ru; do
+      for env in RIT RA RU; do
         echo "=============== $env ==============="
-        ansible-playbook -i inventories/$env $COLLECTION/playbooks/model_validate.yml
+        ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+          -e was_environment=$env
       done
     - |
-      echo "=============== prd must be refused ==============="
-      if ansible-playbook -i inventories/prd $COLLECTION/playbooks/model_validate.yml; then
+      echo "=============== PRD must be refused ==============="
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+           -e was_environment=PRD; then
         echo "FAIL: production was accepted without acknowledgement"; exit 1
       fi
       echo "refused as expected"
     - |
       set -e
-      echo "=============== prd passes once acknowledged ==============="
-      ansible-playbook -i inventories/prd $COLLECTION/playbooks/model_validate.yml \
-        -e model_allow_production=true
+      echo "=============== PRD passes once acknowledged ==============="
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+        -e was_environment=PRD -e model_allow_production=true
+    - |
+      echo "=============== an unknown environment must be refused ==============="
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+           -e was_environment=NOPE; then
+        echo "FAIL: an unknown environment was accepted"; exit 1
+      fi
+      echo "refused as expected"
     - |
       echo "=============== the diagnostic JDK must be refused ==============="
-      if ansible-playbook -i inventories/rit $COLLECTION/playbooks/model_validate.yml \
+      if ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml \
            -e model_target=example_diagnostic_only.yml; then
-        echo "FAIL: the diagnostic JDK was accepted without model_allow_diagnostic_jdk"
-        exit 1
+        echo "FAIL: the diagnostic JDK was accepted"; exit 1
       fi
       echo "refused as expected"
 
@@ -125,7 +115,7 @@ pilot-render:
   extends: .static
   stage: validate
   script:
-    - ansible-playbook -i inventories/rit $COLLECTION/playbooks/pilot_render_matrix.yml
+    - ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml
   artifacts:
     paths: [rendered/]
     expire_in: 1 week

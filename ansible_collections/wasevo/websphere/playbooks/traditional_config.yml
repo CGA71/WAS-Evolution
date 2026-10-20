@@ -1,14 +1,18 @@
 ---
-# Traditional plane configuration. Always run with --check --diff first: the
-# whole point of the module approach is that the dry run tells the truth, which
-# the legacy marker-file approach could not.
+# Traditional plane configuration, for ONE environment chosen at launch.
 #
-#   ansible-playbook -i inventories/example \
-#       ansible_collections/wasevo/websphere/playbooks/traditional_config.yml \
-#       --check --diff
+# The host pattern is the intersection of an environment group and a role
+# group, so the environment is an input rather than a directory:
+#
+#   AWX  : the Survey question "Target environment" sets was_environment
+#   shell: ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# Always run with --check --diff first. The whole point of the module approach
+# is that the dry run tells the truth, which the legacy marker-file approach
+# could not.
 
-- name: Configure a WAS ND cell
-  hosts: dmgr
+- name: Configure the deployment manager
+  hosts: "{{ was_environment | default('rit') | lower }}:&dmgr"
   gather_facts: true
 
   module_defaults:
@@ -19,6 +23,17 @@
       jython_dir: "{{ was_jython_dir }}"
 
   tasks:
+    - name: The chosen environment must actually exist in the inventory
+      ansible.builtin.assert:
+        that:
+          - (was_environment | lower) in groups
+        fail_msg: >-
+          No inventory group named {{ was_environment | lower }}. Known
+          environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
+          'dmgr', 'nodeagents', 'ihs']) | list | join(', ') }}.
+      run_once: true
+      delegate_to: localhost
+
     - name: Stage the Jython driver on the target
       ansible.builtin.include_role:
         name: wasevo.websphere.traditional.config
@@ -29,12 +44,15 @@
 
     - name: Declare the cluster
       wasevo.websphere.was_cluster:
-        name: "{{ cluster_name }}"
-        cell_name: "{{ cell_name }}"
+        name: "{{ was_cluster_name }}"
+        cell_name: "{{ was_cell_name }}"
         prefer_local: "true"
         state: present
       register: cluster_result
 
     - name: Report
       ansible.builtin.debug:
-        var: cluster_result.cluster
+        msg:
+          - "environment : {{ was_environment }} ({{ was_env_long_name }})"
+          - "cell        : {{ was_cell_name }}"
+          - "cluster     : {{ cluster_result.cluster | default({}) }}"

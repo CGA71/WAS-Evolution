@@ -1,0 +1,6 @@
+---
+# The deployment manager, in any environment.
+was_profile_name: "{{ was_dmgr_profile_name }}"
+was_profile_path: "{{ was_dmgr_profile_path }}"
+was_node_name: "{{ was_env_letter_upper }}DmgrNode"
+was_service_name: wasdmgr

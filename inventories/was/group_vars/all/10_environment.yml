@@ -1,0 +1,23 @@
+---
+# THE environment input.
+#
+# Supplied at launch. In AWX it comes from the Survey question "Target
+# environment", whose variable is was_environment and whose answers are the
+# codes below. Extra variables outrank group_vars, so the Survey answer wins
+# over the default here.
+#
+# On the command line:
+#     ansible-playbook -i inventories/was <playbook> -e was_environment=RA
+#
+# Defaulted to RIT so a run with no input lands on the least dangerous
+# environment rather than failing or, worse, guessing production.
+#
+# Everything else about the environment - long name, letter, tier, promotion
+# rank - is looked up from was_environment_catalog in
+# roles/model/vars/environments.yml. The source inventory needed eight
+# hand-written variables for that, two of which held the same string.
+
+was_environment: RIT
+
+# The channel is a second, independent input. Also a Survey question.
+was_channel: Extranet
