@@ -240,7 +240,8 @@
 - name: Report the resolved target
   ansible.builtin.debug:
     msg:
-      - "environment : {{ was_environment }} - {{ was_env_long_name }} (letter {{ was_env_letter_upper }}, tier {{ was_env_tier }}, rank {{ was_env_rank }})"
+      - "environment : {{ was_environment }} - {{ was_env_long_name }}"
+      - "              letter {{ was_env_letter_upper }}, tier {{ was_env_tier }}, rank {{ was_env_rank }}"
       - "channel     : {{ was_channel }} / {{ was_channel_lower }}"
       - "cell        : {{ was_cell_name | default('n/a') }}"
       - "product     : {{ runtime.product }} (phase {{ jdk_matrix[runtime.product].phase }})"
