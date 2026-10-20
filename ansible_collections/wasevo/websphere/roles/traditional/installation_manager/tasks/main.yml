@@ -43,10 +43,15 @@
          or (_found | length == 0)
          or (_found is version(im_required_version, '<')) }}
   vars:
-    _found: >-
-      {{ (im_version_out.stdout | default('')
-          | regex_search('Installation Manager[^0-9]*([0-9]+(\.[0-9]+)+)', '\1')
-          | first) | default('', true) }}
+    # Pull every dotted number of three or more parts out of the output and
+    # take the first. Anchoring on a label does not survive: imcl prints
+    # "Version: 1.10.1004.20260506_0701" on some levels and the product name
+    # on others, and regex_search returns None when it misses - which then
+    # breaks `first` rather than yielding an empty string.
+    _nums: >-
+      {{ im_version_out.stdout | default('')
+         | regex_findall('[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)*') }}
+    _found: "{{ _nums[0] | default('') }}"
   tags: [im]
 
 - name: Report what was found
@@ -214,15 +219,15 @@
       - _im_found is version(im_required_version, '>=')
     fail_msg: >-
       Installation Manager reports
-      {{ _im_found | default('an unreadable version') }}, below the required
-      {{ im_required_version }}. WAS 9.0 fix packs need 1.8.5 or later, so an
-      older Installation Manager fails later instead of here.
+      {{ _im_found | default('no readable version') }}, which does not meet the
+      floor of {{ im_required_version }}. WAS 9.0 fix packs need 1.8.5 or
+      later, so an older Installation Manager fails on the fix pack rather than
+      here. Full output: {{ im_verify.stdout_lines | default([]) | join(' | ') }}
     success_msg: "Installation Manager {{ _im_found }} >= {{ im_required_version }}"
   vars:
-    _im_found: >-
-      {{ (im_verify.stdout
-          | regex_search('Installation Manager[^0-9]*([0-9]+(\.[0-9]+)+)', '\1')
-          | first) | default('', true) }}
+    _nums: >-
+      {{ im_verify.stdout | regex_findall('[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)*') }}
+    _im_found: "{{ _nums[0] | default('') }}"
   tags: [im, verify]
 
 - name: Summary
