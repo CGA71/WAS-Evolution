@@ -1,16 +1,295 @@
 ---
-# Node agent profile creation, federation and configuration.
+# Federated node profile creation. The node agent is the product of it.
 #
-# Scheduled for: wave 1
-# Source material: pbk_nodeagent_creation_profil.yml, pbk_nodeagent_configure_profil.yml
+# Same shape as profile_dmgr: a response file rendered from the model, handed
+# to manageprofiles, removed afterwards. What is specific here is the
+# federation - where the deployment manager is, and on which SOAP port.
 #
-# Not implemented yet. This file exists so the role is tracked, so the wave it
-# belongs to is recorded next to the code, and so a playbook that references it
-# fails with a clear message rather than a missing-role error.
+# NEITHER OF THOSE IS ASKED FOR. The inventory already says which host is the
+# deployment manager, and the deployment manager itself says which port it
+# listens on. Asking an operator to retype either creates two sources that can
+# disagree, and the disagreement surfaces as a node that will not federate.
 
-- name: Role not implemented yet
-  ansible.builtin.fail:
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [profile, nodeagent, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [profile, nodeagent, always]
+
+- name: A standalone topology has no node to federate
+  ansible.builtin.debug:
     msg: >-
-      wasevo.websphere.traditional/profile_nodeagent is scheduled for wave 1 and is not implemented.
-      See README section 5 to 7 for the action list of that wave.
-  when: not (allow_unimplemented_roles | default(false))
+      was_topology is "{{ was_topology }}", so there is no cell to join. A
+      standalone server is its own administrative domain - see the
+      profile_standalone role.
+  when: was_topology != 'nd'
+  tags: [profile, nodeagent]
+
+- name: Create the federated node profile
+  when: was_topology == 'nd'
+  tags: [profile, nodeagent]
+  block:
+
+    - name: WebSphere must be installed
+      ansible.builtin.stat:
+        path: "{{ was_manageprofiles_cmd }}"
+      register: node_mp
+      check_mode: false
+      when: not (profile_render_only | bool)
+
+    - name: Refuse clearly when WebSphere is missing
+      ansible.builtin.fail:
+        msg: >-
+          No manageprofiles.sh at {{ was_manageprofiles_cmd }}. The install job
+          has to succeed before a profile can be created.
+      when:
+        - not (profile_render_only | bool)
+        - not (node_mp.stat.exists | default(false))
+
+    # ------------------------------------------------------------------
+    # Where is the deployment manager, and on which port?
+    # ------------------------------------------------------------------
+    - name: The inventory must name a deployment manager host
+      ansible.builtin.assert:
+        that:
+          - (groups[was_dmgr_group | default('dmgr')] | default([])) | length > 0
+        fail_msg: >-
+          was_topology is nd, but this inventory has no host in the
+          "{{ was_dmgr_group | default('dmgr') }}" group. A node federates into
+          a cell, so the deployment manager has to be declared. Groups present:
+          {{ groups.keys() | reject('in', ['all', 'ungrouped']) | list | join(', ') }}.
+        success_msg: "deployment manager group has hosts"
+
+    - name: Resolve the deployment manager and its SOAP port
+      ansible.builtin.set_fact:
+        profile_dmgr_host: >-
+          {{ hostvars[_dmgr].ansible_fqdn | default(hostvars[_dmgr].ansible_host)
+             | default(_dmgr, true) }}
+        # The port the deployment manager REALLY got, published by profile_dmgr
+        # when that host is in the same run. Across separate AWX jobs there are
+        # no facts to inherit, so the inventory value is the fallback - and the
+        # reachability check below is what turns a stale value into a readable
+        # failure instead of an addNode exception.
+        profile_dmgr_soap_port: >-
+          {{ hostvars[_dmgr].was_dmgr_soap_port_actual
+             | default(was_dmgr_soap_port, true) }}
+        profile_dmgr_source: >-
+          {{ 'read from the deployment manager in this run'
+             if (hostvars[_dmgr].was_dmgr_soap_port_actual | default('') | length > 0)
+             else 'from the inventory, not verified against a live profile' }}
+      vars:
+        _dmgr: "{{ (groups[was_dmgr_group | default('dmgr')] | default([])) | first }}"
+
+    - name: Report what the federation will use
+      ansible.builtin.debug:
+        msg:
+          - "topology : {{ was_topology }}"
+          - "profile  : {{ was_profile_name }} at {{ was_profile_path }}"
+          - "node     : {{ was_node_name }}"
+          - "dmgr     : {{ profile_dmgr_host }}:{{ profile_dmgr_soap_port }}"
+          - "port     : {{ profile_dmgr_source }}"
+          - "federate : {{ 'later' if profile_federate_later | bool else 'during creation' }}"
+
+    # Checked from the node, not from the controller: the controller reaching
+    # the deployment manager proves nothing about whether this node can.
+    - name: The deployment manager must be listening before a node is federated
+      ansible.builtin.wait_for:
+        host: "{{ profile_dmgr_host }}"
+        port: "{{ profile_dmgr_soap_port | int }}"
+        timeout: "{{ profile_dmgr_wait_seconds | int }}"
+        state: started
+      when:
+        - not (profile_federate_later | bool)
+        - not (profile_render_only | bool)
+      register: node_dmgr_reachable
+      failed_when: false
+
+    - name: Refuse with the real reason when it is not
+      ansible.builtin.fail:
+        msg: >-
+          Nothing is listening on {{ profile_dmgr_host }}:{{ profile_dmgr_soap_port }}
+          from {{ inventory_hostname }}, after
+          {{ profile_dmgr_wait_seconds }}s. The SOAP port used here comes
+          {{ profile_dmgr_source }}.
+          Federation would fail inside addNode with an exception that reads
+          like a credential problem, so it is refused here instead. Either the
+          deployment manager is not started, or the port is not the one it
+          actually listens on - read
+          {{ was_dmgr_profile_path | default('<dmgr profile>') }}/properties/portdef.props
+          on the deployment manager and set was_dmgr_soap_port to match.
+      when:
+        - not (profile_federate_later | bool)
+        - not (profile_render_only | bool)
+        - node_dmgr_reachable is failed or (node_dmgr_reachable.state | default('')) != 'started'
+
+    - name: Administrative credentials must be supplied to federate
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Federating into a cell with administrative security enabled needs
+          was_admin_user and was_admin_password - the deployment manager's
+          administrator, not a local account. Supply them from an AWX
+          credential or a vault.
+        success_msg: "administrative credentials supplied"
+      when:
+        - not (profile_federate_later | bool)
+        - profile_dmgr_admin_security | default(true) | bool
+
+    # ------------------------------------------------------------------
+    # Does it already exist?
+    # ------------------------------------------------------------------
+    - name: List the profiles that exist
+      ansible.builtin.command:
+        cmd: "{{ was_manageprofiles_cmd }} -listProfiles"
+      register: node_profiles
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      become: true
+      when: not (profile_render_only | bool)
+
+    - name: Decide whether the profile has to be created
+      ansible.builtin.set_fact:
+        # Render-only has nothing to ask, so it always renders.
+        node_needs_create: >-
+          {{ true if (profile_render_only | bool)
+             else (not (node_profiles.stdout | default('')
+                   is search('(^|[\[, ])' ~ (was_profile_name | regex_escape) ~ '([,\] ]|$)'))) }}
+
+    - name: Report the decision
+      ansible.builtin.debug:
+        msg: >-
+          existing: {{ node_profiles.stdout | default('(none)') | trim }} --
+          {{ 'create ' ~ was_profile_name if node_needs_create
+             else was_profile_name ~ ' already exists, nothing to do' }}
+
+    - name: Create
+      when: node_needs_create
+      block:
+
+        - name: The response directory must exist
+          ansible.builtin.file:
+            path: "{{ profile_response_dir }}"
+            state: directory
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0750"
+          become: true
+
+        - name: Render the ports file when the inventory pins ports
+          ansible.builtin.template:
+            src: ports.node.j2
+            dest: "{{ profile_response_dir }}/ports.{{ was_node_name }}"
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0640"
+          become: true
+          when: profile_node_ports | length > 0
+
+        # Carries the deployment manager's administrative password while it
+        # exists, hence 0600 and no_log.
+        - name: Render the response file
+          ansible.builtin.template:
+            src: managed.responsefile.j2
+            dest: "{{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0600"
+          become: true
+          no_log: true
+          vars:
+            profile_node_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
+
+        - name: Show the rendered response file, with the password masked
+          ansible.builtin.shell:
+            # One line on purpose: a folded scalar keeps the newline of a
+            # more-indented continuation, which turned the second -e into its
+            # own shell command.
+            cmd: "sed -e 's/^adminPassword=.*/adminPassword=<masked>/' -e 's/^dmgrAdminPassword=.*/dmgrAdminPassword=<masked>/' {{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
+          changed_when: false
+          become: true
+          when: profile_render_only | bool
+          register: node_rendered
+
+        - name: The rendered response file
+          ansible.builtin.debug:
+            msg: "{{ node_rendered.stdout_lines | default([]) }}"
+          when: profile_render_only | bool
+
+        - name: Create and federate the profile from the response file
+          ansible.builtin.command:
+            cmd: >-
+              {{ was_manageprofiles_cmd }} -response
+              {{ profile_response_dir }}/{{ was_profile_name }}.responsefile
+            creates: "{{ was_profile_path }}/bin/startNode.sh"
+          become: true
+          when: not (profile_render_only | bool)
+          async: 1800
+          poll: 15
+          register: node_create
+
+        - name: Show the tail of the creation output
+          ansible.builtin.debug:
+            msg: "{{ (node_create.stdout_lines | default([]))[-25:] }}"
+          when: not (profile_render_only | bool)
+
+      always:
+
+        - name: Remove the rendered response file
+          ansible.builtin.file:
+            path: "{{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
+            state: absent
+          become: true
+          when: not (profile_keep_response | bool)
+
+    # ------------------------------------------------------------------
+    # Verify
+    # ------------------------------------------------------------------
+    - name: The node agent scripts must exist
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/startNode.sh"
+      register: node_start
+      check_mode: false
+      when: not (profile_render_only | bool)
+
+    - name: Refuse when the profile did not land
+      ansible.builtin.assert:
+        that:
+          - node_start.stat.exists | default(false)
+        fail_msg: >-
+          manageprofiles reported no error but
+          {{ was_profile_path }}/bin/startNode.sh does not exist. Read
+          {{ was_home }}/logs/manageprofiles/{{ was_profile_name }}_create.log
+          on the target.
+        success_msg: "{{ was_profile_name }} is a usable node profile"
+      when: not (profile_render_only | bool)
+
+    # A managed profile that exists but never joined the cell is the failure
+    # mode worth naming: everything downstream then succeeds locally and the
+    # deployment manager knows nothing about the node.
+    - name: The node must actually be in a cell
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/config/cells"
+      register: node_cells
+      check_mode: false
+      when:
+        - not (profile_federate_later | bool)
+        - not (profile_render_only | bool)
+
+    - name: Report the federation
+      ansible.builtin.debug:
+        msg: >-
+          {{ was_node_name }}
+          {{ 'federated into a cell under ' ~ was_profile_path ~ '/config/cells'
+             if (node_cells.stat.exists | default(false))
+             else 'is NOT federated - the profile exists but config/cells is absent' }}
+      when:
+        - not (profile_federate_later | bool)
+        - not (profile_render_only | bool)

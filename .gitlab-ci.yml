@@ -225,6 +225,79 @@ sim:configure:
     paths: [run1.log, run2.log]
     expire_in: 1 week
 
+# The profile roles, proven without creating a profile.
+#
+# The pipeline simulates the AWX behaviour and deploys nothing, so the response
+# file is what is asserted on: profile_render_only renders it, runs every
+# decision and refusal that does not need the product, and never calls
+# manageprofiles. There is no WAS in these pods and there is not meant to be.
+#
+# Both topologies are exercised, because the one that is not exercised is the
+# one that breaks: nd renders a management template on the deployment manager
+# and a managed template on each node, standalone renders a default template
+# and refuses to build a cluster.
+sim:profiles:
+  extends: .k3s
+  stage: simulate
+  needs: [sim:preflight]
+  script:
+    - |
+      echo "=============== nd: render only ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml         -e was_topology=nd -e profile_render_only=true -e profile_keep_response=true         -e was_admin_user=ci -e was_admin_password=render-only         | tee nd.log
+    - |
+      set -e
+      echo "=============== nd: what was rendered must be ND ==============="
+      # Asserted on the rendered artefact, not on a log line: the response file
+      # is the contract between this collection and manageprofiles.
+      kubectl -n was-sim-dmgr exec was-dmgr-01 --         cat /app/data/profiles/*.responsefile > rendered-dmgr.txt
+      kubectl -n was-sim-nodeagents exec was-node-01 --         cat /app/data/profiles/*.responsefile > rendered-node.txt
+      for want in "profileTemplates/management" "serverType=DEPLOYMENT_MANAGER" "cellName=" "nodeName="; do
+        grep -q "$want" rendered-dmgr.txt || { echo "dmgr response file lacks $want"; exit 1; }
+      done
+      for want in "profileTemplates/managed" "federateLater=false" "dmgrHost=" "dmgrPort="; do
+        grep -q "$want" rendered-node.txt || { echo "node response file lacks $want"; exit 1; }
+      done
+      # A standalone template on a node would mean an unfederated server that
+      # looks healthy and is in no cell.
+      grep -q "profileTemplates/default" rendered-node.txt && { echo "node rendered a standalone template"; exit 1; }
+      echo "both ND response files carry what manageprofiles needs"
+    - |
+      echo "=============== standalone: render only ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml         -e was_topology=standalone -e profile_render_only=true -e profile_keep_response=true         -e was_admin_user=ci -e was_admin_password=render-only         | tee standalone.log
+    - |
+      set -e
+      echo "=============== standalone: no cluster, no federation ==============="
+      grep -q "no cluster" standalone.log || { echo "the standalone topology did not report that it cannot cluster"; exit 1; }
+      grep -q "there is no deployment manager to create" standalone.log || { echo "profile_dmgr did not stand down on a standalone run"; exit 1; }
+      grep -q "there is no cell to join" standalone.log || { echo "profile_nodeagent did not stand down on a standalone run"; exit 1; }
+      echo "standalone built one cell and refused the ND machinery"
+    - |
+      echo "=============== an unknown topology must be refused ==============="
+      set +e
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml         -e was_topology=whatever -e profile_render_only=true > refused.log 2>&1
+      rc=$?
+      set -e
+      [ "$rc" -ne 0 ] || { echo "a topology of 'whatever' was accepted"; exit 1; }
+      grep -q 'accepted values are' refused.log || { echo "the refusal did not say what is accepted"; exit 1; }
+      echo "refused, and the message says what the two values are"
+    - |
+      echo "=============== nothing was deployed ==============="
+      set -e
+      # The point of the whole job: no profile, no product, anywhere.
+      for ns_pod in was-sim-dmgr/was-dmgr-01 was-sim-nodeagents/was-node-01 was-sim-nodeagents/was-node-02; do
+        ns="${ns_pod%%/*}"; pod="${ns_pod##*/}"
+        kubectl -n "$ns" exec "$pod" -- sh -c '
+          test ! -d /app/profiles/Dmgr_* 2>/dev/null
+          test ! -x /app/binaries/was90/bin/manageprofiles.sh
+        ' || { echo "$pod has something installed - this job must not deploy"; exit 1; }
+        kubectl -n "$ns" exec "$pod" -- rm -rf /app/data/profiles
+      done
+      echo "no profile and no product on any simulated host"
+  artifacts:
+    when: always
+    paths: [nd.log, standalone.log, refused.log, rendered-dmgr.txt, rendered-node.txt]
+    expire_in: 1 week
+
 sim:isolation:
   extends: .k3s
   stage: simulate

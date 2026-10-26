@@ -1,0 +1,13 @@
+{#
+  manageprofiles -portsFile. A properties file, keyed exactly as the profile
+  template's portdef.props names each endpoint. Only rendered when the
+  inventory supplies profile_dmgr_ports; an empty map means -startingPort is
+  used instead and this file is never written.
+
+  The keys are not invented here. Whatever the inventory declares is what is
+  written, so a site that pins three ports pins three and leaves the rest to
+  the template.
+#}
+{% for key, value in profile_dmgr_ports | dictsort %}
+{{ key }}={{ value }}
+{% endfor %}

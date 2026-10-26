@@ -25,6 +25,17 @@
       "choices": "Extranet\nIntranet"
     },
     {
+      "question_name": "Topology",
+      "question_description": "What gets built. standalone is one application server profile carrying its own administrative console - no deployment manager, no node agent, no cluster. nd is a deployment manager profile plus one federated node per machine in the node agent group, which is what a cluster needs. It is asked rather than derived because a single host can legitimately be either. The installed binaries are identical; only the manageprofiles template differs.",
+      "variable": "was_topology",
+      "type": "multiplechoice",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "nd",
+      "choices": "nd\nstandalone"
+    },
+    {
       "question_name": "Cell name",
       "question_description": "Leave blank to derive it as <Channel>_<ENVIRONMENT>. Fill it in to impose a name the pattern would not produce.",
       "variable": "was_cell_name",

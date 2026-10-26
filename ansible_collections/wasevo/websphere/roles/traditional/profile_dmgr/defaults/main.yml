@@ -1,0 +1,45 @@
+---
+# Deployment manager profile.
+#
+# Only reached when was_topology is "nd". A standalone cell has no deployment
+# manager; see the profile_standalone role.
+
+# Where the rendered manageprofiles input is written on the target. It is
+# rendered fresh on every run and removed afterwards: a response file kept
+# around becomes a second definition of the profile, and the one that drifts is
+# always the one somebody reads.
+profile_response_dir: "{{ was_data_base_dir }}/profiles"
+
+# Keep the rendered response file after the run. Off by default - it carries
+# the administrative user name - and useful when a creation failed and the
+# exact input matters more than the tidiness.
+profile_keep_response: false
+
+# An explicit port map wins over -startingPort. Leave it empty and
+# manageprofiles allocates from was_base_port in the order its template
+# defines; fill it to pin individual ports, keyed exactly as portdef.props
+# names them (SOAP_CONNECTOR_ADDRESS, BOOTSTRAP_ADDRESS, WC_adminhost, ...).
+#
+# Either way the role does NOT assume where SOAP landed: it reads the created
+# profile and publishes the real value. was_dmgr_soap_port is then an assertion
+# target, not an input.
+profile_dmgr_ports: {}
+
+# Administrative security is on. A deployment manager reachable without
+# credentials is not a lab shortcut, it is an open administrative console on
+# the network the node agents live on.
+profile_dmgr_admin_security: true
+
+# No defaults for these on purpose. They come from an AWX credential or a
+# vault, never from this repository - the source estate carried
+# was_admin_password: "wsadmin" in group_vars and that is exactly what is not
+# being carried over. The role refuses clearly when they are missing.
+was_admin_user: ""
+was_admin_password: ""
+
+# CI simulates the AWX behaviour and deploys nothing. In render-only mode the
+# response file is rendered and shown, every decision and refusal that does not
+# need the product still runs, and manageprofiles is never called. That is what
+# the pipeline exercises: the template and the logic, against a pod with no WAS
+# in it.
+profile_render_only: false

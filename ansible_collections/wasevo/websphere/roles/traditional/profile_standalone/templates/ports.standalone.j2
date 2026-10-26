@@ -1,0 +1,8 @@
+{#
+  manageprofiles -portsFile for a standalone server. Only rendered when the
+  inventory supplies profile_standalone_ports; the keys are whatever it
+  declares, named as portdef.props names them.
+#}
+{% for key, value in profile_standalone_ports | dictsort %}
+{{ key }}={{ value }}
+{% endfor %}

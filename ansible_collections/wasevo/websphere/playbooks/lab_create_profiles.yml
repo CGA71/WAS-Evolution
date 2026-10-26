@@ -1,0 +1,42 @@
+---
+# Job 5 of the install workflow: the profiles.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e was_topology=nd
+#
+# In AWX this is "WAS lab - 5. Create the profiles", reached after the install
+# and the second fixpack pass. The survey supplies the environment, the channel,
+# the topology and any object name the site wants to impose.
+#
+# WHY ONE PLAYBOOK AND NOT TWO. The topology decides which roles run, and that
+# decision has to be taken once for the whole run: a deployment manager built
+# while the nodes think they are standalone is the failure this avoids. The
+# plays below are ordered, and the deployment manager play comes first because
+# a node cannot federate into a cell that does not exist yet.
+#
+# The topology is validated by roles/model/tasks/topology.yml, which refuses
+# anything other than standalone or nd and says what each one builds.
+
+- name: Standalone application server profile
+  hosts: "{{ profile_hosts | default('all') }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.profile_standalone
+
+- name: Deployment manager profile
+  hosts: "{{ profile_dmgr_hosts | default(was_dmgr_group | default('dmgr')) }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.profile_dmgr
+
+# Separate play, after the deployment manager: federation needs it running, and
+# the node agent role reads the SOAP port the deployment manager really got
+# rather than the one the inventory predicts.
+- name: Federated node profiles
+  hosts: "{{ profile_node_hosts | default('nodeagents') }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.profile_nodeagent

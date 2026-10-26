@@ -1,0 +1,62 @@
+---
+# The topology this run builds. Included by the profile roles, because it is
+# the profile that differs - the binaries do not.
+#
+# WHY THIS IS AN ANSWER AND NOT A DISCOVERY. The installed product is identical
+# either way: the same offering, the same installation directory, the same
+# imcl line. What differs is the template manageprofiles is pointed at:
+#
+#   standalone  profileTemplates/default      an AppSrv with its own console
+#   nd (dmgr)   profileTemplates/management   -serverType DEPLOYMENT_MANAGER
+#   nd (node)   profileTemplates/managed      federated; this is what gives a
+#                                             node agent
+#
+# A single host can legitimately be either a standalone server or a one-node ND
+# cell, so the inventory shape cannot settle it. It is an intention, and an
+# intention is answered - in the AWX survey, or in group_vars for a site where
+# it never varies.
+
+- name: A topology must be supplied
+  ansible.builtin.assert:
+    that:
+      - was_topology | default('') | trim | length > 0
+    fail_msg: >-
+      was_topology is not set. It decides which profile template is used and
+      therefore what gets built:
+        standalone - one application server profile carrying its own
+                     administrative console. No deployment manager, no node
+                     agent, no cluster.
+        nd         - a deployment manager profile plus one federated node per
+                     machine in the node agent group, which is what a cluster
+                     needs.
+      Answer the topology question in the AWX survey, or declare was_topology
+      in group_vars for a site where it does not vary. It is not derived from
+      the inventory on purpose: one host can be either.
+    success_msg: "topology supplied"
+  tags: [model, validate, topology, always]
+
+- name: Normalise the topology
+  ansible.builtin.set_fact:
+    was_topology: "{{ was_topology | trim | lower }}"
+  tags: [model, validate, topology, always]
+
+- name: The topology must be one this collection builds
+  ansible.builtin.assert:
+    that:
+      - was_topology in ['standalone', 'nd']
+    fail_msg: >-
+      was_topology is "{{ was_topology }}". The accepted values are
+      "standalone" and "nd". The match is case-insensitive, so ND, nd and Nd
+      all resolve - this failure means the value itself is not one of the two.
+    success_msg: "topology {{ was_topology }}"
+  tags: [model, validate, topology, always]
+
+# A standalone cell has no cluster. Saying so here is cheaper than letting a
+# cluster job run against a topology that cannot hold one and fail inside
+# wsadmin.
+- name: What this topology implies
+  ansible.builtin.set_fact:
+    was_has_dmgr: "{{ was_topology == 'nd' }}"
+    was_has_nodeagents: "{{ was_topology == 'nd' }}"
+    was_can_cluster: "{{ was_topology == 'nd' }}"
+  tags: [model, validate, topology, always]
