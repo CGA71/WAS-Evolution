@@ -38,9 +38,16 @@
           {{ groups.keys() | reject('in', ['all', 'ungrouped']) | list | join(', ') }}.
           Either the wrong inventory is selected, or the hosts for this
           environment have not been declared.
+        # Indexed through a guard, not directly. ansible-core finalises BOTH
+        # messages before it evaluates the assertion, so groups[was_env_lower]
+        # on an inventory without that group raises "object of type 'dict' has
+        # no attribute '<code>'" and the fail_msg written just above - the one
+        # that explains the problem - is never shown.
         success_msg: >-
-          {{ was_env_code }}: {{ groups[was_env_lower] | length }} host(s) -
-          {{ groups[was_env_lower] | default([]) | join(', ') }}
+          {{ was_env_code }}: {{ _hosts | length }} host(s) -
+          {{ _hosts | join(', ') }}
+      vars:
+        _hosts: "{{ groups[was_env_lower] if was_env_lower in groups else [] }}"
       when: model_require_hosts | default(true)
 
 # The rest of the model - runtime, the product x JDK matrix, the JVM intents,
