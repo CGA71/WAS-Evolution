@@ -85,6 +85,56 @@ No code change. / Aucune modification de code.
 
 No new directory, no copied file. / Aucun répertoire, aucun fichier copié.
 
+## What to fill in, in order / Ce qu'il faut remplir, dans l'ordre
+
+**EN** — Building a WAS environment means filling these, in this order. Only
+the first four carry placeholders that are certainly wrong for your site.
+
+| # | File | What to put there | Today |
+|---|---|---|---|
+| 1 | `was/hosts.yml` | the environment group name, the machine names, and which role group each machine is in | **placeholders**: `envcode`, `dmgr-01`, `app-01`, `web-01` |
+| 2 | `was/group_vars/all/00_site.yml` | DNS domain, the share holding the IBM installers, timezone, the service account and group | **placeholders**: `example.internal`, `//fileserver/ISO` |
+| 3 | `was/group_vars/all/10_environment.yml` | the site's channel, which becomes part of the cell and cluster names | `Extranet` — change it if the site says otherwise |
+| 4 | `was/group_vars/<environment>.yml` | one file per environment group, **only what differs from `all/`**: port base, `was_environment_tier`, optional long name and letter | **to create** — none exist; template above |
+| 5 | `was/group_vars/all/20_paths.yml` | two roots only — `was_app_base_dir` and `was_install_binaries_base_dir`. Everything else is derived from them | `/app` and `/mnt/binaries` |
+| 6 | `was/group_vars/all/25_install_dirs.yml` | nothing, unless a path has to leave the two roots above | all derived |
+| 7 | `was/group_vars/all/40_runtime.yml` | the product × JDK couple and the port base | `traditional` + Java 8, base 30000 |
+| 8 | `was/group_vars/all/50_connection.yml` | nothing, unless the SSH user differs from the service account | derived from `00_site.yml` |
+| 9 | `was/group_vars/dmgr.yml`, `nodeagents.yml` | what the machine does, never where it lives | service names |
+| 10 | `was/group_vars/all/30_install.yml` | the IBM artefact dictionary. See the caveat below | still carries the source estate's package stamps |
+
+Three things that are deliberately **not** in the inventory: credentials, which
+come from an AWX Credential; the environment code, which is a survey answer;
+and the WAS object names, which are composed unless a survey answer or a
+`group_vars` entry overrides them.
+
+Two caveats worth knowing before spending time on them.
+
+`30_install.yml` is read by one place only — the `model` role, which asserts
+every declared artefact carries a non-empty `verify_version`. It is validated,
+not consumed: `was_install` and `was_fixpack` **discover** the offering from the
+repository instead, because the editions differ only by an offering id and a
+wrong guess produces an `imcl` error that reads like a licence problem. So the
+package stamps in it are shape, not instruction.
+
+`was_dmgr_host` in `nodeagents.yml` is read by nothing. `profile_nodeagent`
+resolves the deployment manager from `groups['dmgr']` and reads its real SOAP
+port from the created profile, which is the thing that cannot disagree with
+reality.
+
+**FR** — Construire un environnement WAS, c'est remplir ces fichiers, dans cet
+ordre. Seuls les quatre premiers portent des valeurs de remplacement
+certainement fausses pour votre site : le groupe d'environnement et les noms de
+machines dans `hosts.yml`, le domaine DNS et le partage des médias dans
+`00_site.yml`, le canal dans `10_environment.yml`, et un fichier par
+environnement dans `group_vars/` — il n'en existe aucun aujourd'hui.
+
+Les chemins (5 et 6) ne demandent que deux racines, `was_app_base_dir` et
+`was_install_binaries_base_dir` ; tout le reste en dérive. Les identifiants ne
+sont pas dans l'inventaire : ils viennent d'une Credential AWX. Le code
+d'environnement non plus : c'est une réponse du survey. Les noms d'objets WAS
+non plus : ils sont composés, sauf surcharge.
+
 ## File layout / Découpage des fichiers
 
 | File | Holds |
