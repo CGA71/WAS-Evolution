@@ -1,0 +1,94 @@
+{
+  "name": "WAS lab run parameters",
+  "description": "The environment, the channel, and any WAS object name the site wants to set rather than derive. A name left blank is composed by roles/model/vars/naming.yml; a name filled in wins.",
+  "spec": [
+    {
+      "question_name": "Give an environment",
+      "question_description": "The environment this build is for. It is an answer, not a property of a machine: the same host can be built as any environment. Two to eight characters, starting with a letter, letters and digits only - it becomes part of a cell name, a profile name and a filesystem path. No list of allowed codes is enforced; any code the site uses is accepted.",
+      "variable": "was_environment",
+      "type": "text",
+      "required": true,
+      "min": 2,
+      "max": 8,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "Channel",
+      "question_description": "The network channel, which becomes the first part of the cell name and the last three letters of the cluster name. Title case is the canonical form, because that is how it appears inside WAS object names.",
+      "variable": "was_channel",
+      "type": "multiplechoice",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "Extranet",
+      "choices": "Extranet\nIntranet"
+    },
+    {
+      "question_name": "Cell name",
+      "question_description": "Leave blank to derive it as <Channel>_<ENVIRONMENT>. Fill it in to impose a name the pattern would not produce.",
+      "variable": "was_cell_name",
+      "type": "text",
+      "required": false,
+      "min": 0,
+      "max": 64,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "Cluster name",
+      "question_description": "Leave blank to derive it as Cluster<first three letters of the channel, upper case>. Fill it in for a cluster that does not follow that rule.",
+      "variable": "was_cluster_name",
+      "type": "text",
+      "required": false,
+      "min": 0,
+      "max": 64,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "Application server name",
+      "question_description": "The cluster member, which is one JVM. Leave blank to derive it as <cluster>_<node>_<index>. A value here names the member on every host in the run, so a per-host name belongs in the inventory instead.",
+      "variable": "was_cluster_member_name",
+      "type": "text",
+      "required": false,
+      "min": 0,
+      "max": 64,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "Node name",
+      "question_description": "The WAS node: the deployment manager node on a dmgr host, the node agent node elsewhere. Leave blank to derive it. A value here applies to every host in the run - declare was_node_name per host in the inventory when the machines differ.",
+      "variable": "was_node_name",
+      "type": "text",
+      "required": false,
+      "min": 0,
+      "max": 64,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "Deployment manager profile name",
+      "question_description": "Leave blank to derive it as Dmgr_<ENVIRONMENT>_<Channel>. One host can hold two cells during a migration, which is why this name carries both.",
+      "variable": "was_dmgr_profile_name",
+      "type": "text",
+      "required": false,
+      "min": 0,
+      "max": 64,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "I confirm this run may touch PRODUCTION",
+      "question_description": "Must be answered true to run against an environment whose tier is prod. Defaulted to false on purpose: reaching production should never be the result of picking the wrong answer. The workflow carries an Approval Node for the same reason at the other end.",
+      "variable": "model_allow_production",
+      "type": "multiplechoice",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "false",
+      "choices": "false\ntrue"
+    }
+  ]
+}
