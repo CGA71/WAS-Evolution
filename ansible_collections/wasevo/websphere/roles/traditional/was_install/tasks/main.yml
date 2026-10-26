@@ -92,10 +92,21 @@
 - name: Use the shallowest repository descriptor found
   ansible.builtin.set_fact:
     # A WAS download unpacked into one directory has repository.config at its
-    # root; nested ones belong to sub-offerings. The shortest path is the root.
-    was_repository: >-
-      {{ (was_repo_files.files | map(attribute='path')
-          | sort(attribute='__len__') | first) | dirname }}
+    # root; nested ones belong to sub-offerings. The shallowest path is the root.
+    #
+    # Shallowest is counted in path separators, not string length, and NOT with
+    # sort(attribute='__len__'): ansible-core refuses dunder attribute access
+    # ("access to attribute '__len__' of 'str' object is unsafe") and the task
+    # dies on a repository that is perfectly fine. A plain lexicographic sort
+    # is also wrong - ".../install_was90/native/x/repository.config" sorts
+    # before ".../install_was90/repository.config" because 'n' precedes 'r'.
+    was_repository: "{{ (_pairs | sort | first | last) | dirname }}"
+  vars:
+    _descriptors: "{{ was_repo_files.files | map(attribute='path') | list }}"
+    _depths: >-
+      {{ _descriptors | map('regex_findall', '/') | map('length') | list }}
+    # [[depth, path], ...] sorts on depth first, so the head is the shallowest.
+    _pairs: "{{ _depths | zip(_descriptors) | list }}"
   tags: [was]
 
 # ---------------------------------------------------------------------------
@@ -119,16 +130,38 @@
     msg: "{{ was_available.stdout_lines }}"
   tags: [was]
 
+# listAvailablePackages -long prints one line per package, as
+#
+#   <repository> : <package id> : <display name> : <version>
+#
+# so the package id is NEVER at the start of the line. Filtering the raw lines
+# on '^com.ibm.websphere.' therefore matches nothing, whatever the repository
+# holds, and the task below then blames the media or the entitlement. The
+# second colon-separated field is the id; take that, then filter.
+- name: Extract the package ids the repository advertises
+  ansible.builtin.set_fact:
+    was_advertised: >-
+      {{ was_available.stdout_lines | map('trim') | select('search', ' : ')
+         | map('regex_search', '^[^:]+ : ([^ :]+)', '\1')
+         | flatten | select('string') | list }}
+  tags: [was]
+
 - name: Pick the WAS offering
   ansible.builtin.set_fact:
     was_offering: >-
       {{ was_package_id if (was_package_id | length > 0)
-         else (_candidates | first | default('')) }}
+         else (_candidates | last | default('')) }}
     was_offering_candidates: "{{ _candidates }}"
   vars:
+    # Sorted, and the LAST one is taken rather than the first: the repository
+    # lists levels in ascending order, so first means the oldest build it
+    # carries. A mirror of one offering has one candidate and the task below
+    # refuses anything ambiguous, but when it is not ambiguous it should still
+    # be the newest.
     _candidates: >-
-      {{ was_available.stdout_lines | map('trim')
-         | select('search', '^' ~ (was_package_filter | regex_escape)) | list }}
+      {{ was_advertised
+         | select('search', '^' ~ (was_package_filter | regex_escape))
+         | list | sort }}
   tags: [was]
 
 - name: Refuse when no WAS offering is advertised
@@ -157,9 +190,9 @@
 - name: Pick the SDK offering from the same repository
   ansible.builtin.set_fact:
     was_sdk_offering: >-
-      {{ (was_available.stdout_lines | map('trim')
+      {{ (was_advertised
           | select('search', '^' ~ (was_sdk_package_filter | regex_escape))
-          | list | first) | default('', true) }}
+          | list | sort | last) | default('', true) }}
   when: was_install_sdk
   tags: [was]
 

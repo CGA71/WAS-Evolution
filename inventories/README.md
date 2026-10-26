@@ -10,9 +10,9 @@ inventories/
   k3s_sim/    the CI simulation, same groups, over kubernetes.core.kubectl
 ```
 
-> An earlier shape in this repository had four near-identical directories — `rit/`, `ra/`, `ru/`, `prd/`. Four copies of the same site facts is four chances to drift, and it needed a CI job comparing checksums to catch it. That job is gone because the drift can no longer happen.
+> An earlier shape in this repository had four near-identical directories, one per environment. Four copies of the same site facts is four chances to drift, and it needed a CI job comparing checksums to catch it. That job is gone because the drift can no longer happen.
 >
-> Une forme antérieure avait quatre répertoires quasi identiques. Quatre copies des mêmes faits de site, c'est quatre occasions de divergence, et il fallait un job de CI comparant des empreintes pour l'attraper. Ce job a disparu parce que la divergence n'est plus possible.
+> Une forme antérieure avait quatre répertoires quasi identiques, un par environnement. Quatre copies des mêmes faits de site, c'est quatre occasions de divergence, et il fallait un job de CI comparant des empreintes pour l'attraper. Ce job a disparu parce que la divergence n'est plus possible.
 
 ## How the environment selects its hosts
 
@@ -26,45 +26,62 @@ hosts: "{{ was_environment | lower }}:&dmgr"
 
 | `was_environment` | Resolves to / Résout vers |
 |---|---|
-| `RIT` | `rit:&dmgr` → `rit-dmgr-01` |
-| `RA` | `ra:&dmgr` → `ra-dmgr-02` |
-| `PRD` | `prd:&nodeagents` → `prd-was-01`, `prd-ihs-01` |
+| `ENVCODE` | `envcode:&dmgr` -> the dmgr machine of that group |
+| `ENVCODE` | `envcode:&nodeagents` -> its node agent machines |
 
-Supplied three ways, in increasing precedence:
+The group name is the answer in lowercase. There is **no list of environment codes anywhere in the collection** - create the group, and the code works. The `model` role refuses an answer with no matching group and names the groups it found.
+
+Le nom du groupe est la réponse en minuscules. Il n'existe **aucune liste de codes d'environnement dans la collection** : on crée le groupe, et le code fonctionne. Le rôle `model` refuse une réponse sans groupe correspondant et nomme les groupes trouvés.
+
+Supplied two ways, in increasing precedence / Fourni de deux façons, par précédence croissante :
 
 | Source | Value |
 |---|---|
-| `group_vars/all/10_environment.yml` | `RIT` — the default, so a run with no input lands on the least dangerous environment |
-| `-e was_environment=RA` | command line |
-| **AWX Survey** | the answer to *Target environment* |
+| `-e was_environment=<code>` | command line |
+| **AWX Survey** | the answer to *target environment* |
+
+There is deliberately **no default**. A default would mean that a run with no answer silently rebuilds one particular environment.
+
+Il n'y a volontairement **aucun défaut**. Un défaut signifierait qu'un run sans réponse reconstruit silencieusement un environnement donné.
+
+## Machine names come from the inventory
+
+**EN** - `hosts.yml` is the only place a machine is named, and the collection composes nothing from the name: it reads what the file says. An earlier version carried a former client's naming standard (`ln` + environment letter + role + index), which read like a rule the code could rely on.
+
+**FR** - `hosts.yml` est le seul endroit où une machine est nommée, et la collection ne compose rien à partir du nom : elle lit ce que le fichier déclare. Une version antérieure portait la nomenclature d'un ancien client, qui se lisait comme une règle dont le code pouvait dépendre.
 
 ## The environment is one fact, not eight
 
-**EN** — The source inventory declared eight variables for this:
+**EN** - The source inventory declared eight variables for this:
 
 ```yaml
-environnement_nom_long_majuscule: "RIT"      # same string...
-environnement_nom_long_minuscule: "rit"
-environnement_trigramme_majuscule: "RIT"     # ...as this one, both by hand
-environnement_trigramme_minuscule: "rit"
-environnement_lettre_majuscule: "I"
-environnement_lettre_minuscule: "i"
+environnement_nom_long_majuscule: "<ENV>"      # same string...
+environnement_nom_long_minuscule: "<env>"
+environnement_trigramme_majuscule: "<ENV>"     # ...as this one, both by hand
+environnement_trigramme_minuscule: "<env>"
+environnement_lettre_majuscule: "<E>"
+environnement_lettre_minuscule: "<e>"
 canal: "Extranet"
 canal_minuscule: "extranet"
 ```
 
-Two held the same string, six were derivable, and all eight had to be edited to create an environment. The long name, letter, tier and promotion rank now come from `was_environment_catalog` in [`roles/model/vars/environments.yml`](../ansible_collections/wasevo/websphere/roles/model/vars/environments.yml). The `model` role refuses an unknown code and names the known ones.
+Two held the same string, six were derivable, and all eight had to be edited to create an environment. Now **one** value arrives from the survey and both cases are derived from it in [`roles/model/vars/environments.yml`](../ansible_collections/wasevo/websphere/roles/model/vars/environments.yml) - upper for object names, lower for paths, groups and DNS. The letter defaults to the first letter of the code; the tier is its own input, because an open environment value means no code can know which codes a site calls production.
 
-**FR** — L'inventaire source déclarait huit variables pour cela. Deux portaient la même chaîne, six étaient dérivables, et les huit devaient être éditées pour créer un environnement. Le nom long, la lettre, le palier et le rang de promotion viennent désormais du catalogue.
+**FR** - L'inventaire source déclarait huit variables pour cela. Deux portaient la même chaîne, six étaient dérivables, et les huit devaient être éditées pour créer un environnement. Désormais **une** valeur arrive du formulaire et les deux casses en sont dérivées : majuscule pour les noms d'objets, minuscule pour les chemins, les groupes et le DNS. La lettre vaut par défaut la première du code ; le palier est une entrée à part, puisqu'une valeur ouverte interdit au code de savoir quels codes un site appelle production.
 
-> `confirmed: false` in the catalogue means the value was never verified against the naming standard. Only RIT was ever declared in the source inventory, where the letter was `I`. The `model` role warns while that flag is false.
+## Object names are composed once
+
+**EN** - The cell, the deployment manager profile and node, the node agent node, the cluster, its JVM members and the shared class cache are all composed in [`roles/model/vars/naming.yml`](../ansible_collections/wasevo/websphere/roles/model/vars/naming.yml), from the environment and the channel. They used to be written out in three inventories, with the cluster name hardcoded in two of them. Declare a name in an inventory to override the pattern - the role never overwrites a name that already exists.
+
+**FR** - La cellule, le profil et le nœud du gestionnaire de déploiement, le nœud de l'agent, le cluster, ses JVM et le cache de classes partagées sont composés en un seul endroit, à partir de l'environnement et du canal. Ils étaient auparavant réécrits dans trois inventaires, avec le nom de cluster en dur dans deux d'entre eux. Déclarer un nom dans un inventaire surcharge le motif : le rôle n'écrase jamais un nom existant.
 
 ### Adding an environment / Ajouter un environnement
 
-1. Add an entry to `was_environment_catalog` — `long_name`, `letter`, `tier`, `rank`.
-2. Add the hosts to `was/hosts.yml`, in the new environment group **and** in the role groups.
-3. Add `was/group_vars/<name>.yml` with whatever differs — often just `was_base_port`.
-4. Add the code to the Survey choices.
+1. Add the hosts to `was/hosts.yml`, in a new environment group named with the code in lowercase **and** in the role groups.
+2. Add `was/group_vars/<code>.yml` with whatever differs — often just `was_base_port`, plus `was_environment_tier: prod` where it applies. See [`was/group_vars/README.md`](was/group_vars/README.md).
+3. Add the code to the Survey choices.
+
+No code change. / Aucune modification de code.
 
 No new directory, no copied file. / Aucun répertoire, aucun fichier copié.
 
@@ -76,10 +93,10 @@ No new directory, no copied file. / Aucun répertoire, aucun fichier copié.
 | `group_vars/all/10_environment.yml` | The `was_environment` and `was_channel` inputs, and their defaults |
 | `group_vars/all/20_paths.yml` | Every filesystem path, derived from bases |
 | `group_vars/all/30_install.yml` | IBM artefacts baseline, plus the merge of per-environment overrides |
-| `group_vars/all/40_runtime.yml` | `runtime` defaults, WAS object names, port arithmetic |
+| `group_vars/all/40_runtime.yml` | `runtime` defaults and port arithmetic. No object names: those are composed in the `model` role |
 | `group_vars/all/50_connection.yml` | `ansible_host` built from the short name and the site domain |
-| `group_vars/rit.yml` … `prd.yml` | Only what differs for that environment |
-| `group_vars/dmgr.yml`, `nodeagents.yml` | Per-role profile and node naming, any environment |
+| `group_vars/<code>.yml` | Only what differs for that environment, including `was_environment_tier` |
+| `group_vars/dmgr.yml`, `nodeagents.yml` | What the role needs on any machine playing it - paths and service names, not object names |
 
 ## Installation artefacts / Artefacts d'installation
 
@@ -126,17 +143,17 @@ ansible-playbook -i inventories/was \
 # check every declared forge dependency
 ansible-playbook -i inventories/was \
   ansible_collections/wasevo/websphere/playbooks/forge_preflight.yml \
-  -e was_environment=RIT
+  -e was_environment=<code>
 
 # control side only, when no target is reachable
 ansible-playbook -i inventories/was \
   ansible_collections/wasevo/websphere/playbooks/forge_preflight.yml \
-  -e was_environment=RIT -e forge_preflight_control_only=true
+  -e was_environment=<code> -e forge_preflight_control_only=true
 
 # configure, dry run first - always
 ansible-playbook -i inventories/was \
   ansible_collections/wasevo/websphere/playbooks/traditional_config.yml \
-  -e was_environment=RIT --check --diff
+  -e was_environment=<code> --check --diff
 ```
 
 In AWX none of these flags are typed: the Survey asks for the environment, the channel and the production acknowledgement, and the Job Template offers check mode as a launch prompt.

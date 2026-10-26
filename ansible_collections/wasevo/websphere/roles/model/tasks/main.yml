@@ -10,6 +10,13 @@
   ansible.builtin.include_tasks: environment.yml
   tags: [model, validate, environment, always]
 
+# The names of every WAS object come from the environment and the channel that
+# were just resolved. One file composes them all, so a cell, its profiles, its
+# nodes, its cluster and its JVMs cannot be named by three different rules.
+- name: Compose the WAS object names
+  ansible.builtin.include_tasks: naming.yml
+  tags: [model, naming, always]
+
 # ---------------------------------------------------------------------------
 # Installation artefacts
 # ---------------------------------------------------------------------------
@@ -169,9 +176,12 @@
   ansible.builtin.debug:
     msg:
       - "environment : {{ was_environment }} -> {{ was_env_code }} / {{ was_env_lower }} - {{ was_env_long_name }}"
-      - "              letter {{ was_env_letter_upper }}, tier {{ was_env_tier }}, rank {{ was_env_rank }}"
+      - "              letter {{ was_env_letter_upper }}, tier {{ was_env_tier }}"
       - "channel     : {{ was_channel }} -> {{ was_channel_name }} / {{ was_channel_lower }}"
       - "cell        : {{ was_cell_name | default('n/a') }}"
+      - "profile     : {{ was_profile_name | default('n/a') }} on node {{ was_node_name | default('n/a') }}"
+      - "cluster     : {{ was_cluster_name | default('n/a') }}, member {{ was_cluster_member_name | default('n/a') }}"
+      - "class cache : {{ was_jvm_shared_class_cache | default('n/a') }}"
       - "product     : {{ runtime.product }} (phase {{ jdk_matrix[runtime.product].phase }})"
       - "jdk         : Java {{ runtime.jdk.version }} / {{ runtime.jdk.vm }}"
       - "admin plane : {{ jdk_matrix[runtime.product].admin_plane }}"

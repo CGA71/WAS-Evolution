@@ -6,17 +6,22 @@
 # licence. The role discovers that id from the repository rather than
 # hardcoding it, so this file does not need to know it.
 #
-# Media staged here on the VM, by hand - see the README. Neither artefact can
-# be downloaded without an IBMid.
+# Media staged by hand - see "The install lab" in the README. Neither artefact
+# can be downloaded without an IBMid.
+#
 # The media directories themselves come from 25_install_dirs.yml, like every
-# other installation directory. Only what is specific to this lab is here: the
-# archive sits on the controller, so the role stages it across.
+# other installation directory. Only what is specific to this lab is here: in
+# the lab the archives sit on the CONTROLLER, so the roles stage them across to
+# the VM. On the estate the media arrives on a mounted share and these stay
+# empty.
 im_media_src: "/mnt/binaries/IBM/install_im/*.zip"
 was_media_src: "/mnt/binaries/IBM/install_was90/*.zip"
 
-# 9.0.0.0 is what the base Developers install yields. The 9.0.5.x level comes
-# from the fix pack, which is a separate job.
-was_expected_version: "9.0.0.0"
+# The level the mirror actually carries. A Passport Advantage base image
+# yields 9.0.0.0 and the fix pack job then lifts it; the ILAN repository that
+# ci/k3s/lab-mirror-was.sh mirrors serves the CURRENT level, so the base
+# install lands here directly and this assert has to match it.
+was_expected_version: "9.0.5.28"
 
 was_node_name: "LabNode01"
 was_service_name: wasserver
@@ -28,5 +33,5 @@ was_fixpack_media_src: "/mnt/binaries/IBM/fixes/*.zip"
 
 # No target level declared for the lab: whatever the repositories offer is what
 # the lab gets. An estate should pin this per environment, which is also how
-# PRD stays a fixpack behind RIT on purpose.
+# A production environment deliberately a fixpack behind the rest.
 was_fixpack_target_version: ""

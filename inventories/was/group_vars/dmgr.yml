@@ -1,6 +1,6 @@
 ---
 # The deployment manager, in any environment.
-was_profile_name: "{{ was_dmgr_profile_name }}"
+# The profile name and the node name are composed by the model role, which
+# recognises this group. Only the path and the service name are site facts.
 was_profile_path: "{{ was_dmgr_profile_path }}"
-was_node_name: "{{ was_env_letter_upper }}DmgrNode"
 was_service_name: wasdmgr

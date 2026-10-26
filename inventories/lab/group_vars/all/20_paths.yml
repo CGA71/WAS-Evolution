@@ -17,9 +17,8 @@ was_jython_dir: "{{ was_exploit_base_dir }}/scripts/{{ site_jython_dirname }}"
 
 was_version_short: "90"
 
-was_profile_name: "AppSrv01"
+# Profile names come from roles/model/vars/naming.yml; only the paths are here.
 was_profile_path: "{{ was_profiles_base_dir }}/{{ was_profile_name }}"
-was_dmgr_profile_name: "Dmgr_{{ was_env_upper }}_{{ was_channel_name }}"
 was_dmgr_profile_path: "{{ was_profiles_base_dir }}/{{ was_dmgr_profile_name }}"
 
 systemd_base_dir: /usr/lib/systemd/system

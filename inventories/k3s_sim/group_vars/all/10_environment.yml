@@ -1,5 +1,9 @@
 ---
-# The simulation runs as RIT so the derived names match what the real RIT
-# inventory produces, which makes the rendered output comparable.
-was_environment: RIT
+# The simulation declares its own environment code, SIM. It is not standing in
+# for a named environment any more: the point is that the derived names follow
+# whatever code arrives, so a code that exists only in CI exercises exactly the
+# same derivation as one from the survey.
+was_environment: SIM
+was_environment_long_name: "CI simulation"
+was_environment_tier: non_prod
 was_channel: Extranet

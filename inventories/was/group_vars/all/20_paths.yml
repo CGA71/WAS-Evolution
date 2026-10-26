@@ -22,12 +22,12 @@ was_jython_dir: "{{ was_exploit_base_dir }}/scripts/{{ site_jython_dirname }}"
 
 was_version_short: "90"
 
-# Profile names carry the environment and the channel, which is why both are
-# derived rather than typed. Change was_environment at launch and every name
-# below follows.
-was_profile_name: "AppSrv"
+# Profile PATHS only. The profile NAMES are composed by
+# roles/model/vars/naming.yml from the environment and the channel, and
+# published by the model role, so that one rule produces them everywhere.
+# Declare was_profile_name or was_dmgr_profile_name here to override the
+# pattern for this site; the role never overwrites a name already defined.
 was_profile_path: "{{ was_profiles_base_dir }}/{{ was_profile_name }}"
-was_dmgr_profile_name: "Dmgr_{{ was_env_upper }}_{{ was_channel_name }}"
 was_dmgr_profile_path: "{{ was_profiles_base_dir }}/{{ was_dmgr_profile_name }}"
 
 systemd_base_dir: /usr/lib/systemd/system

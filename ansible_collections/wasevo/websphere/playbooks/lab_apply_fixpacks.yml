@@ -12,7 +12,7 @@
 #
 #   ansible-playbook -i inventories/lab \
 #       ansible_collections/wasevo/websphere/playbooks/lab_apply_fixpacks.yml \
-#       -e was_environment=RIT
+#       -e was_environment=<code>
 #
 # Finding no fixpack repository is a normal outcome, not a failure. The job
 # says what it found and where to put media, and exits green.

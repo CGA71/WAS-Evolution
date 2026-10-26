@@ -68,38 +68,44 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/forge_preflight.yml
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_config.yml
 
-# Every environment must validate, production must be refused unless
-# acknowledged, and the diagnostic JDK must be refused unless asked for.
 # The environment is a launch input, so the loop passes it as one - exactly as
-# the AWX Survey will.
+# the AWX survey does. There is no list of environment codes to iterate: what
+# is tested is the MECHANISM, on the environment group the template inventory
+# declares.
+#
+# Production is tested through was_environment_tier, not through a code,
+# because no code is production in this collection's eyes - the tier is
+# declared alongside the environment.
 model-matrix:
   extends: .static
   stage: validate
   script:
     - |
       set -e
-      for env in RIT RA RU; do
-        echo "=============== $env ==============="
-        ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
-          -e was_environment=$env
-      done
+      echo "=============== the declared environment validates ==============="
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml         -e was_environment=ENVCODE
     - |
-      echo "=============== PRD must be refused ==============="
-      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
-           -e was_environment=PRD; then
+      echo "=============== a prod tier must be refused unacknowledged ==============="
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml            -e was_environment=ENVCODE -e was_environment_tier=prod; then
         echo "FAIL: production was accepted without acknowledgement"; exit 1
       fi
       echo "refused as expected"
     - |
       set -e
-      echo "=============== PRD passes once acknowledged ==============="
-      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
-        -e was_environment=PRD -e model_allow_production=true
+      echo "=============== and passes once acknowledged ==============="
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml         -e was_environment=ENVCODE -e was_environment_tier=prod         -e model_allow_production=true
     - |
-      echo "=============== an unknown environment must be refused ==============="
-      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
-           -e was_environment=NOPE; then
-        echo "FAIL: an unknown environment was accepted"; exit 1
+      echo "=============== an unusable code must be refused ==============="
+      # Not "unknown" - any code a site uses is accepted. This one is refused
+      # for its shape: a value that cannot be a WAS object name or a path.
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml            -e "was_environment=no pe"; then
+        echo "FAIL: an unusable environment code was accepted"; exit 1
+      fi
+      echo "refused as expected"
+    - |
+      echo "=============== an environment with no hosts must be refused ==============="
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml            -e was_environment=NOSUCH; then
+        echo "FAIL: an environment with no hosts was accepted"; exit 1
       fi
       echo "refused as expected"
     - |

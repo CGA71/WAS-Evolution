@@ -11,7 +11,7 @@
 # The environment has to be validated BEFORE a host pattern is built from it.
 # This playbook used to be one play targeting "{{ was_environment | lower }}",
 # so an unknown environment produced an empty pattern, matched no hosts, and
-# the run SUCCEEDED having validated nothing. An unknown code has to fail, not
+# the run SUCCEEDED having validated nothing. A bad answer has to fail, not
 # evaporate.
 
 - name: Resolve and validate the environment
@@ -20,7 +20,7 @@
   gather_facts: false
 
   tasks:
-    # Needs no host and no group_vars: the catalogue lives in the role.
+    # Needs no host and no group_vars: the derivations live in the role.
     - name: Validate the environment and the channel
       ansible.builtin.include_role:
         name: wasevo.websphere.model
@@ -33,7 +33,7 @@
           - groups[was_env_lower] | default([]) | length > 0
         fail_msg: >-
           {{ was_environment }} resolves to {{ was_env_code }}, which is a
-          valid code, but this inventory has no group "{{ was_env_lower }}"
+          usable code, but this inventory has no group "{{ was_env_lower }}"
           with hosts in it. Groups present:
           {{ groups.keys() | reject('in', ['all', 'ungrouped']) | list | join(', ') }}.
           Either the wrong inventory is selected, or the hosts for this

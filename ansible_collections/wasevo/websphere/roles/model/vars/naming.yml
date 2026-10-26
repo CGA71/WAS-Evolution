@@ -1,0 +1,90 @@
+---
+# WAS object naming: one mechanism, one file.
+#
+# Every name a cell is built from - the cell itself, the deployment manager
+# profile and node, the node agent profile and node, the cluster, its JVM
+# members, the shared class cache - is composed HERE, from the environment and
+# the channel that arrived at launch. Nothing else in the repository composes
+# a WAS object name.
+#
+# Why one file: these patterns used to live in three inventories, written out
+# three times (inventories/was, lab, k3s_sim), with the cluster name hardcoded
+# to ClusterEXT in two of them. Three copies of a naming rule is three chances
+# to disagree, and the disagreement surfaces as a cell that will not federate.
+#
+# Why vars/ and not defaults/: these are patterns, not values, and they must
+# resolve AFTER was_env_code exists. tasks/naming.yml publishes each of them
+# with set_fact ... | default(pattern), so an inventory or a group_vars file
+# that defines the name itself still wins. The pattern is the fallback, not
+# the law.
+#
+# Change was_environment at launch and every name below follows. That is the
+# whole point: the environment is an input, so the names are outputs.
+
+# --------------------------------------------------------------------------
+# Cell
+# --------------------------------------------------------------------------
+# Extranet_PREPROD, Intranet_HOM. Channel first, environment second, which is
+# the order the source estate used.
+was_cell_name_pattern: "{{ was_channel_name }}_{{ was_env_upper }}"
+
+# What the administrative console is labelled with. Reports and banners only.
+was_console_label_pattern: "{{ was_channel_name }} {{ was_env_upper }}"
+
+# --------------------------------------------------------------------------
+# Profiles
+# --------------------------------------------------------------------------
+# manageprofiles -profileName. The deployment manager carries the environment
+# and the channel because one host can hold two cells during a migration; an
+# application server profile does not, because it is scoped by the node it
+# federates into.
+was_dmgr_profile_name_pattern: "Dmgr_{{ was_env_upper }}_{{ was_channel_name }}"
+was_app_profile_name_pattern: "AppSrv01"
+
+# --------------------------------------------------------------------------
+# Nodes
+# --------------------------------------------------------------------------
+# manageprofiles -nodeName.
+#
+# The machine name comes from the inventory and from nowhere else: this file
+# strips the domain so that a short name and an FQDN produce the same node
+# name, and composes nothing else from it. No hostname shape is assumed - the
+# repository used to carry a former client's standard (ln + environment letter
+# + role + index), which read like a rule the code could depend on.
+was_host_short: "{{ inventory_hostname.split('.')[0] }}"
+
+# The deployment manager node is named from the environment letter; a node
+# agent node from the machine it runs on, because there is one per machine and
+# the machine name is what makes it unique.
+#
+# A site whose standard differs declares was_node_name in the inventory - in
+# group_vars/nodeagents.yml for a rule, or per host for an exception. The role
+# honours it and these patterns are never reached.
+was_dmgr_node_name_pattern: "{{ was_env_letter_upper }}DmgrNode"
+was_nodeagent_node_name_pattern: "{{ was_host_short }}Node"
+
+# --------------------------------------------------------------------------
+# Cluster and its members
+# --------------------------------------------------------------------------
+# ClusterEXT for Extranet, ClusterINT for Intranet - the three-letter form the
+# source estate used. Derived from the channel, so a new channel needs no code
+# change; override was_cluster_name in the inventory for a cluster that does
+# not follow the rule.
+was_cluster_abbrev: "{{ was_channel_upper[:3] }}"
+was_cluster_name_pattern: "Cluster{{ was_cluster_abbrev }}"
+
+# A cluster member is one JVM. Named from the cluster and the node it sits on,
+# plus an index, because a node can hold more than one member of the same
+# cluster. was_cluster_member_index is per-host and defaults to 1.
+was_cluster_member_name_pattern: >-
+  {{ was_cluster_name | default(was_cluster_name_pattern) }}_{{ was_node_name
+  | default(was_nodeagent_node_name_pattern) }}_{{ '%02d' | format(was_cluster_member_index | default(1) | int) }}
+
+# --------------------------------------------------------------------------
+# JVM
+# --------------------------------------------------------------------------
+# -Xshareclasses:name=... The %g is J9's generation token and must survive
+# into the flag, so it is appended here rather than being asked of the model.
+# One cache per environment: two environments sharing a cache name on one host
+# silently share compiled classes, which is a debugging session nobody wins.
+was_jvm_shared_class_cache_pattern: "{{ was_env_upper }}%g"

@@ -80,3 +80,9 @@ was_fixpack_min_free_mb: 4096
 # Installation Manager can roll back an update it applied, but only if the
 # rollback data was kept. Keeping it costs disk and is worth it.
 was_fixpack_keep_rollback: true
+
+# The locale Installation Manager runs in. Only the `was` inventory declared
+# this, in group_vars/all/30_install.yml, so a lab or CI run died on an
+# undefined variable at the imcl call. An inventory that wants French keeps
+# overriding it; one that says nothing gets English rather than a failure.
+im_install_locale: en
