@@ -15,3 +15,9 @@
 # The channel keeps a default: it is a second, independent input and the lab
 # only ever exercises one.
 was_channel: Extranet
+
+# The lab has no environment group, deliberately: hosts.yml declares the role
+# group only, because the same VM can be built as any environment. So the
+# check that the inventory holds hosts for the chosen code does not apply
+# here - it is a check for the estate inventory, where the groups exist.
+model_require_hosts: false
