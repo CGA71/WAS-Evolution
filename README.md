@@ -70,7 +70,7 @@ batch                     kubernetes.core            (the migration bridge)
         v
 LAYER 3 — ORCHESTRATION
   Ansible Automation Platform: Workflow Templates, Surveys, Approval Nodes,
-  typed Credentials, RIT -> RA -> RU -> PRD promotion, smoke tests.
+  typed Credentials, environment-to-environment promotion, smoke tests.
 ```
 
 ### Why the Liberty plane has no modules
@@ -106,6 +106,10 @@ ansible_collections/wasevo/websphere/
 inventories/                     one all-YAML inventory; the environment is an input
 model/                           the shared declarative model
 docs/                            architecture and per-phase notes
+ci/
+  k3s/                           simulation pods, the lab VM, RBAC,
+                                 make-lab-vm.sh, lab-mirror-was.sh
+  awx/                           the AWX operator and its kustomizations
 ```
 
 **Never merge `config_render` and `deploy`.** `config_render` does not touch the cluster: it runs offline, is testable without OpenShift, and is the GitOps boundary. If Argo CD is adopted, `config_render` renders and commits, `deploy` is unplugged, nothing else changes.
@@ -146,12 +150,12 @@ Official WebSphere Liberty images on `icr.io/appcafe` ship **IBM Semeru Runtime,
 6. Write `roles/liberty/config_render` with the `server.xml`, `jvm.options` and `server.env` templates.
 7. Build the two Execution Environments: `ee-was-traditional` and `ee-liberty-ocp`.
 8. Create the AAP project, two inventories, the Credential types, the first Workflow Template.
-9. Rebuild the RIT environment with the new tooling, feature-for-feature.
+9. Rebuild the first non-production environment with the new tooling, feature-for-feature.
 10. Render the pilot datasource, declared once, into the three trajectory couples.
 
-**Entry criteria** — GitLab repository, AAP reachable, a RIT cell available for rebuild.
+**Entry criteria** — GitLab repository, AAP reachable, a non-production cell available for rebuild.
 
-**Exit criteria** — RIT rebuilt end to end from AAP; `--check` and `--diff` demonstrated on a real change; the three renders of the pilot datasource agree.
+**Exit criteria** — that cell rebuilt end to end from AAP; `--check` and `--diff` demonstrated on a real change; the three renders of the pilot datasource agree.
 
 **Rollback** — the legacy `launch_*.sh` scripts remain runnable in parallel.
 
@@ -244,7 +248,7 @@ Official WebSphere Liberty images on `icr.io/appcafe` ship **IBM Semeru Runtime,
 3. Configure Route, liveness and readiness probes, requests and limits.
 4. Set up dumps and traces via `WebSphereLibertyDump` and `WebSphereLibertyTrace`.
 5. Wire Prometheus to the metrics exposed in wave 3.
-6. Build the promotion workflow: `render -> build -> push -> [Approval] -> RIT -> smoke -> [Approval] -> RA -> ... -> PRD`.
+6. Build the promotion workflow: `render -> build -> push -> [Approval] -> first environment -> smoke -> [Approval] -> next -> ... -> production`.
 
 **Entry criteria** — wave 4 exit criteria met.
 
@@ -314,7 +318,7 @@ ansible-playbook playbooks/pilot_render_matrix.yml
 ansible-playbook -i inventories/was $COL/model_validate.yml -e was_environment=RA
 
 # traditional plane, dry run first - always
-ansible-playbook -i inventories/was $COL/traditional_config.yml   -e was_environment=RIT --check --diff
+ansible-playbook -i inventories/was $COL/traditional_config.yml   -e was_environment=<code> --check --diff
 
 # In AWX none of these flags are typed: the Survey asks for the environment,
 # the channel and the production acknowledgement.
@@ -439,7 +443,179 @@ namespaces.
 infrastructure applied once, and a pipeline that deletes them makes itself
 unrunnable.
 
-## 16. AWX
+## 16. The install lab: a KubeVirt VM
+
+The simulation above installs nothing. Installation Manager needs somewhere real
+to land, and that is a separate machine: **one KubeVirt VM**, `was-lab-01` in the
+`was-lab` namespace, declared in
+[`ci/k3s/20-was-lab-vm.yml`](ci/k3s/20-was-lab-vm.yml).
+
+**Why a VM and not another pod.** Installation Manager writes into the
+installation directories, keeps an installation registry, expects a genuine
+filesystem layout and enough disk, and `manageprofiles` expects a working
+process tree — it calls `killall`. A container is the wrong shape for that. The
+simulation pods are stock Rocky 9 on `emptyDir`, with no `sudo` and a wsadmin
+stub; nothing in them could carry a 2.5 GB IBM install. KubeVirt and CDI are
+already running on the cluster, so the VM costs nothing extra to operate and is
+destroyed by deleting one namespace.
+
+| Object | Name | Note |
+|---|---|---|
+| Namespace | `was-lab` | |
+| DataVolume | `was-lab-disk` | Rocky 9 GenericCloud imported by CDI, 40 Gi |
+| VirtualMachine | `was-lab-01` | 4 vCPU, 6 Gi — WAS 9.0 wants 2 Gi minimum and is miserable there |
+| Service | `was-lab-01` | `22`, `9043`, `9080`, reachable in-cluster without a Route |
+| Secret | `was-lab-cloudinit` | cloud-init user data. **Not in this repository**: it carries the SSH public key |
+
+Bring it up with [`ci/k3s/make-lab-vm.sh`](ci/k3s/make-lab-vm.sh), which builds
+the Secret from the key pair on the node, applies the manifest, waits for the
+image import and prints the address. Teardown is `kubectl delete ns was-lab`,
+and it leaves nothing behind.
+
+### Getting in
+
+**The VM runs inside a pod, and that pod is not the way in.** KubeVirt wraps it
+in `virt-launcher-was-lab-01-xxxxx`; `kubectl exec` on that pod lands in the
+virt-launcher container, next to the QEMU process, not in the Rocky guest.
+Installation Manager is unreachable by that route.
+
+```bash
+# On a k3s node /usr/local/bin/kubectl is a SYMLINK TO k3s, and that wrapper
+# reads /etc/rancher/k3s/k3s.yaml - root-owned, mode 0600 - unless KUBECONFIG
+# says otherwise. Without this line kubectl fails with a permission error that
+# reads like a broken cluster, the command substitution below returns empty,
+# and every command after it silently runs on the node instead of the VM.
+export KUBECONFIG=$HOME/.kube/config
+
+kubectl -n was-lab get vmi,pod          # vmi was-lab-01 must be Running
+
+IP=$(kubectl -n was-lab get vmi was-lab-01 -o jsonpath='{.status.interfaces[0].ipAddress}')
+[ -n "$IP" ] || echo "no address - do not run anything else"
+ssh -i ~/.ssh/was_lab ansible@"$IP"
+```
+
+`virtctl` would avoid the address lookup entirely, but it is **not installed on
+this node** - only `kubectl` and `k3s` are. `virtctl console` would be of no use
+anyway: cloud-init sets `ssh_pwauth: false`, `disable_root: true` and no
+password at all. The key is the only way in.
+
+AWX job pods run inside the cluster, so `was-lab-01.was-lab.svc.cluster.local`
+resolves and the inventory uses that name. From the node itself, pass
+`-e ansible_host=$IP`.
+
+### The media, which nothing downloads
+
+Neither artefact can be fetched without an IBMid, so both are staged by hand.
+In the lab inventory the globs are **on the controller** and the roles copy the
+archives across; in the estate the media arrives on a mounted share and the
+globs stay empty.
+
+| Artefact | Controller glob (`group_vars/was_lab.yml`) | Where it lands on the VM |
+|---|---|---|
+| Installation Manager | `/mnt/binaries/IBM/install_im/*.zip` | `/mnt/binaries/IBM/install_im` |
+| WAS 9.0 for Developers | `/mnt/binaries/IBM/install_was90/*.zip` | `/mnt/binaries/IBM/install_was90` |
+| Fix packs | `/mnt/binaries/IBM/fixes/*.zip` | one repository directory per archive |
+
+Each fix pack archive is one Installation Manager repository and they must not
+be unpacked on top of each other: two `repository.config` files in one directory
+and `imcl` reads whichever it finds first. Under AWX the controller is the job
+pod, so these paths have to be mounted into the Execution Environment or the
+staging step finds nothing.
+
+The base Developers install yields **9.0.0.0**. The 9.0.5.x level comes from the
+fix pack, which is a separate job — hence `was_expected_version: "9.0.0.0"`.
+
+### Filling the local repository from IBM
+
+The 9.0.0.0 zips are not the only route in. The live ILAN composite repository
+serves the **current** level, so Packaging Utility can mirror 9.0.5.x straight
+into the media directory, after which the VM never needs the internet again.
+[`ci/k3s/lab-mirror-was.sh`](ci/k3s/lab-mirror-was.sh) does exactly that, run
+from the node like `make-lab-vm.sh`:
+
+```bash
+bash ci/k3s/lab-mirror-was.sh --check    # preconditions only, changes nothing
+bash ci/k3s/lab-mirror-was.sh            # the whole thing
+```
+
+It verifies `KUBECONFIG`, the VMI phase, the key, passwordless sudo, the
+Installation Manager version, free space and egress **before** asking for
+anything. Then it prompts once for the IBMid through `imcl -prompt` — the
+mechanism Installation Manager itself recommends when it refuses a repository —
+which writes an encrypted credential store on the VM. No later run carries a
+secret, and the password never appears on a command line or in shell history.
+
+That interactive prompt is why this is a script and not a playbook: it needs a
+TTY, and an AWX job pod has none.
+
+Two things to know. ILAN is the licence the "for Developers" edition ships
+under; IBM's table has no entry called "Developers", so the composite is
+`V9WASILAN` and the individual repository is `com.ibm.websphere.ILAN.v90`. And a
+mirror taken from the live repository is **9.0.5.x, not 9.0.0.0** — so
+`was_expected_version` has to move with it, or the install job's closing assert
+fails on a perfectly good install.
+
+### Installation Manager on the VM
+
+The install role runs `imcl` with `become`, so this is an **administrator
+installation**: the binary is root-owned and `imcl` as the service account
+fails with `CRIMC1018E ERROR: Administrator privileges are required`. Only
+`version` works without privileges. Everything else needs `sudo`:
+
+```bash
+IMCL=/app/binaries/InstallationManager/eclipse/tools/imcl
+
+$IMCL version                                       # the one call that needs nothing
+sudo $IMCL listInstalledPackages -long
+sudo $IMCL listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long
+sudo $IMCL -c                                       # console mode
+```
+
+The agent data and the installation registry are under `/app/data/IM/agentdata`,
+not `/var/ibm/InstallationManager`, because the role passes `-dataLocation`. One
+mount therefore holds the whole installation.
+
+**There is no browser route.** Installation Manager has no web interface;
+`IBMIM` needs an X server, and the `ibm.com/software/repositorymanager/...`
+service repository URLs do not load in a browser either — they are consumable
+only by Installation Manager. A local repository *can* be served over HTTP by
+any web server and handed to `imcl` as
+`http://host/repo/repository.config`, which is the only place a browser has in
+this picture.
+
+The same query without opening a shell, which is also how AWX runs it:
+
+```bash
+ansible -i inventories/lab was_lab -m command \
+  -a "/app/binaries/InstallationManager/eclipse/tools/imcl \
+      listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long"
+```
+
+The offering id is never hardcoded. The editions differ only by that id —
+`com.ibm.websphere.ND.v90`, `.BASE.v90`, `.DEVELOPERS.v90` — and guessing it
+produces an `imcl` error that reads like a licence problem, so the role asks the
+repository what it contains.
+
+### The workflow
+
+| Node | Playbook | What it does |
+|---|---|---|
+| 1 | `lab_install_im.yml` | Installation Manager. Job 2 runs only if this succeeds |
+| 2 | `lab_apply_fixpacks.yml` | pass 1 — brings Installation Manager to the level WAS needs |
+| 3 | `lab_install_was.yml` | WAS for Developers and the SDK, in one `imcl` call |
+| 4 | `lab_apply_fixpacks.yml` | pass 2 — patches what node 3 just installed |
+
+One job template, two workflow nodes for the fix packs. That only works because
+the role **discovers** what is installed rather than being handed a list: on
+pass 1 only Installation Manager is there, on pass 2 everything is. Finding no
+fix pack repository is a normal outcome — the job says what it found, says where
+to put media, and exits green.
+
+Job 3 checks for `imcl` itself rather than trusting node 1: a job template can
+be launched on its own, and the failure should name what is missing instead of
+dying inside a shell call.
+
+## 17. AWX
 
 AWX runs inside k3s on the Ubuntu host, deployed by the AWX Operator, pinned.
 See [`ci/awx/README.md`](ci/awx/README.md).
@@ -464,7 +640,7 @@ puts `ansible-playbook` on `PATH`.
 The admin password is generated by the operator into a Secret. Nothing in this
 repository carries it.
 
-## 17. Sources
+## 18. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
 - [Java SE 8 in WebSphere Application Server traditional V9](https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html)
@@ -522,7 +698,7 @@ par lot                   kubernetes.core          (le pont de migration)
         v
 COUCHE 3 — ORCHESTRATION
   Ansible Automation Platform : Workflow Templates, Surveys, Approval Nodes,
-  Credentials types, promotion RIT -> RA -> RU -> PRD, tests de fumee.
+  Credentials types, promotion d'un environnement au suivant, tests de fumee.
 ```
 
 ### Pourquoi le plan Liberty n'a aucun module
@@ -558,6 +734,10 @@ ansible_collections/wasevo/websphere/
 inventories/                     un inventaire tout YAML ; l environnement est une entree
 model/                           le modele declaratif partage
 docs/                            architecture et notes par phase
+ci/
+  k3s/                           pods de simulation, la VM de lab, RBAC,
+                                 make-lab-vm.sh, lab-mirror-was.sh
+  awx/                           l'operateur AWX et ses kustomizations
 ```
 
 **Ne jamais fusionner `config_render` et `deploy`.** `config_render` ne touche pas le cluster : il s'exécute hors ligne, est testable sans OpenShift, et c'est la frontière GitOps. Si Argo CD est adopté, `config_render` produit et commite, `deploy` est débranché, et rien d'autre ne change.
@@ -598,12 +778,12 @@ Les images officielles WebSphere Liberty sur `icr.io/appcafe` embarquent **IBM S
 6. Écrire `roles/liberty/config_render` avec les templates `server.xml`, `jvm.options` et `server.env`.
 7. Construire les deux Execution Environments : `ee-was-traditional` et `ee-liberty-ocp`.
 8. Créer le projet AAP, deux inventaires, les types de Credentials, le premier Workflow Template.
-9. Reconstruire l'environnement RIT avec le nouvel outillage, à iso-fonctionnalité.
+9. Reconstruire le premier environnement hors production avec le nouvel outillage, à iso-fonctionnalité.
 10. Rendre le datasource pilote, déclaré une seule fois, dans les trois couples de la trajectoire.
 
-**Critères d'entrée** — dépôt GitLab, AAP joignable, une cellule RIT disponible pour reconstruction.
+**Critères d'entrée** — dépôt GitLab, AAP joignable, une cellule hors production disponible pour reconstruction.
 
-**Critères de sortie** — RIT reconstruit de bout en bout depuis AAP ; `--check` et `--diff` démontrés sur un changement réel ; les trois rendus du datasource pilote concordent.
+**Critères de sortie** — cette cellule reconstruite de bout en bout depuis AAP ; `--check` et `--diff` démontrés sur un changement réel ; les trois rendus du datasource pilote concordent.
 
 **Retour arrière** — les anciens `launch_*.sh` restent exécutables en parallèle.
 
@@ -696,7 +876,7 @@ Les images officielles WebSphere Liberty sur `icr.io/appcafe` embarquent **IBM S
 3. Configurer la Route, les sondes liveness et readiness, les requests et limits.
 4. Mettre en place les dumps et traces via `WebSphereLibertyDump` et `WebSphereLibertyTrace`.
 5. Brancher Prometheus sur les métriques exposées en vague 3.
-6. Construire le workflow de promotion : `render -> build -> push -> [Approval] -> RIT -> smoke -> [Approval] -> RA -> ... -> PRD`.
+6. Construire le workflow de promotion : `render -> build -> push -> [Approval] -> premier environnement -> smoke -> [Approval] -> suivant -> ... -> production`.
 
 **Critères d'entrée** — critères de sortie de la vague 4 atteints.
 
@@ -763,7 +943,7 @@ ansible-playbook playbooks/model_validate.yml
 ansible-playbook playbooks/pilot_render_matrix.yml
 
 # plan traditionnel, a blanc d'abord
-ansible-playbook -i inventories/was $COL/traditional_config.yml -e was_environment=RIT --check --diff
+ansible-playbook -i inventories/was $COL/traditional_config.yml -e was_environment=<code> --check --diff
 ```
 
 ### Execution Environments
@@ -888,7 +1068,183 @@ exactement que deux namespaces jetables.
 ressources d'infrastructure appliquées une fois, et une chaîne qui les supprime
 se rend elle-même inexécutable.
 
-## 16. AWX
+## 16. Le lab d'installation : une VM KubeVirt
+
+La simulation ci-dessus n'installe rien. Installation Manager a besoin d'un
+endroit réel pour atterrir, et c'est une machine distincte : **une VM
+KubeVirt**, `was-lab-01` dans le namespace `was-lab`, déclarée dans
+[`ci/k3s/20-was-lab-vm.yml`](ci/k3s/20-was-lab-vm.yml).
+
+**Pourquoi une VM et pas un pod de plus.** Installation Manager écrit dans les
+répertoires d'installation, tient un registre d'installation, attend une vraie
+arborescence et assez de disque, et `manageprofiles` attend un arbre de
+processus qui fonctionne — il appelle `killall`. Un conteneur n'a pas cette
+forme. Les pods de simulation sont du Rocky 9 d'origine sur `emptyDir`, sans
+`sudo` et avec un stub wsadmin ; rien là-dedans ne pourrait porter une
+installation IBM de 2,5 Go. KubeVirt et CDI tournent déjà sur le cluster, donc
+la VM ne coûte rien de plus à exploiter et se détruit en supprimant un seul
+namespace.
+
+| Objet | Nom | Remarque |
+|---|---|---|
+| Namespace | `was-lab` | |
+| DataVolume | `was-lab-disk` | Rocky 9 GenericCloud importée par CDI, 40 Gi |
+| VirtualMachine | `was-lab-01` | 4 vCPU, 6 Gi — WAS 9.0 réclame 2 Gi au minimum et y est misérable |
+| Service | `was-lab-01` | `22`, `9043`, `9080`, joignable depuis le cluster sans Route |
+| Secret | `was-lab-cloudinit` | données cloud-init. **Pas dans ce dépôt** : il porte la clé publique SSH |
+
+On la monte avec [`ci/k3s/make-lab-vm.sh`](ci/k3s/make-lab-vm.sh), qui construit
+le Secret depuis la paire de clés présente sur le nœud, applique le manifeste,
+attend l'import de l'image et affiche l'adresse. La destruction est
+`kubectl delete ns was-lab`, et elle ne laisse rien derrière.
+
+### Y entrer
+
+**La VM tourne dans un pod, et ce pod n'est pas la porte d'entrée.** KubeVirt
+l'enveloppe dans `virt-launcher-was-lab-01-xxxxx` ; un `kubectl exec` sur ce pod
+vous dépose dans le conteneur virt-launcher, à côté du processus QEMU, pas dans
+le Rocky invité. Installation Manager est inatteignable par ce chemin.
+
+```bash
+# Sur un noeud k3s, /usr/local/bin/kubectl est un LIEN SYMBOLIQUE VERS k3s, et
+# ce wrapper lit /etc/rancher/k3s/k3s.yaml - possede par root, mode 0600 - sauf
+# si KUBECONFIG dit autre chose. Sans cette ligne, kubectl echoue sur une erreur
+# de permission qui ressemble a un cluster casse, la substitution ci-dessous
+# rend une chaine vide, et toutes les commandes suivantes tournent en silence
+# sur le noeud au lieu de la VM.
+export KUBECONFIG=$HOME/.kube/config
+
+kubectl -n was-lab get vmi,pod          # vmi was-lab-01 doit etre Running
+
+IP=$(kubectl -n was-lab get vmi was-lab-01 -o jsonpath='{.status.interfaces[0].ipAddress}')
+[ -n "$IP" ] || echo "pas d'adresse - ne rien lancer d'autre"
+ssh -i ~/.ssh/was_lab ansible@"$IP"
+```
+
+`virtctl` éviterait la recherche d'adresse, mais il **n'est pas installé sur ce
+nœud** — il n'y a que `kubectl` et `k3s`. `virtctl console` ne servirait de toute
+façon à rien : cloud-init pose `ssh_pwauth: false`, `disable_root: true` et aucun
+mot de passe. La clé est la seule entrée.
+
+Les pods de job AWX tournent dans le cluster, donc
+`was-lab-01.was-lab.svc.cluster.local` résout et c'est ce nom que l'inventaire
+emploie. Depuis le nœud lui-même, passer `-e ansible_host=$IP`.
+
+### Les médias, que rien ne télécharge
+
+Aucun des deux artefacts ne s'obtient sans un IBMid, donc les deux sont déposés
+à la main. Dans l'inventaire du lab les motifs sont **sur le contrôleur** et les
+rôles recopient les archives ; sur le parc le média arrive par un partage monté
+et les motifs restent vides.
+
+| Artefact | Motif côté contrôleur (`group_vars/was_lab.yml`) | Où il atterrit sur la VM |
+|---|---|---|
+| Installation Manager | `/mnt/binaries/IBM/install_im/*.zip` | `/mnt/binaries/IBM/install_im` |
+| WAS 9.0 for Developers | `/mnt/binaries/IBM/install_was90/*.zip` | `/mnt/binaries/IBM/install_was90` |
+| Fix packs | `/mnt/binaries/IBM/fixes/*.zip` | un répertoire de dépôt par archive |
+
+Chaque archive de fix pack est un dépôt Installation Manager à elle seule et
+elles ne doivent pas être décompressées l'une sur l'autre : deux
+`repository.config` dans un même répertoire et `imcl` lit celui qu'il trouve en
+premier. Sous AWX le contrôleur est le pod de job, donc ces chemins doivent être
+montés dans l'Execution Environment, sinon l'étape de dépôt ne trouve rien.
+
+L'installation de base Developers donne **9.0.0.0**. Le niveau 9.0.5.x vient du
+fix pack, qui est un job séparé — d'où `was_expected_version: "9.0.0.0"`.
+
+### Remplir le dépôt local depuis IBM
+
+Les zips 9.0.0.0 ne sont pas la seule entrée. Le dépôt composite ILAN en ligne
+sert le niveau **courant**, donc Packaging Utility peut recopier du 9.0.5.x
+directement dans le répertoire de média, après quoi la VM n'a plus jamais besoin
+d'Internet. [`ci/k3s/lab-mirror-was.sh`](ci/k3s/lab-mirror-was.sh) fait
+exactement cela, lancé depuis le nœud comme `make-lab-vm.sh` :
+
+```bash
+bash ci/k3s/lab-mirror-was.sh --check    # preconditions seules, ne change rien
+bash ci/k3s/lab-mirror-was.sh            # la totalite
+```
+
+Il vérifie `KUBECONFIG`, la phase du VMI, la clé, le sudo sans mot de passe, la
+version d'Installation Manager, l'espace libre et la sortie réseau **avant** de
+demander quoi que ce soit. Puis il demande une seule fois l'IBMid via
+`imcl -prompt` — le mécanisme qu'Installation Manager recommande lui-même quand
+il refuse un dépôt — ce qui écrit un coffre chiffré sur la VM. Aucune exécution
+ultérieure ne porte de secret, et le mot de passe n'apparaît ni dans une ligne
+de commande ni dans l'historique du shell.
+
+Cette invite interactive est la raison pour laquelle c'est un script et pas un
+playbook : elle exige un TTY, et un pod de job AWX n'en a pas.
+
+Deux choses à savoir. ILAN est la licence sous laquelle l'édition « for
+Developers » est livrée ; la table IBM ne comporte aucune entrée « Developers »,
+donc le composite est `V9WASILAN` et le dépôt individuel
+`com.ibm.websphere.ILAN.v90`. Et un miroir pris sur le dépôt en ligne est du
+**9.0.5.x, pas du 9.0.0.0** — `was_expected_version` doit donc suivre, sinon
+l'assertion finale du job échoue sur une installation parfaitement saine.
+
+### Installation Manager sur la VM
+
+Le rôle d'installation lance `imcl` avec `become`, donc c'est une installation
+**en mode administrateur** : le binaire appartient à root et `imcl` sous le
+compte de service échoue sur `CRIMC1018E ERROR: Administrator privileges are
+required`. Seul `version` passe sans privilèges. Tout le reste demande `sudo` :
+
+```bash
+IMCL=/app/binaries/InstallationManager/eclipse/tools/imcl
+
+$IMCL version                                       # le seul appel qui ne demande rien
+sudo $IMCL listInstalledPackages -long
+sudo $IMCL listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long
+sudo $IMCL -c                                       # mode console
+```
+
+Les données d'agent et le registre d'installation sont sous
+`/app/data/IM/agentdata`, pas sous `/var/ibm/InstallationManager`, parce que le
+rôle passe `-dataLocation`. Un seul montage porte donc toute l'installation.
+
+**Il n'y a aucun chemin par navigateur.** Installation Manager n'a pas
+d'interface web ; `IBMIM` exige un serveur X, et les URL de dépôt de service
+`ibm.com/software/repositorymanager/...` ne s'ouvrent pas davantage dans un
+navigateur — elles ne sont consommables que par Installation Manager. Un dépôt
+local *peut* en revanche être servi en HTTP par n'importe quel serveur web et
+donné à `imcl` sous la forme `http://hote/depot/repository.config` : c'est la
+seule place d'un navigateur dans ce tableau.
+
+La même interrogation sans ouvrir de shell, qui est aussi la façon dont AWX
+l'exécute :
+
+```bash
+ansible -i inventories/lab was_lab -m command \
+  -a "/app/binaries/InstallationManager/eclipse/tools/imcl \
+      listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long"
+```
+
+L'offering id n'est jamais codé en dur. Les éditions ne diffèrent que par cet id
+— `com.ibm.websphere.ND.v90`, `.BASE.v90`, `.DEVELOPERS.v90` — et le devenir
+produit une erreur `imcl` qui ressemble à un problème de licence ; le rôle
+demande donc au dépôt ce qu'il contient.
+
+### Le workflow
+
+| Nœud | Playbook | Ce qu'il fait |
+|---|---|---|
+| 1 | `lab_install_im.yml` | Installation Manager. Le job 2 ne part que si celui-ci réussit |
+| 2 | `lab_apply_fixpacks.yml` | passe 1 — amène Installation Manager au niveau que WAS exige |
+| 3 | `lab_install_was.yml` | WAS for Developers et le SDK, dans un seul appel `imcl` |
+| 4 | `lab_apply_fixpacks.yml` | passe 2 — corrige ce que le nœud 3 vient d'installer |
+
+Un seul job template, deux nœuds de workflow pour les fix packs. Cela ne
+fonctionne que parce que le rôle **découvre** ce qui est installé au lieu qu'on
+lui donne une liste : à la passe 1 seul Installation Manager est là, à la passe 2
+tout l'est. Ne trouver aucun dépôt de fix pack est un résultat normal — le job
+dit ce qu'il a trouvé, dit où déposer le média, et sort en vert.
+
+Le nœud 3 vérifie `imcl` lui-même plutôt que de faire confiance au nœud 1 : un
+job template peut être lancé seul, et l'échec doit nommer ce qui manque plutôt
+que de mourir dans un appel shell.
+
+## 17. AWX
 
 AWX tourne dans k3s sur l'hôte Ubuntu, déployé par l'AWX Operator, en version
 figée. Voir [`ci/awx/README.md`](ci/awx/README.md).
@@ -913,7 +1269,7 @@ qui met `ansible-playbook` dans le `PATH`.
 Le mot de passe admin est généré par l'opérateur dans un Secret. Rien dans ce
 dépôt ne le porte.
 
-## 17. Sources
+## 18. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
 - [Java SE 8 in WebSphere Application Server traditional V9](https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html)

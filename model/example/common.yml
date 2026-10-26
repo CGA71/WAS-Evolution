@@ -54,7 +54,7 @@ shared_libraries:
 # The legacy was_generic_jvm_arguments string is replaced by intents. Compare:
 #
 #   -Djava.awt.headless=true -Xgcpolicy:balanced -Xmns100M -Xmnx200M
-#   -Xshareclasses:name=RIT%g,groupAccess,nonFatal -Xdisableexplicitgc
+#   -Xshareclasses:name=<ENV>%g,groupAccess,nonFatal -Xdisableexplicitgc
 #   -Xverbosegclog:${SERVER_LOG_ROOT}/verbosegc,5,18000
 #   -Djava.net.preferIPv4Stack=true -Dcom.sun.jndi.ldap.read.timeout=40000
 #
@@ -69,7 +69,10 @@ jvm:
   nursery_min: 100M
   nursery_max: 200M
   disable_explicit_gc: true
-  shared_classes: "RIT%g"
+  # One cache per environment. The name is composed by the model role, from
+  # the environment that arrived at launch - never written out here, where it
+  # would pin the model to one environment.
+  shared_classes: "{{ was_jvm_shared_class_cache }}"
   gc_log: "${SERVER_LOG_ROOT}/verbosegc"
   ldap_read_timeout: 40000
   # heap_min / heap_max are declared per target, because a container must use

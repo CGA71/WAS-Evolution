@@ -1,6 +1,6 @@
 ---
 # Runtime defaults. An environment moving along the trajectory overrides this
-# in its own group_vars/<env>.yml - see ra.yml, which is the phase 2 pilot.
+# in its own group_vars/<environment>.yml - see group_vars/README.md.
 #
 # This is the single switch that decides which back-end runs: wsadmin modules,
 # or render plus kubernetes.core. The model role refuses an invalid
@@ -12,11 +12,19 @@ runtime:
     version: 8
     vm: j9
 
-# WAS object names, derived from the two inputs. Change was_environment at
-# launch and all of these follow.
-was_cell_name: "{{ was_channel_name }}_{{ was_env_upper }}"
-was_cluster_name: "Cluster{{ was_channel_name[:3] | upper }}"
-was_console_label: "{{ was_channel_name }} {{ was_env_upper }}"
+# WAS object names are NOT declared here any more.
+#
+# The cell, the profiles, the nodes, the cluster, its JVM members and the
+# shared class cache are composed by roles/model/vars/naming.yml from the
+# environment and the channel that arrived at launch, and published by the
+# model role. They used to be written out in this file in all three
+# inventories, with the cluster name hardcoded in two of them - three copies
+# of one naming rule, and the disagreement only shows up as a node that will
+# not federate.
+#
+# To override one for this site, declare it here or in the environment's own
+# file: the role honours a name that is already defined and never overwrites
+# it.
 
 # Port base, offset per environment so two can share a host during a
 # migration. Overridden per environment.

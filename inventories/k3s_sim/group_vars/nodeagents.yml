@@ -1,5 +1,4 @@
 ---
-was_node_name: "ND{{ inventory_hostname }}{{ was_profile_name }}"
 was_service_name: wasnode
 # In-cluster service name, not the site DNS domain: the simulation has neither.
 was_dmgr_host: "was-dmgr-01.was-sim-dmgr.svc.cluster.local"

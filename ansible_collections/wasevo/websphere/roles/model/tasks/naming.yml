@@ -1,0 +1,61 @@
+---
+# Publish the WAS object names for this host.
+#
+# Every name is published as "whatever was already defined, else the pattern".
+# set_fact outranks group_vars, so without that default() this file would
+# silently overwrite a deliberate per-environment or per-inventory override -
+# the exact class of bug where a prd.yml entry is ignored and nobody notices
+# until the object exists under the wrong name.
+#
+# Runs on the target host, not on localhost, because a node agent name is
+# built from inventory_hostname and a cluster member name from the node.
+
+- name: Which naming role this host plays
+  ansible.builtin.set_fact:
+    _is_dmgr: "{{ was_dmgr_group | default('dmgr') in group_names }}"
+  tags: [model, naming, always]
+
+- name: Publish the cell, profile and node names
+  ansible.builtin.set_fact:
+    was_cell_name: "{{ was_cell_name | default(was_cell_name_pattern, true) }}"
+    was_console_label: "{{ was_console_label | default(was_console_label_pattern, true) }}"
+    was_dmgr_profile_name: "{{ was_dmgr_profile_name | default(was_dmgr_profile_name_pattern, true) }}"
+    was_profile_name: >-
+      {{ was_profile_name | default(was_dmgr_profile_name_pattern if _is_dmgr
+         else was_app_profile_name_pattern, true) }}
+    was_node_name: >-
+      {{ was_node_name | default(was_dmgr_node_name_pattern if _is_dmgr
+         else was_nodeagent_node_name_pattern, true) }}
+    was_cluster_name: "{{ was_cluster_name | default(was_cluster_name_pattern, true) }}"
+    was_jvm_shared_class_cache: >-
+      {{ was_jvm_shared_class_cache | default(was_jvm_shared_class_cache_pattern, true) }}
+  tags: [model, naming, always]
+
+# Separate task on purpose: a member name is built from the cluster and node
+# names published above, and the keys of one set_fact cannot reference each
+# other.
+- name: Publish the cluster member name
+  ansible.builtin.set_fact:
+    was_cluster_member_name: >-
+      {{ was_cluster_member_name | default(was_cluster_member_name_pattern, true) | trim }}
+  tags: [model, naming, always]
+
+- name: Every published name must be non-empty and free of whitespace
+  ansible.builtin.assert:
+    that:
+      - item.value | length > 0
+      - item.value is not search('\s')
+    fail_msg: >-
+      {{ item.key }} rendered as "{{ item.value }}". A WAS object name cannot
+      be empty or contain whitespace: wsadmin accepts it at creation and then
+      every later lookup by name misses. Check the pattern in
+      roles/model/vars/naming.yml, or the override that produced it.
+  loop:
+    - { key: was_cell_name, value: "{{ was_cell_name }}" }
+    - { key: was_profile_name, value: "{{ was_profile_name }}" }
+    - { key: was_node_name, value: "{{ was_node_name }}" }
+    - { key: was_cluster_name, value: "{{ was_cluster_name }}" }
+    - { key: was_cluster_member_name, value: "{{ was_cluster_member_name }}" }
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  tags: [model, naming, validate]

@@ -1,7 +1,6 @@
 ---
-# Node agents, in any environment. The node name carries the host and the
-# profile, as in the source inventory, but derived rather than typed.
-was_node_name: "ND{{ inventory_hostname }}{{ was_profile_name }}"
+# Node agents, in any environment. The node name is composed by the model
+# role from the machine name this inventory declares.
 was_service_name: wasnode
 
 # The deployment manager of this host's environment. Resolved from the

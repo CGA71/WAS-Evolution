@@ -9,7 +9,9 @@
 #   ... -e forge_preflight_control_only=true
 
 - name: Verify the forge dependencies
-  hosts: "{{ forge_preflight_hosts | default((was_environment | default('rit') | lower)) }}"
+  hosts: >-
+    {{ forge_preflight_hosts if forge_preflight_hosts is defined
+       else (was_environment | mandatory | lower) }}
   gather_facts: false
 
   tasks:

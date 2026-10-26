@@ -102,20 +102,20 @@ author:
 EXAMPLES = r"""
 - name: Declare the extranet cluster
   wasevo.websphere.was_cluster:
-    name: ClusterEXT
-    cell_name: Extranet_RIT
+    name: "{{ was_cluster_name }}"
+    cell_name: "{{ was_cell_name }}"
     prefer_local: "true"
     state: present
-    profile_path: /app/profiles/AppSrv
+    profile_path: "{{ was_profile_path }}"
     admin_user: "{{ was_admin_user }}"
     admin_password: "{{ was_admin_password }}"
 
 - name: Show what would change without touching the cell
   wasevo.websphere.was_cluster:
-    name: ClusterEXT
-    cell_name: Extranet_RIT
+    name: "{{ was_cluster_name }}"
+    cell_name: "{{ was_cell_name }}"
     prefer_local: "false"
-    profile_path: /app/profiles/AppSrv
+    profile_path: "{{ was_profile_path }}"
     admin_user: "{{ was_admin_user }}"
     admin_password: "{{ was_admin_password }}"
   check_mode: true
@@ -124,9 +124,9 @@ EXAMPLES = r"""
 - name: Remove a cluster during decommissioning
   wasevo.websphere.was_cluster:
     name: ClusterLegacy
-    cell_name: Extranet_RIT
+    cell_name: "{{ was_cell_name }}"
     state: absent
-    profile_path: /app/profiles/AppSrv
+    profile_path: "{{ was_profile_path }}"
     admin_user: "{{ was_admin_user }}"
     admin_password: "{{ was_admin_password }}"
 """

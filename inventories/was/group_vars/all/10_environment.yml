@@ -1,23 +1,35 @@
 ---
 # THE environment input.
 #
-# Supplied at launch. In AWX it comes from the Survey question "Target
-# environment", whose variable is was_environment and whose answers are the
-# codes below. Extra variables outrank group_vars, so the Survey answer wins
-# over the default here.
+# No default, on purpose.
 #
-# On the command line:
-#     ansible-playbook -i inventories/was <playbook> -e was_environment=RA
+# The environment is an answer to the AWX survey question, not a value baked
+# into an inventory. A default here would mean that a run with no answer
+# silently builds one particular environment - and the one that gets chosen as
+# "the harmless default" is exactly the one nobody notices they rebuilt.
 #
-# Defaulted to RIT so a run with no input lands on the least dangerous
-# environment rather than failing or, worse, guessing production.
+# There is no list of valid codes, here or in the collection. The value is
+# whatever this site calls an environment; the model role checks that it is
+# usable in a WAS object name and a filesystem path, then derives every name
+# from it. What must exist is a matching group in hosts.yml, named with the
+# answer in lowercase.
 #
-# Everything else about the environment - long name, letter, tier, promotion
-# rank - is looked up from was_environment_catalog in
-# roles/model/vars/environments.yml. The source inventory needed eight
-# hand-written variables for that, two of which held the same string.
+#   AWX  : workflow survey, target environment
+#   shell: ansible-playbook -i inventories/was <playbook> -e was_environment=<code>
+#
+# Everything else about the environment is derived from this one value
+# (roles/model/vars/environments.yml) or supplied alongside it:
+#
+#   was_environment_tier       non_prod | prod. Defaults to non_prod, so
+#                              forgetting it never unlocks production.
+#   was_environment_letter     the letter inside the dmgr node name.
+#                              Defaults to the first letter of the code.
+#   was_environment_long_name  reports only. Defaults to the code.
+#
+# Declare them per environment in group_vars/<environment>.yml, or pass them
+# from the survey. See group_vars/README.md.
 
-was_environment: RIT
-
-# The channel is a second, independent input. Also a Survey question.
+# The channel is a second, independent input, and also a survey question. It
+# keeps a default because a site that runs one channel should not have to
+# answer for it on every launch.
 was_channel: Extranet

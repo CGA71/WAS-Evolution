@@ -6,8 +6,8 @@ runtime:
     version: 8
     vm: j9
 
-was_cell_name: "{{ was_channel_name }}_{{ was_env_upper }}"
-was_cluster_name: "ClusterEXT"
+# Overridden on purpose, to prove the override path: the model role honours a
+# name that is already defined and only falls back to its own pattern.
 was_console_label: "{{ was_channel_name }} {{ was_env_upper }} lab"
 
 was_base_port: 30000

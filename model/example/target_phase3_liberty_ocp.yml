@@ -25,13 +25,13 @@ jvm:
   heap_percent: 75
 
 openshift:
-  namespace: extranet-rit
+  namespace: "{{ was_channel_lower }}-{{ was_env_lower }}"
   replicas: 2
   resources:
     requests: { memory: 1Gi, cpu: 500m }
     limits: { memory: 2Gi, cpu: "2" }
   route:
-    host: extranet-rit.apps.example.internal
+    host: "{{ was_channel_lower }}-{{ was_env_lower }}.apps.example.internal"
     tls: edge
   dumps:
     # In a pod a dump written to the container filesystem dies with the pod.

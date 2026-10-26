@@ -5,15 +5,21 @@
 # This split exists because of a hole the lab found: model_validate.yml used to
 # target "{{ was_environment | lower }}", so an unknown environment produced an
 # empty host pattern, the play matched nothing, and the run SUCCEEDED without
-# validating anything. An unknown code has to fail, not evaporate.
+# validating anything. An unmatched pattern is not a failure in Ansible, so the
+# validating cannot be left to the pattern.
 #
-# Nothing here needs a host or a group_var: the catalogue lives in this role.
+# What this no longer does is check the value against a list of known codes.
+# The environment arrives from the AWX survey and may be anything a site calls
+# an environment; the collection validates its SHAPE, because the value reaches
+# a cell name, a profile name and a filesystem path, and then derives every
+# name from it. A value is refused for being unusable, never for being unknown.
 
-- name: Load the catalogues and the translation tables
+- name: Load the derivations, the naming patterns and the translation tables
   ansible.builtin.include_vars:
     file: "{{ item }}"
   loop:
     - environments.yml
+    - naming.yml
     - jvm_flags.yml
     - jdk_matrix.yml
   tags: [model, always]
@@ -21,78 +27,77 @@
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-# One declared code, everything else looked up. The source inventory needed
-# eight hand-written variables for this, two of which held the same string.
 
 - name: An environment and a channel must be supplied
   ansible.builtin.assert:
     that:
       - was_environment is defined
+      - was_environment | trim | length > 0
       - was_channel is defined
+      - was_channel | trim | length > 0
     fail_msg: >-
       No environment was supplied. It is an input, not a property of a host or
-      of a directory: the same machine can be built as any of
-      {{ was_environment_catalog.keys() | list | join(', ') }}, and the answer
-      decides the cell name, the profile names and the ports.
-      In AWX, answer the survey question "Give an environment". On the command
-      line, pass -e was_environment=RIT. The channel is the same kind of input
-      and may default where a lab only exercises one.
+      of a directory: the same machine can be built as any environment, and
+      the answer decides the cell name, the profile names, the node names and
+      the ports.
+      In AWX, answer the survey question for the target environment. On the
+      command line, pass -e was_environment=<code>. The channel is the same
+      kind of input and may default where a lab only exercises one.
   tags: [model, validate, environment]
 
-- name: The environment must resolve to a catalogue entry
+- name: The environment code must be usable in a WAS object name and a path
   ansible.builtin.assert:
     that:
-      - was_env_code | length > 0
+      - was_env_code is match(was_env_code_pattern)
     fail_msg: >-
-      Unknown environment "{{ was_environment }}". Known:
-      {{ was_environment_catalog.keys() | list | join(', ') }}.
-      The match is case-insensitive, so rit, RIT and Rit all resolve - this
-      failure means the code itself is not in the catalogue, not that the case
-      is wrong. To add one, add a catalogue entry in
-      roles/model/vars/environments.yml and the hosts to the inventory.
+      Environment "{{ was_environment }}" resolves to "{{ was_env_code }}",
+      which does not match {{ was_env_code_pattern }}.
+      This is not a list of allowed environments - any code a site uses is
+      accepted. It is a shape check, because the value becomes a cell name
+      ({{ was_channel_name | default('Channel') }}_{{ was_env_code }}), a
+      profile name, a node name, a directory under the profiles base and a
+      keystore path: two to eight characters, starting with a letter, letters
+      and digits only. A space, a dot, a slash or an accent there produces a
+      cell that cannot be federated and a path that cannot be created.
+      The match is case-insensitive - the code is upper-cased before it is
+      checked, so a lowercase survey answer is fine.
     success_msg: >-
       {{ was_environment }} resolved to {{ was_env_code }} / {{ was_env_lower }}
   tags: [model, validate, environment]
 
-- name: The channel must resolve to a catalogue entry
+- name: The channel must be usable in a WAS object name and a path
   ansible.builtin.assert:
     that:
-      - was_channel_code | length > 0
+      - was_channel_code is match(was_channel_code_pattern)
     fail_msg: >-
-      Unknown channel "{{ was_channel }}". Known:
-      {{ was_channel_catalog.keys() | list | join(', ') }}.
-      The match is case-insensitive; the canonical form is title case because
-      that is how the channel appears inside WAS object names.
+      Channel "{{ was_channel }}" resolves to "{{ was_channel_code }}", which
+      does not match {{ was_channel_code_pattern }}. Any channel name is
+      accepted; the shape is not, for the same reason as the environment. The
+      canonical form is title case, because that is how the channel appears
+      inside WAS object names, and the first three letters become the cluster
+      suffix ({{ was_cluster_name_pattern }}).
   tags: [model, validate, environment]
 
-- name: Warn about catalogue entries that were never confirmed
-  ansible.builtin.debug:
-    msg: >-
-      {{ item.what }} {{ item.name }} is marked confirmed: false. Only RIT was
-      ever declared in the source inventory, where the letter was "I"; the
-      other values are plausible but unverified. Check them against the naming
-      standard and set confirmed: true.
-  loop:
-    - what: Environment
-      name: "{{ was_env_code }}"
-      ok: "{{ was_environment_catalog[was_env_code].confirmed | default(false) }}"
-    - what: Channel
-      name: "{{ was_channel_code }}"
-      ok: "{{ was_channel_catalog[was_channel_code].confirmed | default(false) }}"
-  loop_control:
-    label: "{{ item.what }} {{ item.name }}"
-  when: not (item.ok | bool)
+- name: The tier must be one of the two the collection acts on
+  ansible.builtin.assert:
+    that:
+      - was_env_tier in ['non_prod', 'prod']
+    fail_msg: >-
+      was_environment_tier is "{{ was_env_tier }}". Valid: non_prod, prod.
+      The tier is an input and not a property of the code, because an open
+      environment value means this collection cannot know which codes a site
+      calls production. Supply it from the survey alongside the environment.
   tags: [model, validate, environment]
 
 - name: Production requires a deliberate acknowledgement
   ansible.builtin.assert:
     that:
-      - model_allow_production | bool
+      - model_allow_production | default(false) | bool
     fail_msg: >-
-      {{ was_environment }} is tier prod. Pass -e model_allow_production=true,
-      or use the AAP workflow, which carries an Approval Node for exactly this.
-      A production run should never be something that happens by typing the
-      wrong inventory path.
-  when: was_environment_catalog[was_env_code].tier == 'prod'
+      {{ was_environment }} was declared tier prod
+      (was_environment_tier=prod). Pass -e model_allow_production=true, or use
+      the AAP workflow, which carries an Approval Node for exactly this. A
+      production run should never be the result of picking the wrong answer in
+      a form.
+  when: was_env_is_production | bool
   tags: [model, validate, environment]
-

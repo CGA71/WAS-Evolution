@@ -32,19 +32,19 @@ payload() {
 
 payload present <<'JSON'
 {"resource":"cluster","state":"present",
- "params":{"name":"ClusterEXT","cell_name":"Extranet_RIT","prefer_local":"true"},
+ "params":{"name":"ClusterEXT","cell_name":"Extranet_STUB","prefer_local":"true"},
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
 payload drift_check <<'JSON'
 {"resource":"cluster","state":"present",
- "params":{"name":"ClusterEXT","cell_name":"Extranet_RIT","prefer_local":"false"},
+ "params":{"name":"ClusterEXT","cell_name":"Extranet_STUB","prefer_local":"false"},
  "check_mode":true,"save_config":true,"sync_nodes":true}
 JSON
 
 payload absent <<'JSON'
 {"resource":"cluster","state":"absent",
- "params":{"name":"ClusterEXT","cell_name":"Extranet_RIT"},
+ "params":{"name":"ClusterEXT","cell_name":"Extranet_STUB"},
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 

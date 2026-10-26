@@ -12,7 +12,7 @@
 # could not.
 
 - name: Configure the deployment manager
-  hosts: "{{ was_environment | default('rit') | lower }}:&dmgr"
+  hosts: "{{ was_environment | mandatory | lower }}:&dmgr"
   gather_facts: true
 
   module_defaults:
