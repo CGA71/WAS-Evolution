@@ -748,50 +748,41 @@ differs. An AWX survey is flat - it has no repeating group - so a list of nodes
 cannot be expressed as survey questions. The survey carries only an optional
 override that applies to every host in the run.
 
-### CI simulates this and deploys nothing
+### Simulating is a check run, and that is all it is
 
-`profile_render_only` renders the response file, runs every decision and
-refusal that does not need the product, and never calls `manageprofiles`. The
-`sim:profiles` job uses it against the three simulation pods, where there is no
-WAS and there is not meant to be. It asserts on the rendered artefact rather
-than on a log line, because the response file is the contract between this
-collection and `manageprofiles`: that the ND run rendered a `management`
-template with `serverType=DEPLOYMENT_MANAGER` and a `managed` template with
-`dmgrHost` and `dmgrPort`, that a node did not render a standalone template,
-that a standalone run reported it cannot cluster and both ND roles stood down,
-that a topology of `whatever` is refused with a message naming the two accepted
-values - and, last, that no profile and no product exist on any simulated host
-afterwards.
+**"Simulate the installation" means `--check`** — which AWX offers as
+**Job type: Check** in the launch dialog, and which the pipeline passes
+directly. There is no dry-run flag of this collection's own: a second code path
+is a second thing to keep true, and it would be the one nobody launches.
 
-### The build goes through AWX, as a workflow
+The job templates shipped with `ask_job_type_on_launch` false, so Check was not
+selectable and the only way to rehearse an install was to perform it.
+[`ci/awx/apply-survey.sh`](ci/awx/apply-survey.sh) sets it, along with the
+survey, so Run and Check are both reachable from the launch dialog.
 
-Nothing is installed or named by hand on a target. The construction is a
-workflow of job templates, and the survey is where the names and the
-environment enter:
+What the profile roles do under check mode:
 
-| Node | Job template | Playbook |
-|---|---|---|
-| 0 | Forge preflight | `forge_preflight.yml` |
-| 1 | Install IBM Installation Manager | `lab_install_im.yml` |
-| 2 | Apply fixpacks, pass 1 | `lab_apply_fixpacks.yml` |
-| 3 | Install WAS and the SDK | `lab_install_was.yml` |
-| 4 | Apply fixpacks, pass 2 | `lab_apply_fixpacks.yml` |
-| 5 | Create the profiles | `lab_create_profiles.yml` |
-| 6 | Create the cluster and its members | `traditional_config.yml` |
+- the `command` tasks do not run, so `manageprofiles` is never called
+- the hard refusals — the product is missing, the deployment manager is not
+  listening, the profile did not land — stand down, because in a check run they
+  are describing a future, not a state
+- the read-only probes keep `check_mode: false`, so `-listProfiles` and the
+  `stat`s still run and still report honestly
+- each role prints **what it would hand to `manageprofiles`**, rendered on the
+  controller with `lookup('template', ...)`, which writes nothing anywhere. The
+  administrative password is masked out of the display; the file it would be
+  written into is mode 0600 and the task is `no_log`
 
-The survey asks for the target environment, the channel, the production
-acknowledgement, and any object name the site wants to set rather than derive.
-None of those are flags anybody types: a workflow node carries them, and the
-promotion from one environment to the next is the same workflow with a
-different answer.
-
-Two things follow from this and are worth stating plainly. The environment code
-is **not** a property of a machine — the same host can be built as any
-environment, which is why no inventory declares one. And the install jobs are
-name-neutral: `imcl` receives the offering, the repository and the installation
-directory, nothing derived from the environment or the channel. The names are
-consumed by the profile and configuration jobs, which is where a wrong answer
-shows up and where it is cheap to correct.
+`sim:profiles` runs exactly that against the three simulation pods, where there
+is no WAS and there is not meant to be, and asserts on the rendered response
+file because that file is the contract between this collection and
+`manageprofiles`: a `management` template with `serverType=DEPLOYMENT_MANAGER`
+on the deployment manager, a `managed` template with `dmgrHost` and `dmgrPort`
+on each node, no `default` template on a node, a standalone run reporting it
+cannot cluster with both ND roles standing down, a topology of `whatever`
+refused with a message naming the two accepted values, the password masked and
+never in the log — and, last, that `/app/profiles` and `/app/data/profiles` are
+empty on every simulated host afterwards.
 
 ## 18. AWX
 
@@ -1558,51 +1549,45 @@ répétable — donc une liste de nœuds ne s'exprime pas en questions de survey
 formulaire ne porte qu'une surcharge optionnelle, qui s'applique à tous les
 hôtes du run.
 
-### La CI simule ceci et ne déploie rien
+### Simuler, c'est un run en check, et rien d'autre
 
-`profile_render_only` rend le response file, exécute toutes les décisions et
-tous les refus qui n'ont pas besoin du produit, et n'appelle jamais
-`manageprofiles`. Le job `sim:profiles` l'utilise contre les trois pods de
-simulation, où il n'y a pas de WAS et où il n'est pas prévu qu'il y en ait. Il
-vérifie l'artefact rendu plutôt qu'une ligne de log, parce que le response file
-est le contrat entre cette collection et `manageprofiles` : que le run ND a
-rendu un template `management` avec `serverType=DEPLOYMENT_MANAGER` et un
-template `managed` avec `dmgrHost` et `dmgrPort`, qu'un nœud n'a pas rendu un
-template standalone, qu'un run standalone a signalé qu'il ne peut pas clusteriser
-et que les deux rôles ND se sont retirés, qu'une topologie `whatever` est refusée
-avec un message nommant les deux valeurs acceptées — et, enfin, qu'aucun profil
-ni aucun produit n'existe sur un hôte simulé après coup.
+**« Simuler l'installation » veut dire `--check`** — ce qu'AWX propose sous
+**Job type: Check** dans la fenêtre de lancement, et ce que la chaîne passe
+directement. Cette collection n'a aucun drapeau de simulation à elle : un
+second chemin de code est une seconde chose à maintenir vraie, et ce serait
+celui que personne ne lance.
 
-### La construction passe par AWX, en workflow
+Les job templates étaient livrés avec `ask_job_type_on_launch` à faux, donc
+Check n'était pas sélectionnable et la seule façon de répéter une installation
+était de la faire. [`ci/awx/apply-survey.sh`](ci/awx/apply-survey.sh) l'active,
+en même temps que le survey, de sorte que Run et Check soient tous deux
+accessibles au lancement.
 
-Rien n'est installé ni nommé à la main sur une cible. La construction est un
-workflow de job templates, et le survey est l'endroit par lequel les noms et
-l'environnement entrent :
+Ce que les rôles de profil font en check mode :
 
-| Nœud | Job template | Playbook |
-|---|---|---|
-| 0 | Préflight de la forge | `forge_preflight.yml` |
-| 1 | Installer IBM Installation Manager | `lab_install_im.yml` |
-| 2 | Appliquer les fixpacks, passe 1 | `lab_apply_fixpacks.yml` |
-| 3 | Installer WAS et le SDK | `lab_install_was.yml` |
-| 4 | Appliquer les fixpacks, passe 2 | `lab_apply_fixpacks.yml` |
-| 5 | Créer les profils | `lab_create_profiles.yml` |
-| 6 | Créer le cluster et ses membres | `traditional_config.yml` |
+- les tâches `command` ne s'exécutent pas, donc `manageprofiles` n'est jamais
+  appelé
+- les refus durs — produit absent, deployment manager muet, profil non
+  atterri — se retirent : dans un run en check ils décrivent un futur, pas un
+  état
+- les sondes en lecture seule gardent `check_mode: false`, donc
+  `-listProfiles` et les `stat` tournent quand même et rapportent honnêtement
+- chaque rôle affiche **ce qu'il passerait à `manageprofiles`**, rendu sur le
+  contrôleur par `lookup('template', ...)`, qui n'écrit nulle part. Le mot de
+  passe d'administration est masqué à l'affichage ; le fichier dans lequel il
+  serait écrit est en 0600 et la tâche est `no_log`
 
-Le survey demande l'environnement cible, le canal, l'acquittement de
-production, et tout nom d'objet que le site veut fixer plutôt que dériver.
-Aucun de ces éléments n'est un drapeau que quelqu'un tape : un nœud de workflow
-les porte, et la promotion d'un environnement au suivant est le même workflow
-avec une réponse différente.
-
-Deux conséquences méritent d'être dites franchement. Le code d'environnement
-n'est **pas** une propriété d'une machine — le même hôte peut être construit
-comme n'importe quel environnement, et c'est pourquoi aucun inventaire n'en
-déclare. Et les jobs d'installation sont neutres vis-à-vis des noms : `imcl`
-reçoit l'offre, le dépôt et le répertoire d'installation, rien qui dérive de
-l'environnement ou du canal. Les noms sont consommés par les jobs de profil et
-de configuration, là où une mauvaise réponse se voit et où elle coûte peu à
-corriger.
+`sim:profiles` exécute exactement cela contre les trois pods de simulation, où
+il n'y a pas de WAS et où il n'est pas prévu qu'il y en ait, et vérifie le
+response file rendu, parce que ce fichier est le contrat entre cette collection
+et `manageprofiles` : un template `management` avec
+`serverType=DEPLOYMENT_MANAGER` sur le deployment manager, un template
+`managed` avec `dmgrHost` et `dmgrPort` sur chaque nœud, aucun template
+`default` sur un nœud, un run standalone qui annonce ne pas pouvoir clusteriser
+avec les deux rôles ND qui se retirent, une topologie `whatever` refusée avec un
+message nommant les deux valeurs acceptées, le mot de passe masqué et jamais
+dans le log — et, pour finir, que `/app/profiles` et `/app/data/profiles` sont
+vides sur chaque hôte simulé après coup.
 
 ## 18. AWX
 

@@ -40,7 +40,7 @@
         path: "{{ was_manageprofiles_cmd }}"
       register: node_mp
       check_mode: false
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     - name: Refuse clearly when WebSphere is missing
       ansible.builtin.fail:
@@ -48,7 +48,7 @@
           No manageprofiles.sh at {{ was_manageprofiles_cmd }}. The install job
           has to succeed before a profile can be created.
       when:
-        - not (profile_render_only | bool)
+        - not ansible_check_mode
         - not (node_mp.stat.exists | default(false))
 
     # ------------------------------------------------------------------
@@ -105,7 +105,7 @@
         state: started
       when:
         - not (profile_federate_later | bool)
-        - not (profile_render_only | bool)
+        - not ansible_check_mode
       register: node_dmgr_reachable
       failed_when: false
 
@@ -124,7 +124,7 @@
           on the deployment manager and set was_dmgr_soap_port to match.
       when:
         - not (profile_federate_later | bool)
-        - not (profile_render_only | bool)
+        - not ansible_check_mode
         - node_dmgr_reachable is failed or (node_dmgr_reachable.state | default('')) != 'started'
 
     - name: Administrative credentials must be supplied to federate
@@ -153,13 +153,14 @@
       failed_when: false
       check_mode: false
       become: true
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     - name: Decide whether the profile has to be created
       ansible.builtin.set_fact:
-        # Render-only has nothing to ask, so it always renders.
+        # A check run has no profile list to consult, so it reports what a
+        # real run would create.
         node_needs_create: >-
-          {{ true if (profile_render_only | bool)
+          {{ true if ansible_check_mode
              else (not (node_profiles.stdout | default('')
                    is search('(^|[\[, ])' ~ (was_profile_name | regex_escape) ~ '([,\] ]|$)'))) }}
 
@@ -191,7 +192,9 @@
             group: "{{ site_was_group }}"
             mode: "0640"
           become: true
-          when: profile_node_ports | length > 0
+          when:
+            - not ansible_check_mode
+            - profile_node_ports | length > 0
 
         # Carries the deployment manager's administrative password while it
         # exists, hence 0600 and no_log.
@@ -204,24 +207,26 @@
             mode: "0600"
           become: true
           no_log: true
+          when: not ansible_check_mode
           vars:
             profile_node_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
 
-        - name: Show the rendered response file, with the password masked
-          ansible.builtin.shell:
-            # One line on purpose: a folded scalar keeps the newline of a
-            # more-indented continuation, which turned the second -e into its
-            # own shell command.
-            cmd: "sed -e 's/^adminPassword=.*/adminPassword=<masked>/' -e 's/^dmgrAdminPassword=.*/dmgrAdminPassword=<masked>/' {{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
-          changed_when: false
-          become: true
-          when: profile_render_only | bool
-          register: node_rendered
-
-        - name: The rendered response file
+        # lookup('template', ...) renders on the controller and writes nothing,
+        # so a check run can show exactly what a real run would hand to
+        # manageprofiles. A check run never writes the file, so there is nothing
+        # to read back - this is the artefact, and the password is masked out of
+        # the display rather than out of the file.
+        - name: What manageprofiles would be given
           ansible.builtin.debug:
-            msg: "{{ node_rendered.stdout_lines | default([]) }}"
-          when: profile_render_only | bool
+            msg: >-
+              {{ ( lookup('template', 'managed.responsefile.j2')
+                   | regex_replace('(?m)^adminPassword=.*$', 'adminPassword=<masked>')
+                   | regex_replace('(?m)^dmgrAdminPassword=.*$', 'dmgrAdminPassword=<masked>')
+                 ).split(_nl) }}
+          vars:
+            _nl: "\n"
+            profile_node_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
+          when: ansible_check_mode
 
         - name: Create and federate the profile from the response file
           ansible.builtin.command:
@@ -230,7 +235,7 @@
               {{ profile_response_dir }}/{{ was_profile_name }}.responsefile
             creates: "{{ was_profile_path }}/bin/startNode.sh"
           become: true
-          when: not (profile_render_only | bool)
+          when: not ansible_check_mode
           async: 1800
           poll: 15
           register: node_create
@@ -238,7 +243,7 @@
         - name: Show the tail of the creation output
           ansible.builtin.debug:
             msg: "{{ (node_create.stdout_lines | default([]))[-25:] }}"
-          when: not (profile_render_only | bool)
+          when: not ansible_check_mode
 
       always:
 
@@ -257,7 +262,7 @@
         path: "{{ was_profile_path }}/bin/startNode.sh"
       register: node_start
       check_mode: false
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     - name: Refuse when the profile did not land
       ansible.builtin.assert:
@@ -269,7 +274,7 @@
           {{ was_home }}/logs/manageprofiles/{{ was_profile_name }}_create.log
           on the target.
         success_msg: "{{ was_profile_name }} is a usable node profile"
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     # A managed profile that exists but never joined the cell is the failure
     # mode worth naming: everything downstream then succeeds locally and the
@@ -281,7 +286,7 @@
       check_mode: false
       when:
         - not (profile_federate_later | bool)
-        - not (profile_render_only | bool)
+        - not ansible_check_mode
 
     - name: Report the federation
       ansible.builtin.debug:
@@ -292,4 +297,4 @@
              else 'is NOT federated - the profile exists but config/cells is absent' }}
       when:
         - not (profile_federate_later | bool)
-        - not (profile_render_only | bool)
+        - not ansible_check_mode

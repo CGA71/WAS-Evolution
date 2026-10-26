@@ -23,7 +23,7 @@ profile_standalone_admin_security: true
 was_admin_user: ""
 was_admin_password: ""
 
-# CI simulates and deploys nothing: render the response file, run every
-# decision and refusal that does not need the product, never call
-# manageprofiles.
-profile_render_only: false
+# No dry-run switch of its own. Simulating is a CHECK RUN - ansible-playbook
+# --check, which AWX offers as "Job type: Check" in the launch dialog - so the
+# role reads ansible_check_mode and nothing else. A parallel flag would be a
+# second code path, and the second path is the one nobody tests.
