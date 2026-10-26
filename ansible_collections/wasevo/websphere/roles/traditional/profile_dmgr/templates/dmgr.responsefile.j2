@@ -1,0 +1,36 @@
+{#
+  manageprofiles response file for a deployment manager.
+
+  Format is IBM's, not Ansible's: the first line is the mode, then key=value
+  with no leading dash and no quoting. A value containing a space is written
+  as-is; manageprofiles takes the rest of the line.
+
+  Rendered fresh on every run. Nothing reads this file but the manageprofiles
+  call that follows it.
+#}
+create
+profileName={{ was_dmgr_profile_name }}
+profilePath={{ was_dmgr_profile_path }}
+templatePath={{ was_home }}/profileTemplates/management
+serverType=DEPLOYMENT_MANAGER
+cellName={{ was_cell_name }}
+nodeName={{ was_node_name }}
+hostName={{ profile_dmgr_hostname }}
+{#
+  An explicit port map wins; otherwise manageprofiles allocates from the base
+  port in its own order. Which order that is does not matter here, because the
+  node agents are told the SOAP port the profile actually got, read back from
+  the created profile rather than computed.
+#}
+{% if profile_dmgr_ports | length > 0 %}
+portsFile={{ profile_response_dir }}/ports.dmgr
+{% else %}
+startingPort={{ was_base_port }}
+{% endif %}
+{% if profile_dmgr_admin_security | bool %}
+enableAdminSecurity=true
+adminUserName={{ was_admin_user }}
+adminPassword={{ was_admin_password }}
+{% else %}
+enableAdminSecurity=false
+{% endif %}

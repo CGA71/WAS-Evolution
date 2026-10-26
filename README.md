@@ -668,6 +668,101 @@ name hardcoded to `ClusterEXT` in two of them. Three copies of a naming rule is
 three chances to disagree, and the disagreement surfaces as a cell that will
 not federate.
 
+### Standalone or ND: the topology is answered, and it decides the profile
+
+**The installed binaries are identical either way.** The same offering, the same
+installation directory, the same `imcl` line. What differs is the template
+`manageprofiles` is pointed at, which is why the topology is a question on the
+profile job and not on the install job - putting it on the install form would
+be a decoration that changes nothing.
+
+| `was_topology` | Template | Produces |
+|---|---|---|
+| `standalone` | `profileTemplates/default` | one cell, one node, its own administrative console. No deployment manager, no node agent, **no cluster** |
+| `nd` | `profileTemplates/management` + `serverType=DEPLOYMENT_MANAGER` | the deployment manager |
+| `nd` | `profileTemplates/managed` | a federated node, which is what gives a node agent |
+
+[`roles/model/tasks/topology.yml`](ansible_collections/wasevo/websphere/roles/model/tasks/topology.yml)
+refuses anything other than those two values, says what each one builds, and
+publishes `was_can_cluster: false` for standalone - so a cluster job refuses
+early instead of failing inside `wsadmin`.
+
+It is answered rather than derived from the inventory shape on purpose: a
+single host can legitimately be a standalone server **or** a one-node ND cell.
+That is an intention, and an intention is not guessed.
+
+### The profile is a rendered response file
+
+Each profile role renders a `manageprofiles` response file from the model and
+hands it over with `-response`. One reviewable artefact per host instead of
+fifteen arguments inside a shell line.
+
+```
+create                                          create
+profileName=Dmgr_PREPROD_Extranet               profileName=AppSrv01
+templatePath=.../profileTemplates/management    templatePath=.../profileTemplates/managed
+serverType=DEPLOYMENT_MANAGER                   nodeName=<host>Node
+cellName=Extranet_PREPROD                       federateLater=false
+nodeName=PDmgrNode                              dmgrHost=<the dmgr>
+startingPort=30000                              dmgrPort=<its real SOAP port>
+enableAdminSecurity=true                        dmgrAdminUserName=...
+```
+
+The file is rendered on **every** run and removed afterwards. A response file
+kept between runs is a second definition of the profile, and the one that
+drifts is always the one somebody reads. `profile_keep_response` keeps it when
+a creation failed and the exact input matters more than the tidiness; it is
+mode 0600 and the task is `no_log`, because it carries the administrative
+password while it exists.
+
+Ports: an empty `profile_dmgr_ports` / `profile_node_ports` /
+`profile_standalone_ports` means `-startingPort` from `was_base_port`. Fill one
+in and a `-portsFile` is rendered instead, keyed exactly as `portdef.props`
+names each endpoint - whatever keys the inventory declares are what is written.
+
+### What the form does not ask for, deliberately
+
+**The deployment manager's host and SOAP port.** The inventory already says
+which host is the deployment manager; the deployment manager itself says which
+port it listens on. Asking an operator to retype either creates two sources
+that can disagree, and the disagreement surfaces as a node that will not
+federate.
+
+So `profile_dmgr` **reads** `properties/portdef.props` from the profile it just
+created and publishes the real SOAP port, and `profile_nodeagent` federates
+against that. Note that `was_dmgr_soap_port` in `40_runtime.yml` is derived as
+`was_base_port + 5`, which is what the source estate happened to end up with -
+`manageprofiles -startingPort` promises no such offset, the profile template
+decides the allocation order. It is therefore an expectation that gets reported
+when it disagrees, not a source of truth.
+
+Before federating, the node checks that something is listening on that port
+**from the node**, not from the controller. Federation against a deployment
+manager that is not up fails inside `addNode` with an exception that reads like
+a credential problem; it is refused here instead, with a message that names the
+real cause and says where to read the real port.
+
+**Node agent hosts, node names and ports** come from the inventory: the hosts
+in the node agent group, `was_node_name` per host where the site standard
+differs. An AWX survey is flat - it has no repeating group - so a list of nodes
+cannot be expressed as survey questions. The survey carries only an optional
+override that applies to every host in the run.
+
+### CI simulates this and deploys nothing
+
+`profile_render_only` renders the response file, runs every decision and
+refusal that does not need the product, and never calls `manageprofiles`. The
+`sim:profiles` job uses it against the three simulation pods, where there is no
+WAS and there is not meant to be. It asserts on the rendered artefact rather
+than on a log line, because the response file is the contract between this
+collection and `manageprofiles`: that the ND run rendered a `management`
+template with `serverType=DEPLOYMENT_MANAGER` and a `managed` template with
+`dmgrHost` and `dmgrPort`, that a node did not render a standalone template,
+that a standalone run reported it cannot cluster and both ND roles stood down,
+that a topology of `whatever` is refused with a message naming the two accepted
+values - and, last, that no profile and no product exist on any simulated host
+afterwards.
+
 ### The build goes through AWX, as a workflow
 
 Nothing is installed or named by hand on a target. The construction is a
@@ -681,7 +776,7 @@ environment enter:
 | 2 | Apply fixpacks, pass 1 | `lab_apply_fixpacks.yml` |
 | 3 | Install WAS and the SDK | `lab_install_was.yml` |
 | 4 | Apply fixpacks, pass 2 | `lab_apply_fixpacks.yml` |
-| 5 | Create the profiles | the `profile_dmgr` / `profile_nodeagent` roles |
+| 5 | Create the profiles | `lab_create_profiles.yml` |
 | 6 | Create the cluster and its members | `traditional_config.yml` |
 
 The survey asks for the target environment, the channel, the production
@@ -1381,6 +1476,103 @@ vivaient dans trois inventaires, écrits trois fois, avec le nom du cluster fig�
 sont trois occasions de divergence, et la divergence se manifeste par une
 cellule qui refuse de se fédérer.
 
+### Standalone ou ND : la topologie est répondue, et c'est elle qui décide le profil
+
+**Les binaires installés sont identiques dans les deux cas.** Même offre, même
+répertoire d'installation, même ligne `imcl`. Ce qui diffère, c'est le template
+sur lequel on pointe `manageprofiles` — raison pour laquelle la topologie est
+une question du job de profil et non du job d'installation : la mettre sur le
+formulaire d'install serait un décor qui ne change rien.
+
+| `was_topology` | Template | Produit |
+|---|---|---|
+| `standalone` | `profileTemplates/default` | une cellule, un nœud, sa propre console. Pas de deployment manager, pas de nodeagent, **pas de cluster** |
+| `nd` | `profileTemplates/management` + `serverType=DEPLOYMENT_MANAGER` | le deployment manager |
+| `nd` | `profileTemplates/managed` | un nœud fédéré, ce qui donne un nodeagent |
+
+[`roles/model/tasks/topology.yml`](ansible_collections/wasevo/websphere/roles/model/tasks/topology.yml)
+refuse toute autre valeur, dit ce que chacune construit, et publie
+`was_can_cluster: false` pour standalone — un job de cluster refuse donc tôt au
+lieu d'échouer dans `wsadmin`.
+
+Elle est répondue et non déduite de la forme de l'inventaire, délibérément : un
+hôte unique peut légitimement être un serveur standalone **ou** une cellule ND
+à un nœud. C'est une intention, et une intention ne se devine pas.
+
+### Le profil est un response file rendu
+
+Chaque rôle de profil rend un response file `manageprofiles` depuis le modèle
+et le passe avec `-response`. Un artefact relisible par hôte, au lieu de quinze
+arguments dans une ligne de shell.
+
+```
+create                                          create
+profileName=Dmgr_PREPROD_Extranet               profileName=AppSrv01
+templatePath=.../profileTemplates/management    templatePath=.../profileTemplates/managed
+serverType=DEPLOYMENT_MANAGER                   nodeName=<hote>Node
+cellName=Extranet_PREPROD                       federateLater=false
+nodeName=PDmgrNode                              dmgrHost=<le dmgr>
+startingPort=30000                              dmgrPort=<son vrai port SOAP>
+enableAdminSecurity=true                        dmgrAdminUserName=...
+```
+
+Le fichier est rendu à **chaque** exécution et supprimé ensuite. Un response
+file conservé entre deux runs devient une seconde définition du profil, et
+celle qui dérive est toujours celle qu'on lit. `profile_keep_response` le garde
+quand une création a échoué et que l'entrée exacte compte plus que la propreté ;
+il est en 0600 et la tâche est `no_log`, parce qu'il porte le mot de passe
+d'administration tant qu'il existe.
+
+Les ports : un `profile_dmgr_ports` / `profile_node_ports` /
+`profile_standalone_ports` vide signifie `-startingPort` depuis
+`was_base_port`. Rempli, c'est un `-portsFile` qui est rendu, clé par clé comme
+`portdef.props` nomme chaque point d'écoute — ce que l'inventaire déclare est
+ce qui est écrit, ni plus ni moins.
+
+### Ce que le formulaire ne demande pas, délibérément
+
+**L'hôte du deployment manager et son port SOAP.** L'inventaire sait déjà quel
+hôte est le deployment manager ; le deployment manager lui-même sait sur quel
+port il écoute. Demander à un opérateur de retaper l'un ou l'autre crée deux
+sources qui peuvent se contredire, et la contradiction se manifeste par un nœud
+qui refuse de se fédérer.
+
+Donc `profile_dmgr` **lit** `properties/portdef.props` du profil qu'il vient de
+créer et publie le vrai port SOAP, et `profile_nodeagent` fédère contre
+celui-là. À noter que `was_dmgr_soap_port` dans `40_runtime.yml` vaut
+`was_base_port + 5`, ce à quoi le parc source a abouti — `manageprofiles
+-startingPort` ne promet aucun tel décalage, l'ordre d'allocation appartient au
+template de profil. C'est donc une attente qu'on signale quand elle diverge,
+pas une source de vérité.
+
+Avant de fédérer, le nœud vérifie que quelque chose écoute sur ce port **depuis
+le nœud**, pas depuis le contrôleur. Fédérer contre un deployment manager
+éteint échoue dans `addNode` sur une exception qui ressemble à un problème
+d'identifiants ; c'est refusé ici à la place, avec un message qui nomme la vraie
+cause et dit où lire le vrai port.
+
+**Les hôtes des nodeagents, leurs noms de nœud et leurs ports** viennent de
+l'inventaire : les hôtes du groupe nodeagents, et `was_node_name` par hôte là où
+le standard du site diffère. Un survey AWX est plat — il n'a pas de groupe
+répétable — donc une liste de nœuds ne s'exprime pas en questions de survey. Le
+formulaire ne porte qu'une surcharge optionnelle, qui s'applique à tous les
+hôtes du run.
+
+### La CI simule ceci et ne déploie rien
+
+`profile_render_only` rend le response file, exécute toutes les décisions et
+tous les refus qui n'ont pas besoin du produit, et n'appelle jamais
+`manageprofiles`. Le job `sim:profiles` l'utilise contre les trois pods de
+simulation, où il n'y a pas de WAS et où il n'est pas prévu qu'il y en ait. Il
+vérifie l'artefact rendu plutôt qu'une ligne de log, parce que le response file
+est le contrat entre cette collection et `manageprofiles` : que le run ND a
+rendu un template `management` avec `serverType=DEPLOYMENT_MANAGER` et un
+template `managed` avec `dmgrHost` et `dmgrPort`, qu'un nœud n'a pas rendu un
+template standalone, qu'un run standalone a signalé qu'il ne peut pas clusteriser
+et que les deux rôles ND se sont retirés, qu'une topologie `whatever` est refusée
+avec un message nommant les deux valeurs acceptées — et, enfin, qu'aucun profil
+ni aucun produit n'existe sur un hôte simulé après coup.
+
 ### La construction passe par AWX, en workflow
 
 Rien n'est installé ni nommé à la main sur une cible. La construction est un
@@ -1394,7 +1586,7 @@ l'environnement entrent :
 | 2 | Appliquer les fixpacks, passe 1 | `lab_apply_fixpacks.yml` |
 | 3 | Installer WAS et le SDK | `lab_install_was.yml` |
 | 4 | Appliquer les fixpacks, passe 2 | `lab_apply_fixpacks.yml` |
-| 5 | Créer les profils | rôles `profile_dmgr` / `profile_nodeagent` |
+| 5 | Créer les profils | `lab_create_profiles.yml` |
 | 6 | Créer le cluster et ses membres | `traditional_config.yml` |
 
 Le survey demande l'environnement cible, le canal, l'acquittement de

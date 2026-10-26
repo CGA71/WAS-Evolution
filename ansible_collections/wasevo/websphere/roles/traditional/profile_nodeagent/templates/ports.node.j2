@@ -1,0 +1,8 @@
+{#
+  manageprofiles -portsFile for a federated node. Only rendered when the
+  inventory supplies profile_node_ports; whatever keys it declares are what is
+  written, so a site that pins two ports pins two.
+#}
+{% for key, value in profile_node_ports | dictsort %}
+{{ key }}={{ value }}
+{% endfor %}

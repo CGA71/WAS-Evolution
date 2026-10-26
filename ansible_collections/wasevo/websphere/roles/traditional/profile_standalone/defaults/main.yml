@@ -1,0 +1,29 @@
+---
+# Standalone application server profile.
+#
+# Only reached when was_topology is "standalone". This profile IS the cell: it
+# carries its own administrative console, has no deployment manager and no node
+# agent, and cannot hold a cluster. roles/model/tasks/topology.yml publishes
+# was_can_cluster as false for exactly that reason, so a cluster job refuses
+# early rather than failing inside wsadmin.
+
+profile_response_dir: "{{ was_data_base_dir }}/profiles"
+profile_keep_response: false
+
+# Pin ports exactly, keyed as portdef.props names them. Empty means
+# -startingPort from was_server_base_port - the server base, not the
+# deployment manager base, because a standalone server is what listens here.
+profile_standalone_ports: {}
+
+# Administrative security is on, for the same reason as on a deployment
+# manager: an administrative console reachable without credentials is not a lab
+# shortcut.
+profile_standalone_admin_security: true
+
+was_admin_user: ""
+was_admin_password: ""
+
+# CI simulates and deploys nothing: render the response file, run every
+# decision and refusal that does not need the product, never call
+# manageprofiles.
+profile_render_only: false

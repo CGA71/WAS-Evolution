@@ -1,16 +1,247 @@
 ---
-# Deployment manager profile creation and configuration.
+# Deployment manager profile creation.
 #
-# Scheduled for: wave 1
-# Source material: pbk_dmgr_creation_profil.yml, pbk_dmgr_configure_profil.yml
+# Reached only when was_topology is "nd". The profile is defined by a response
+# file rendered from the model - one reviewable artefact per host instead of
+# fifteen arguments inside a shell line - and manageprofiles is handed that
+# file.
 #
-# Not implemented yet. This file exists so the role is tracked, so the wave it
-# belongs to is recorded next to the code, and so a playbook that references it
-# fails with a clear message rather than a missing-role error.
+# The response file is rendered on EVERY run and removed afterwards. A response
+# file kept between runs is a second definition of the profile, and the one
+# that drifts is always the one somebody reads.
 
-- name: Role not implemented yet
-  ansible.builtin.fail:
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [profile, dmgr, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [profile, dmgr, always]
+
+- name: This role is for the ND topology only
+  ansible.builtin.debug:
     msg: >-
-      wasevo.websphere.traditional/profile_dmgr is scheduled for wave 1 and is not implemented.
-      See README section 5 to 7 for the action list of that wave.
-  when: not (allow_unimplemented_roles | default(false))
+      was_topology is "{{ was_topology }}", so there is no deployment manager
+      to create. A standalone cell carries its administration inside its own
+      application server profile - see the profile_standalone role.
+  when: was_topology != 'nd'
+  tags: [profile, dmgr]
+
+- name: Create the deployment manager profile
+  when: was_topology == 'nd'
+  tags: [profile, dmgr]
+  block:
+
+    - name: WebSphere must be installed
+      ansible.builtin.stat:
+        path: "{{ was_manageprofiles_cmd }}"
+      register: dmgr_mp
+      check_mode: false
+      when: not (profile_render_only | bool)
+
+    - name: Refuse clearly when WebSphere is missing
+      ansible.builtin.fail:
+        msg: >-
+          No manageprofiles.sh at {{ was_manageprofiles_cmd }}. A profile is
+          created by the product, so the install job has to succeed before this
+          one can do anything.
+      when:
+        - not (profile_render_only | bool)
+        - not (dmgr_mp.stat.exists | default(false))
+
+    # Administrative security is on, so the credentials have to exist. They
+    # come from an AWX credential or a vault; this repository carries none, and
+    # the failure says so rather than creating a cell with a guessable
+    # administrator.
+    - name: Administrative credentials must be supplied
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Administrative security is enabled
+          (profile_dmgr_admin_security) but was_admin_user or
+          was_admin_password is empty. Supply them from an AWX credential or a
+          vault. They are deliberately absent from this repository: the source
+          estate shipped was_admin_password "wsadmin" in group_vars and that is
+          not being carried over.
+        success_msg: "administrative credentials supplied"
+      when: profile_dmgr_admin_security | bool
+
+    # ------------------------------------------------------------------
+    # Does it already exist?
+    # ------------------------------------------------------------------
+    - name: List the profiles that exist
+      ansible.builtin.command:
+        cmd: "{{ was_manageprofiles_cmd }} -listProfiles"
+      register: dmgr_profiles
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      become: true
+      when: not (profile_render_only | bool)
+
+    - name: Decide whether the profile has to be created
+      ansible.builtin.set_fact:
+        # -listProfiles prints [name1, name2] or [] - matched as a word so
+        # Dmgr_X does not count as present because Dmgr_XY is.
+        # Render-only has nothing to ask, so it always renders.
+        dmgr_needs_create: >-
+          {{ true if (profile_render_only | bool)
+             else (not (dmgr_profiles.stdout | default('')
+                   is search('(^|[\[, ])' ~ (was_dmgr_profile_name | regex_escape) ~ '([,\] ]|$)'))) }}
+
+    - name: Report the decision
+      ansible.builtin.debug:
+        msg:
+          - "topology : {{ was_topology }}"
+          - "profile  : {{ was_dmgr_profile_name }} at {{ was_dmgr_profile_path }}"
+          - "cell     : {{ was_cell_name }}"
+          - "node     : {{ was_node_name }}"
+          - "existing : {{ dmgr_profiles.stdout | default('(none)') | trim }}"
+          - "decision : {{ 'create' if dmgr_needs_create else 'already exists, nothing to do' }}"
+
+    # ------------------------------------------------------------------
+    # Render, then create
+    # ------------------------------------------------------------------
+    - name: Create
+      when: dmgr_needs_create
+      block:
+
+        - name: The response directory must exist
+          ansible.builtin.file:
+            path: "{{ profile_response_dir }}"
+            state: directory
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0750"
+          become: true
+
+        - name: Render the ports file when the inventory pins ports
+          ansible.builtin.template:
+            src: ports.dmgr.j2
+            dest: "{{ profile_response_dir }}/ports.dmgr"
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0640"
+          become: true
+          when: profile_dmgr_ports | length > 0
+
+        # 0600 and no_log: this file carries the administrative password for as
+        # long as it exists.
+        - name: Render the response file
+          ansible.builtin.template:
+            src: dmgr.responsefile.j2
+            dest: "{{ profile_response_dir }}/{{ was_dmgr_profile_name }}.responsefile"
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0600"
+          become: true
+          no_log: true
+          vars:
+            profile_dmgr_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
+
+        - name: Show the rendered response file, with the password masked
+          ansible.builtin.shell:
+            # One line on purpose: a folded scalar keeps the newline of a
+            # more-indented continuation, which turned the second -e into its
+            # own shell command.
+            cmd: "sed -e 's/^adminPassword=.*/adminPassword=<masked>/' -e 's/^dmgrAdminPassword=.*/dmgrAdminPassword=<masked>/' {{ profile_response_dir }}/{{ was_dmgr_profile_name }}.responsefile"
+          changed_when: false
+          become: true
+          when: profile_render_only | bool
+          register: dmgr_rendered
+
+        - name: The rendered response file
+          ansible.builtin.debug:
+            msg: "{{ dmgr_rendered.stdout_lines | default([]) }}"
+          when: profile_render_only | bool
+
+        - name: Create the profile from the response file
+          ansible.builtin.command:
+            cmd: >-
+              {{ was_manageprofiles_cmd }} -response
+              {{ profile_response_dir }}/{{ was_dmgr_profile_name }}.responsefile
+            creates: "{{ was_dmgr_profile_path }}/bin/startManager.sh"
+          become: true
+          when: not (profile_render_only | bool)
+          # manageprofiles takes minutes and augments the installation
+          # registry. A dropped connection halfway leaves a profile that has to
+          # be deleted by hand, so it is given a long deadline of its own.
+          async: 1800
+          poll: 15
+          register: dmgr_create
+
+        - name: Show the tail of the creation output
+          ansible.builtin.debug:
+            msg: "{{ (dmgr_create.stdout_lines | default([]))[-25:] }}"
+          when: not (profile_render_only | bool)
+
+      always:
+
+        # Removed whether the creation worked or not. On failure the
+        # manageprofiles log is what to read, not this file.
+        - name: Remove the rendered response file
+          ansible.builtin.file:
+            path: "{{ profile_response_dir }}/{{ was_dmgr_profile_name }}.responsefile"
+            state: absent
+          become: true
+          when: not (profile_keep_response | bool)
+
+    # ------------------------------------------------------------------
+    # What ports did it actually get?
+    # ------------------------------------------------------------------
+    # Read, never computed. was_dmgr_soap_port in the inventory is derived as
+    # was_base_port + 5, which is what the source estate happened to end up
+    # with - manageprofiles does not promise that offset, the profile template
+    # decides the allocation order. A node agent federates against the SOAP
+    # port the deployment manager really listens on, so that is the value this
+    # role publishes.
+    - name: Read the ports the profile was given
+      ansible.builtin.slurp:
+        src: "{{ was_dmgr_profile_path }}/properties/portdef.props"
+      register: dmgr_portdef
+      failed_when: false
+      check_mode: false
+      become: true
+      when: not (profile_render_only | bool)
+
+    - name: Publish the deployment manager SOAP port
+      ansible.builtin.set_fact:
+        was_dmgr_soap_port_actual: >-
+          {{ (dmgr_portdef.content | b64decode)
+             | regex_search('SOAP_CONNECTOR_ADDRESS=([0-9]+)', '\1') | first | default('', true) }}
+      when: dmgr_portdef.content is defined
+
+    - name: Report the ports, and any disagreement with the inventory
+      ansible.builtin.debug:
+        msg: >-
+          SOAP {{ was_dmgr_soap_port_actual | default('(unknown)') }}
+          {{ ('- the inventory expects ' ~ was_dmgr_soap_port ~ ', which is NOT what the profile got; '
+              ~ 'the node agents will use the real one')
+             if (was_dmgr_soap_port_actual | default('') | length > 0
+                 and (was_dmgr_soap_port | string) != (was_dmgr_soap_port_actual | string))
+             else '- matches the inventory' }}
+      when: was_dmgr_soap_port is defined
+
+    - name: The profile must be usable
+      ansible.builtin.stat:
+        path: "{{ was_dmgr_profile_path }}/bin/startManager.sh"
+      register: dmgr_start
+      check_mode: false
+      when: not (profile_render_only | bool)
+
+    - name: Refuse when the profile did not land
+      ansible.builtin.assert:
+        that:
+          - dmgr_start.stat.exists | default(false)
+        fail_msg: >-
+          manageprofiles reported no error but
+          {{ was_dmgr_profile_path }}/bin/startManager.sh does not exist. Read
+          {{ was_home }}/logs/manageprofiles/{{ was_dmgr_profile_name }}_create.log
+          on the target.
+        success_msg: "{{ was_dmgr_profile_name }} is a usable deployment manager profile"
+      when: not (profile_render_only | bool)

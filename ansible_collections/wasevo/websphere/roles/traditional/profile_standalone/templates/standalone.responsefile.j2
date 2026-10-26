@@ -1,0 +1,27 @@
+{#
+  manageprofiles response file for a standalone application server.
+
+  profileTemplates/default is the whole difference from the ND case: it
+  produces a one-node cell that administers itself. No serverType, no dmgrHost,
+  no federation.
+#}
+create
+profileName={{ was_profile_name }}
+profilePath={{ was_profile_path }}
+templatePath={{ was_home }}/profileTemplates/default
+cellName={{ was_cell_name }}
+nodeName={{ was_node_name }}
+hostName={{ profile_standalone_hostname }}
+serverName={{ was_cluster_member_name }}
+{% if profile_standalone_ports | length > 0 %}
+portsFile={{ profile_response_dir }}/ports.{{ was_profile_name }}
+{% else %}
+startingPort={{ was_server_base_port }}
+{% endif %}
+{% if profile_standalone_admin_security | bool %}
+enableAdminSecurity=true
+adminUserName={{ was_admin_user }}
+adminPassword={{ was_admin_password }}
+{% else %}
+enableAdminSecurity=false
+{% endif %}

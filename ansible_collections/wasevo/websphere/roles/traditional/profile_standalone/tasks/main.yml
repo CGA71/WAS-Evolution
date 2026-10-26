@@ -1,0 +1,183 @@
+---
+# Standalone application server profile creation.
+#
+# Same mechanism as the ND roles - a response file rendered from the model,
+# handed to manageprofiles, removed afterwards - with one profile template
+# instead of two and no federation to get wrong.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [profile, standalone, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [profile, standalone, always]
+
+- name: This role is for the standalone topology only
+  ansible.builtin.debug:
+    msg: >-
+      was_topology is "{{ was_topology }}", so the cell is built from a
+      deployment manager and federated nodes instead - see the profile_dmgr and
+      profile_nodeagent roles.
+  when: was_topology != 'standalone'
+  tags: [profile, standalone]
+
+- name: Create the standalone profile
+  when: was_topology == 'standalone'
+  tags: [profile, standalone]
+  block:
+
+    - name: WebSphere must be installed
+      ansible.builtin.stat:
+        path: "{{ was_manageprofiles_cmd }}"
+      register: sa_mp
+      check_mode: false
+      when: not (profile_render_only | bool)
+
+    - name: Refuse clearly when WebSphere is missing
+      ansible.builtin.fail:
+        msg: >-
+          No manageprofiles.sh at {{ was_manageprofiles_cmd }}. The install job
+          has to succeed before a profile can be created.
+      when:
+        - not (profile_render_only | bool)
+        - not (sa_mp.stat.exists | default(false))
+
+    - name: Administrative credentials must be supplied
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Administrative security is enabled but was_admin_user or
+          was_admin_password is empty. Supply them from an AWX credential or a
+          vault; this repository carries none.
+        success_msg: "administrative credentials supplied"
+      when: profile_standalone_admin_security | bool
+
+    - name: List the profiles that exist
+      ansible.builtin.command:
+        cmd: "{{ was_manageprofiles_cmd }} -listProfiles"
+      register: sa_profiles
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      become: true
+      when: not (profile_render_only | bool)
+
+    - name: Decide whether the profile has to be created
+      ansible.builtin.set_fact:
+        sa_needs_create: >-
+          {{ true if (profile_render_only | bool)
+             else (not (sa_profiles.stdout | default('')
+                   is search('(^|[\[, ])' ~ (was_profile_name | regex_escape) ~ '([,\] ]|$)'))) }}
+
+    - name: Report the decision
+      ansible.builtin.debug:
+        msg:
+          - "topology : {{ was_topology }} - one cell, one node, no cluster"
+          - "profile  : {{ was_profile_name }} at {{ was_profile_path }}"
+          - "cell     : {{ was_cell_name }}"
+          - "node     : {{ was_node_name }}"
+          - "server   : {{ was_cluster_member_name }}"
+          - "decision : {{ 'render only' if profile_render_only | bool
+                           else ('create' if sa_needs_create else 'already exists, nothing to do') }}"
+
+    - name: Create
+      when: sa_needs_create
+      block:
+
+        - name: The response directory must exist
+          ansible.builtin.file:
+            path: "{{ profile_response_dir }}"
+            state: directory
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0750"
+          become: true
+
+        - name: Render the ports file when the inventory pins ports
+          ansible.builtin.template:
+            src: ports.standalone.j2
+            dest: "{{ profile_response_dir }}/ports.{{ was_profile_name }}"
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0640"
+          become: true
+          when: profile_standalone_ports | length > 0
+
+        - name: Render the response file
+          ansible.builtin.template:
+            src: standalone.responsefile.j2
+            dest: "{{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
+            owner: "{{ site_was_user }}"
+            group: "{{ site_was_group }}"
+            mode: "0600"
+          become: true
+          no_log: true
+          vars:
+            profile_standalone_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
+
+        - name: Show the rendered response file, with the password masked
+          ansible.builtin.shell:
+            # One line on purpose: a folded scalar keeps the newline of a
+            # more-indented continuation, which turned the second -e into its
+            # own shell command.
+            cmd: "sed -e 's/^adminPassword=.*/adminPassword=<masked>/' -e 's/^dmgrAdminPassword=.*/dmgrAdminPassword=<masked>/' {{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
+          changed_when: false
+          become: true
+          when: profile_render_only | bool
+          register: sa_rendered
+
+        - name: The rendered response file
+          ansible.builtin.debug:
+            msg: "{{ sa_rendered.stdout_lines | default([]) }}"
+          when: profile_render_only | bool
+
+        - name: Create the profile from the response file
+          ansible.builtin.command:
+            cmd: >-
+              {{ was_manageprofiles_cmd }} -response
+              {{ profile_response_dir }}/{{ was_profile_name }}.responsefile
+            creates: "{{ was_profile_path }}/bin/startServer.sh"
+          become: true
+          async: 1800
+          poll: 15
+          register: sa_create
+          when: not (profile_render_only | bool)
+
+        - name: Show the tail of the creation output
+          ansible.builtin.debug:
+            msg: "{{ (sa_create.stdout_lines | default([]))[-25:] }}"
+          when: not (profile_render_only | bool)
+
+      always:
+
+        - name: Remove the rendered response file
+          ansible.builtin.file:
+            path: "{{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
+            state: absent
+          become: true
+          when: not (profile_keep_response | bool)
+
+    - name: The server scripts must exist
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/startServer.sh"
+      register: sa_start
+      check_mode: false
+      when: not (profile_render_only | bool)
+
+    - name: Refuse when the profile did not land
+      ansible.builtin.assert:
+        that:
+          - sa_start.stat.exists | default(false)
+        fail_msg: >-
+          manageprofiles reported no error but
+          {{ was_profile_path }}/bin/startServer.sh does not exist. Read
+          {{ was_home }}/logs/manageprofiles/{{ was_profile_name }}_create.log
+          on the target.
+        success_msg: "{{ was_profile_name }} is a usable standalone profile"
+      when: not (profile_render_only | bool)

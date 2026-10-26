@@ -1,0 +1,35 @@
+{#
+  manageprofiles response file for a federated node. IBM's format: mode on the
+  first line, then key=value, no dashes, no quoting.
+
+  Federating during creation rather than creating and then running addNode
+  keeps it one operation with one log. profile_federate_later turns that off
+  for a site whose deployment manager is built by someone else.
+#}
+create
+profileName={{ was_profile_name }}
+profilePath={{ was_profile_path }}
+templatePath={{ was_home }}/profileTemplates/managed
+nodeName={{ was_node_name }}
+hostName={{ profile_node_hostname }}
+{% if profile_node_ports | length > 0 %}
+portsFile={{ profile_response_dir }}/ports.{{ was_node_name }}
+{% else %}
+startingPort={{ was_base_port }}
+{% endif %}
+{% if profile_federate_later | bool %}
+federateLater=true
+{#
+  An unfederated managed profile still needs a cell name of its own; it is
+  replaced by the deployment manager's cell when the node is added later.
+#}
+cellName={{ was_cell_name }}
+{% else %}
+federateLater=false
+dmgrHost={{ profile_dmgr_host }}
+dmgrPort={{ profile_dmgr_soap_port }}
+{% if profile_dmgr_admin_security | default(true) | bool %}
+dmgrAdminUserName={{ was_admin_user }}
+dmgrAdminPassword={{ was_admin_password }}
+{% endif %}
+{% endif %}

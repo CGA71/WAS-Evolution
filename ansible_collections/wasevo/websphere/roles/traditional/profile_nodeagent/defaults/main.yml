@@ -1,0 +1,30 @@
+---
+# Federated node profile. The node agent is what this produces.
+#
+# Only reached when was_topology is "nd": a standalone server has no node to
+# federate and nothing to federate it into.
+
+profile_response_dir: "{{ was_data_base_dir }}/profiles"
+profile_keep_response: false
+
+# Pin ports exactly, keyed as portdef.props names them. Empty means
+# -startingPort from was_base_port, in the order the managed template defines.
+profile_node_ports: {}
+
+# How long to wait for the deployment manager's SOAP port before giving up.
+# Federation against a deployment manager that is not listening fails inside
+# addNode with an exception that reads like a credential problem, so the port
+# is checked first and the failure says what it really is.
+profile_dmgr_wait_seconds: 30
+
+# The node agent is federated during profile creation rather than by a separate
+# addNode run. Set this true to create the profile unfederated - useful when
+# the deployment manager is built later, or by another team.
+profile_federate_later: false
+
+# CI simulates the AWX behaviour and deploys nothing. In render-only mode the
+# response file is rendered and shown, every decision and refusal that does not
+# need the product still runs, and manageprofiles is never called. That is what
+# the pipeline exercises: the template and the logic, against a pod with no WAS
+# in it.
+profile_render_only: false
