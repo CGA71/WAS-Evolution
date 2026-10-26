@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Attach the WAS build survey to the AWX workflow, and to every job template
-# the workflow runs.
+# Configure what AWX asks at launch: the WAS build survey on the workflow and
+# on every job template it runs, and the Job type prompt on the templates.
+#
+# WHY THE JOB TYPE PROMPT. Simulating a run is a check run - Job type: Check,
+# which is ansible-playbook --check. The templates shipped with
+# ask_job_type_on_launch false, so Check was not selectable and the only way to
+# rehearse an install was to run it. The roles behave correctly under check
+# mode; this makes that reachable from the launch dialog.
 #
 #   bash ci/awx/apply-survey.sh            apply
 #   bash ci/awx/apply-survey.sh --show     print what is attached today
@@ -131,10 +137,20 @@ attach() {
     ok "$label: $n questions, survey enabled"
 }
 
+# Only a job template has a job type; a workflow has none - its nodes carry it.
+# Simulating a run is Job type: Check, which is ansible-playbook --check.
+ask_job_type() {
+    local id="$1" label="$2"
+    api PATCH "/job_templates/$id/" -d '{"ask_job_type_on_launch": true}' >/dev/null         || die "could not enable the Job type prompt on $label"
+    api GET "/job_templates/$id/"         | jqp 'import sys,json;d=json.load(sys.stdin);sys.exit(0 if d["ask_job_type_on_launch"] else 1)'         || die "$label still does not ask for the Job type"
+    ok "$label: Job type selectable at launch (Run or Check)"
+}
+
 attach "workflow_job_templates/$WF_ID" "workflow \"$WORKFLOW\""
 for i in $JT_IDS; do
     nm="$(api GET "/job_templates/$i/" | jqp 'import sys,json;print(json.load(sys.stdin)["name"])')"
     attach "job_templates/$i" "$nm"
+    ask_job_type "$i" "$nm"
 done
 
 say "Done"

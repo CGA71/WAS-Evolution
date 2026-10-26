@@ -37,9 +37,7 @@ profile_dmgr_admin_security: true
 was_admin_user: ""
 was_admin_password: ""
 
-# CI simulates the AWX behaviour and deploys nothing. In render-only mode the
-# response file is rendered and shown, every decision and refusal that does not
-# need the product still runs, and manageprofiles is never called. That is what
-# the pipeline exercises: the template and the logic, against a pod with no WAS
-# in it.
-profile_render_only: false
+# No dry-run switch of its own. Simulating is a CHECK RUN - ansible-playbook
+# --check, which AWX offers as "Job type: Check" in the launch dialog - so the
+# role reads ansible_check_mode and nothing else. A parallel flag would be a
+# second code path, and the second path is the one nobody tests.

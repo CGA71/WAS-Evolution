@@ -35,7 +35,7 @@
         path: "{{ was_manageprofiles_cmd }}"
       register: sa_mp
       check_mode: false
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     - name: Refuse clearly when WebSphere is missing
       ansible.builtin.fail:
@@ -43,7 +43,7 @@
           No manageprofiles.sh at {{ was_manageprofiles_cmd }}. The install job
           has to succeed before a profile can be created.
       when:
-        - not (profile_render_only | bool)
+        - not ansible_check_mode
         - not (sa_mp.stat.exists | default(false))
 
     - name: Administrative credentials must be supplied
@@ -66,12 +66,12 @@
       failed_when: false
       check_mode: false
       become: true
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     - name: Decide whether the profile has to be created
       ansible.builtin.set_fact:
         sa_needs_create: >-
-          {{ true if (profile_render_only | bool)
+          {{ true if ansible_check_mode
              else (not (sa_profiles.stdout | default('')
                    is search('(^|[\[, ])' ~ (was_profile_name | regex_escape) ~ '([,\] ]|$)'))) }}
 
@@ -83,7 +83,7 @@
           - "cell     : {{ was_cell_name }}"
           - "node     : {{ was_node_name }}"
           - "server   : {{ was_cluster_member_name }}"
-          - "decision : {{ 'render only' if profile_render_only | bool
+          - "decision : {{ 'would create (check mode)' if ansible_check_mode
                            else ('create' if sa_needs_create else 'already exists, nothing to do') }}"
 
     - name: Create
@@ -107,7 +107,9 @@
             group: "{{ site_was_group }}"
             mode: "0640"
           become: true
-          when: profile_standalone_ports | length > 0
+          when:
+            - not ansible_check_mode
+            - profile_standalone_ports | length > 0
 
         - name: Render the response file
           ansible.builtin.template:
@@ -118,24 +120,26 @@
             mode: "0600"
           become: true
           no_log: true
+          when: not ansible_check_mode
           vars:
             profile_standalone_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
 
-        - name: Show the rendered response file, with the password masked
-          ansible.builtin.shell:
-            # One line on purpose: a folded scalar keeps the newline of a
-            # more-indented continuation, which turned the second -e into its
-            # own shell command.
-            cmd: "sed -e 's/^adminPassword=.*/adminPassword=<masked>/' -e 's/^dmgrAdminPassword=.*/dmgrAdminPassword=<masked>/' {{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
-          changed_when: false
-          become: true
-          when: profile_render_only | bool
-          register: sa_rendered
-
-        - name: The rendered response file
+        # lookup('template', ...) renders on the controller and writes nothing,
+        # so a check run can show exactly what a real run would hand to
+        # manageprofiles. A check run never writes the file, so there is nothing
+        # to read back - this is the artefact, and the password is masked out of
+        # the display rather than out of the file.
+        - name: What manageprofiles would be given
           ansible.builtin.debug:
-            msg: "{{ sa_rendered.stdout_lines | default([]) }}"
-          when: profile_render_only | bool
+            msg: >-
+              {{ ( lookup('template', 'standalone.responsefile.j2')
+                   | regex_replace('(?m)^adminPassword=.*$', 'adminPassword=<masked>')
+                   | regex_replace('(?m)^dmgrAdminPassword=.*$', 'dmgrAdminPassword=<masked>')
+                 ).split(_nl) }}
+          vars:
+            _nl: "\n"
+            profile_standalone_hostname: "{{ ansible_fqdn | default(inventory_hostname) }}"
+          when: ansible_check_mode
 
         - name: Create the profile from the response file
           ansible.builtin.command:
@@ -147,12 +151,12 @@
           async: 1800
           poll: 15
           register: sa_create
-          when: not (profile_render_only | bool)
+          when: not ansible_check_mode
 
         - name: Show the tail of the creation output
           ansible.builtin.debug:
             msg: "{{ (sa_create.stdout_lines | default([]))[-25:] }}"
-          when: not (profile_render_only | bool)
+          when: not ansible_check_mode
 
       always:
 
@@ -168,7 +172,7 @@
         path: "{{ was_profile_path }}/bin/startServer.sh"
       register: sa_start
       check_mode: false
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
 
     - name: Refuse when the profile did not land
       ansible.builtin.assert:
@@ -180,4 +184,4 @@
           {{ was_home }}/logs/manageprofiles/{{ was_profile_name }}_create.log
           on the target.
         success_msg: "{{ was_profile_name }} is a usable standalone profile"
-      when: not (profile_render_only | bool)
+      when: not ansible_check_mode
