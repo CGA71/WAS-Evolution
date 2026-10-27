@@ -668,6 +668,59 @@ name hardcoded to `ClusterEXT` in two of them. Three copies of a naming rule is
 three chances to disagree, and the disagreement surfaces as a cell that will
 not federate.
 
+### One machine, two roles: how the lab declares an ND cell
+
+An ND cell is a deployment manager plus at least one federated node. The lab
+owns one VM, so both profiles land on it. Ansible expresses "one machine
+playing two roles" with **two inventory entries** pointing at the same
+`ansible_host` — not with one entry in two groups, which is the obvious
+shortcut and does not work here.
+
+| Entry | Group | What it carries |
+|---|---|---|
+| `was-lab-01` | `was_lab` | the installation — IM, WAS, the fix packs. Once only: `imcl` takes a lock |
+| `was-lab-01-dmgr` | `dmgr` | the deployment manager profile |
+| `was-lab-01-node` | `nodeagents` | the managed profile — so the node agent, and the cluster member, which is the application server |
+
+Why not one entry in both groups:
+
+- [`roles/model/tasks/naming.yml`](ansible_collections/wasevo/websphere/roles/model/tasks/naming.yml)
+  decides the profile name and the node name from group membership. A host in
+  `dmgr` **and** `nodeagents` is a deployment manager as far as that decision
+  goes, so the federated profile would be named after the deployment manager
+  and federation would fail on a node name already present in the cell.
+- `group_vars/dmgr.yml` and `group_vars/nodeagents.yml` both set
+  `was_profile_path` and `was_service_name`. On a host in both groups one
+  silently wins by alphabetical group order.
+
+**Two port bases, for the same reason.** Each `manageprofiles` template
+allocates a dozen or so ports upward from the base it is given, so one base for
+two profiles on one machine means two profiles claiming the same ports.
+`group_vars/all/40_runtime.yml` declares `was_lab_dmgr_base_port` (30000) and
+`was_lab_node_base_port` (30100), and each role group consumes one.
+`was_dmgr_soap_port` is **anchored on the deployment manager's base** rather
+than on `was_base_port`, which now differs per role — otherwise a federated
+node would look for the deployment manager's SOAP port 100 ports too high. It
+is only a fallback either way: `profile_dmgr` reads the created profile and
+publishes `was_dmgr_soap_port_actual`, which `profile_nodeagent` prefers.
+
+Where each name is written, for the lab:
+
+| Name | File |
+|---|---|
+| cell, cluster | `inventories/lab/group_vars/all/30_naming.yml` — both are cell-wide |
+| dmgr profile and node | `inventories/lab/group_vars/dmgr.yml` |
+| profile, node, cluster member | `inventories/lab/group_vars/nodeagents.yml` |
+
+No environment code is written in any of them: `was_env_upper` and
+`was_channel_name` are published by the `model` role from the survey answers,
+and a `group_vars` template resolves when it is read, which is after that.
+**Mind the precedence**: a survey answer is an extra var and outranks these
+files, and an optional question left blank arrives as an empty string, which
+`default(..., true)` turns back into the **role pattern** — not into the
+inventory value. So a run launched from the survey either fills those questions
+with the same values, or accepts the patterns.
+
 ### Standalone or ND: the topology is answered, and it decides the profile
 
 **The installed binaries are identical either way.** The same offering, the same
@@ -1466,6 +1519,60 @@ vivaient dans trois inventaires, écrits trois fois, avec le nom du cluster fig�
 à `ClusterEXT` dans deux d'entre eux. Trois copies d'une règle de nommage, ce
 sont trois occasions de divergence, et la divergence se manifeste par une
 cellule qui refuse de se fédérer.
+
+### Une machine, deux rôles : comment le lab déclare une cellule ND
+
+Une cellule ND, c'est un gestionnaire de déploiement plus au moins un nœud
+fédéré. Le lab possède une seule VM, donc les deux profils y atterrissent.
+Ansible exprime « une machine qui joue deux rôles » avec **deux entrées
+d'inventaire** pointant vers le même `ansible_host` — pas avec une entrée dans
+deux groupes, qui est le raccourci évident et qui ne marche pas ici.
+
+| Entrée | Groupe | Ce qu'elle porte |
+|---|---|---|
+| `was-lab-01` | `was_lab` | l'installation — IM, WAS, les fix packs. Une seule fois : `imcl` prend un verrou |
+| `was-lab-01-dmgr` | `dmgr` | le profil du gestionnaire de déploiement |
+| `was-lab-01-node` | `nodeagents` | le profil managé — donc l'agent de nœud, et le membre de cluster, qui est le serveur d'application |
+
+Pourquoi pas une entrée dans les deux groupes :
+
+- [`roles/model/tasks/naming.yml`](ansible_collections/wasevo/websphere/roles/model/tasks/naming.yml)
+  décide le nom de profil et le nom de nœud d'après l'appartenance aux groupes.
+  Un hôte dans `dmgr` **et** `nodeagents` est un gestionnaire de déploiement
+  pour cette décision : le profil fédéré serait nommé d'après le dmgr et la
+  fédération échouerait sur un nom de nœud déjà présent dans la cellule.
+- `group_vars/dmgr.yml` et `group_vars/nodeagents.yml` définissent tous deux
+  `was_profile_path` et `was_service_name`. Sur un hôte dans les deux groupes,
+  l'un gagne silencieusement par ordre alphabétique de groupe.
+
+**Deux bases de ports, pour la même raison.** Chaque template `manageprofiles`
+alloue une douzaine de ports vers le haut depuis la base qu'on lui donne ; une
+base unique pour deux profils sur une machine, c'est deux profils qui
+réclament les mêmes ports. `group_vars/all/40_runtime.yml` déclare
+`was_lab_dmgr_base_port` (30000) et `was_lab_node_base_port` (30100), et chaque
+groupe de rôle en consomme une. `was_dmgr_soap_port` est **ancré sur la base du
+dmgr** et non sur `was_base_port`, qui diffère désormais selon le rôle — sinon
+un nœud fédéré chercherait le port SOAP du dmgr 100 ports trop haut. Il ne
+reste de toute façon qu'un repli : `profile_dmgr` lit le profil créé et publie
+`was_dmgr_soap_port_actual`, que `profile_nodeagent` préfère.
+
+Où chaque nom est écrit, pour le lab :
+
+| Nom | Fichier |
+|---|---|
+| cellule, cluster | `inventories/lab/group_vars/all/30_naming.yml` — ils sont communs à la cellule |
+| profil et nœud du dmgr | `inventories/lab/group_vars/dmgr.yml` |
+| profil, nœud, membre de cluster | `inventories/lab/group_vars/nodeagents.yml` |
+
+Aucun code d'environnement n'y est écrit : `was_env_upper` et
+`was_channel_name` sont publiés par le rôle `model` d'après les réponses du
+formulaire, et un template de `group_vars` se résout au moment où il est lu,
+c'est-à-dire après. **Attention à la précédence** : une réponse de formulaire
+est une extra var et surclasse ces fichiers, et une question optionnelle
+laissée vide arrive comme chaîne vide, que `default(..., true)` ramène au
+**motif du rôle** — pas à la valeur de l'inventaire. Un run lancé depuis le
+formulaire remplit donc ces questions avec les mêmes valeurs, ou accepte les
+motifs.
 
 ### Standalone ou ND : la topologie est répondue, et c'est elle qui décide le profil
 

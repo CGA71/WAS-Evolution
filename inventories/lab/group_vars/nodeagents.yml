@@ -1,0 +1,39 @@
+---
+# The federated node role, on whichever machines the nodeagents group names.
+#
+# This is what produces the node agent, and it is also where the cluster member
+# lives - a cluster member IS an application server, created on a federated
+# node and owned by the cell.
+
+was_service_name: wasnode
+
+# The deployment manager is NOT named here. profile_nodeagent resolves it from
+# groups['dmgr'] and reads the SOAP port the created profile actually got, which
+# is the one thing that cannot disagree with reality. was_dmgr_host in the
+# estate inventory is read by nothing and is not repeated here.
+
+# --------------------------------------------------------------------------
+# Names
+# --------------------------------------------------------------------------
+# manageprofiles -profileName for the managed template. AppSrv01 is also the
+# role pattern; it is written out so the file names every object it creates
+# rather than half of them.
+was_profile_name: "AppSrv01"
+
+# manageprofiles -nodeName. The role pattern derives this from the machine
+# name (was-lab-01-nodeNode here), which reads like an accident. The lab names
+# it from the environment and an index instead.
+was_node_name: "{{ was_env_upper }}Node01"
+
+# The application server. In an ND cell an application server that belongs to a
+# cluster is a cluster member, so this one name is both: it is what
+# manageprofiles never creates and what the cluster job creates on this node.
+was_cluster_member_name: "{{ was_cluster_name }}_{{ was_node_name }}_01"
+
+# --------------------------------------------------------------------------
+# Ports
+# --------------------------------------------------------------------------
+# A different base from the deployment manager, because in this lab both
+# profiles live on one machine. 100 apart is well clear of the dozen or so
+# ports each template allocates.
+was_base_port: "{{ was_lab_node_base_port }}"

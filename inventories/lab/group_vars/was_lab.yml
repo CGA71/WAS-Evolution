@@ -23,7 +23,18 @@ was_media_src: "/mnt/binaries/IBM/install_was90/*.zip"
 # install lands here directly and this assert has to match it.
 was_expected_version: "9.0.5.28"
 
-was_node_name: "LabNode01"
+# NO OBJECT NAMES HERE.
+#
+# This group is the INSTALLATION target - one entry, the machine itself. A WAS
+# object name belongs to the role the machine plays: the node names are in
+# group_vars/dmgr.yml and group_vars/nodeagents.yml, the cell and the cluster
+# in group_vars/all/30_naming.yml.
+#
+# A was_node_name used to sit here. It applied to this entry alone, which does
+# not create a profile, and read as though it named the lab's node agent.
+#
+# was_service_name stays: it is the systemd unit name, and a standalone run
+# does build its profile on this entry.
 was_service_name: wasserver
 
 # Fixpacks. Same arrangement as the install media: drop the zips here on the

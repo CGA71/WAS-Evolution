@@ -1,0 +1,42 @@
+---
+# The deployment manager role, on whichever machine the dmgr group names.
+#
+# In this lab that machine is was-lab-01, reached through the was-lab-01-dmgr
+# inventory entry. See the comment in hosts.yml for why the entry is separate
+# from the installation entry.
+
+# Paths and services: site facts, not object names.
+was_profile_path: "{{ was_dmgr_profile_path }}"
+was_service_name: wasdmgr
+
+# --------------------------------------------------------------------------
+# Names
+# --------------------------------------------------------------------------
+# manageprofiles -profileName. The role pattern is Dmgr_<ENV>_<Channel>; the
+# lab imposes a short name instead, which is what an operator reading
+# /app/profiles has to recognise.
+#
+# Both variables are set, and to the same value, on purpose:
+#   was_dmgr_profile_name  what the response file writes as profileName, and
+#                          what was_dmgr_profile_path is built from
+#   was_profile_name       what the model reports and what every later job uses
+#                          to find the profile on this host
+# roles/model/tasks/naming.yml falls back to the dmgr PATTERN for
+# was_profile_name on a dmgr host rather than to was_dmgr_profile_name, so
+# setting only the first would leave the two disagreeing.
+was_dmgr_profile_name: "Dmgr01"
+was_profile_name: "Dmgr01"
+
+# manageprofiles -nodeName. Carries the environment because one machine can
+# hold two cells during a migration, and two nodes called DmgrNode01 on one
+# machine cannot both be federated.
+was_node_name: "{{ was_env_upper }}DmgrNode01"
+
+# --------------------------------------------------------------------------
+# Ports
+# --------------------------------------------------------------------------
+# manageprofiles -startingPort for the management template. The federated node
+# on the same machine starts from a different base - see
+# group_vars/nodeagents.yml - because two profiles allocating from 30000 on one
+# machine collide.
+was_base_port: "{{ was_lab_dmgr_base_port }}"
