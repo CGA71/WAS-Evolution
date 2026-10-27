@@ -10,6 +10,37 @@ runtime:
 # name that is already defined and only falls back to its own pattern.
 was_console_label: "{{ was_channel_name }} {{ was_env_upper }} lab"
 
-was_base_port: 30000
-was_dmgr_soap_port: "{{ was_base_port | int + 5 }}"
+# --------------------------------------------------------------------------
+# Ports
+# --------------------------------------------------------------------------
+# Two bases, because this lab runs the deployment manager and the federated
+# node on ONE machine and each manageprofiles template allocates a dozen or so
+# ports upward from the base it is given. One base for both means two profiles
+# claiming the same ports.
+#
+# They are declared here, for the whole inventory, and consumed per role:
+# group_vars/dmgr.yml sets was_base_port from the first, nodeagents.yml from
+# the second. An estate with one machine per role has no reason to split them.
+was_lab_dmgr_base_port: 30000
+was_lab_node_base_port: 30100
+
+# The default for anything not in a role group - the installation entry, and a
+# standalone run.
+was_base_port: "{{ was_lab_dmgr_base_port }}"
+
+# ANCHORED ON THE DEPLOYMENT MANAGER's BASE, not on was_base_port, which now
+# differs per role: a federated node reading this would otherwise compute the
+# deployment manager's SOAP port from its OWN base and look for it 100 ports
+# too high.
+#
+# It is still only a fallback. +5 is where the source estate's management
+# template happened to put SOAP; manageprofiles decides the real offset from
+# its own portdef.props ordering. profile_dmgr reads the created profile and
+# publishes was_dmgr_soap_port_actual, and profile_nodeagent prefers that - so
+# this value matters only when the two profiles are built in separate runs,
+# and the role says which of the two it used.
+was_dmgr_soap_port: "{{ was_lab_dmgr_base_port | int + 5 }}"
+
+# Standalone only: a standalone server is what listens, so it starts from a
+# server base rather than from a deployment manager base.
 was_server_base_port: "{{ was_base_port | int - 20000 }}"

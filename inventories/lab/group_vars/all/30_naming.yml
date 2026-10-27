@@ -1,0 +1,46 @@
+---
+# WAS object names for the lab, as inputs.
+#
+# Every name below is already composed by roles/model/vars/naming.yml, and the
+# role honours a name that is defined before it runs - that is what the
+# `| default(pattern, true)` in roles/model/tasks/naming.yml is for. So this
+# file does not add a mechanism; it uses the one that exists, and it exists so
+# the names are a decision an operator can see and change rather than a
+# convention buried in a role.
+#
+# WHAT IS HERE AND WHAT IS NOT
+#
+# Cell-wide names live here, because the deployment manager and the federated
+# node have to agree on them. Names that belong to one role - a profile name, a
+# node name, a cluster member - live in group_vars/dmgr.yml and
+# group_vars/nodeagents.yml, next to the role that owns them.
+#
+# NO ENVIRONMENT CODE IS WRITTEN HERE. was_env_upper and was_channel_name are
+# published by roles/model/tasks/environment.yml from the survey answers, and
+# group_vars templates resolve when they are read, which is after that. Change
+# the answer at launch and every name below follows.
+#
+# PRECEDENCE, WHICH MATTERS WHEN THE SURVEY IS USED
+#
+# An AWX survey answer is an extra var and outranks this file. The survey
+# questions for these names are optional, and an answer left blank arrives as
+# an empty string, which `default(..., true)` turns back into the ROLE pattern -
+# not into the value below. So a run launched from the survey either fills
+# those questions with the same values, or accepts the role patterns. A command
+# line run with no -e for them gets exactly what is written here.
+
+# --------------------------------------------------------------------------
+# Cell
+# --------------------------------------------------------------------------
+# The role pattern is <Channel>_<ENV>. The lab appends _Cell so that the
+# override path is visibly exercised and so a cell name is never mistaken for
+# an environment code in a log.
+was_cell_name: "{{ was_channel_name }}_{{ was_env_upper }}_Cell"
+
+# --------------------------------------------------------------------------
+# Cluster
+# --------------------------------------------------------------------------
+# The role pattern is Cluster + the first three letters of the channel
+# (ClusterEXT). The lab pins an index, because a second cluster in the same
+# cell is the normal next step and ClusterEXT would then have to be renamed.
+was_cluster_name: "Cluster{{ was_channel_upper[:3] }}01"
