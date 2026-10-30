@@ -1,0 +1,31 @@
+---
+# What ansible-lint is allowed to decide here, and what it is not.
+#
+# The default profile is kept. Only the rules that contradict a decision this
+# repository made on purpose are listed below, each with the reason, because a
+# silent skip_list is how a project ends up with no standards at all.
+
+skip_list:
+  # var-naming[no-role-prefix] wants every variable set inside a role to carry
+  # that role's name as a prefix: was_install_repository, model_cell_name,
+  # server_member_cluster_name. It is good advice for a library of independent
+  # roles. It is wrong here, and following it would break the architecture.
+  #
+  # The names of WAS objects are SHARED. was_cell_name means one thing across
+  # the whole collection: the cell this run builds. profile_dmgr writes it into
+  # a response file, the cluster job passes it to wsadmin, the audit role
+  # compares it. That is the subject of README section 17 - one mechanism, one
+  # name, no second rule - and the bug it exists to prevent is exactly the one
+  # this rule would reintroduce: the same object named differently in different
+  # places. A was_install_cell_name and a model_cell_name are two names for one
+  # cell, and they will disagree.
+  #
+  # 168 of the 205 findings were this rule. Prefixed names are still used where
+  # a variable really is role-local: server_member_weight, profile_node_ports,
+  # model_allow_production.
+  - var-naming[no-role-prefix]
+
+# Advisory, not skipped: the later-wave roles are still stubs that fail on
+# purpose, and a stub has no tasks to lint properly. The CI job keeps
+# allow_failure until the whole collection is implemented, at which point it
+# becomes a gate like the others.

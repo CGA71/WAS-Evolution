@@ -54,7 +54,12 @@
 # the artefact versions - lives in the environment's group_vars, so it can only
 # be validated from a host that belongs to that group.
 - name: Validate the model for the chosen environment
-  hosts: "{{ was_environment | lower }}"
+  # Renderable without the variable, so the playbook can be
+  # syntax-checked and linted without being launched. The first play
+  # above has already refused a run with no environment, so this
+  # fallback - a name no inventory can hold - is never the pattern of a
+  # real run.
+  hosts: "{{ was_environment | default('no-environment-supplied') | lower }}"
   gather_facts: false
   connection: local
   run_once: true

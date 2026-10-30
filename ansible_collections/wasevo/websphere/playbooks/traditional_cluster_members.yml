@@ -36,6 +36,32 @@
 # There is no cluster-type variable anywhere. The shape is a consequence of the
 # member list, never a switch.
 
+# Same reason as in traditional_cluster.yml: the deployment manager pattern
+# below has to render without being launched, so it falls back to a name no
+# inventory can hold - and a pattern that matches nothing would make the run
+# succeed having done nothing. The refusal is a play, and it names the answer
+# that is missing.
+- name: An environment must be supplied before a host pattern is built from it
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Refuse a run with neither an environment nor an explicit host pattern
+      ansible.builtin.assert:
+        that:
+          - (was_environment | default('') | trim | length > 0)
+            or (config_dmgr_hosts | default('') | trim | length > 0)
+        fail_msg: >-
+          No environment was supplied. It decides which hosts this run targets,
+          because the host pattern is the intersection of an environment group
+          and the deployment manager group - the environment is an answer, not
+          a directory. In AWX, answer the survey question for the target
+          environment; on the command line, pass -e was_environment=<code>.
+          An inventory with no environment group - the lab - is run with
+          -e config_dmgr_hosts=dmgr instead.
+        success_msg: "a target was supplied"
+
 - name: Resolve the member names on each federated node
   hosts: "{{ members_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"
   gather_facts: false
@@ -53,7 +79,10 @@
 # Separate play, on the deployment manager: that is where the master
 # configuration repository is, and the only place a wsadmin session exists.
 - name: Create the cluster members from the deployment manager
-  hosts: "{{ config_dmgr_hosts | default(was_environment | mandatory | lower ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}"
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
   gather_facts: true
 
   tasks:

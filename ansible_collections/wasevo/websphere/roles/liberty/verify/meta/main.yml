@@ -1,6 +1,7 @@
 ---
 galaxy_info:
   role_name: liberty_verify
+  author: neo
   description: "Post-deploy verification: k8s_info on the CR status plus an HTTP smoke test."
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"

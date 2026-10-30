@@ -200,9 +200,16 @@
   ansible.builtin.set_fact:
     # Compare on the offering id without its build timestamp: the advertised id
     # carries one, and an installed package reports the same stem.
+    # The empty case is tested first, and Jinja's `or` short-circuits, so the
+    # comparison never runs against an undefined offering - which is both what
+    # ansible-lint was reporting and a genuine fragility: `'' not in anything`
+    # is False, so an offering that failed to resolve would have been read as
+    # "already installed, nothing to do". It now reads as "install", and the
+    # install step is where a missing offering fails loudly.
     was_needs_install: >-
-      {{ (was_offering | regex_replace('_.*$', ''))
-         not in (was_installed.stdout | default('')) }}
+      {{ (was_offering | default('') | length == 0)
+         or ((was_offering | regex_replace('_.*$', ''))
+             not in (was_installed.stdout | default(''))) }}
   tags: [was]
 
 - name: Report the decision

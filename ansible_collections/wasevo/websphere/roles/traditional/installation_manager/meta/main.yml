@@ -1,6 +1,7 @@
 ---
 galaxy_info:
   role_name: traditional_installation_manager
+  author: neo
   description: "IBM Installation Manager install and package inventory."
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"

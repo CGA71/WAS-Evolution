@@ -236,6 +236,10 @@
               -log {{ im_install_log_dir }}/fixpack_im.log
               -acceptLicense
           become: true
+          # It only runs when the plan found a self-update to apply, and
+          # applying one changes the installation. Stated rather than left to
+          # the command module's unconditional default.
+          changed_when: true
           async: 2700
           poll: 15
           register: fp_im_update
@@ -259,6 +263,8 @@
               -acceptLicense
               -nl {{ im_install_locale }}
           become: true
+          # Same: guarded by the plan, and a fix pack applied is a change.
+          changed_when: true
           async: 5400
           poll: 20
           register: fp_products_update

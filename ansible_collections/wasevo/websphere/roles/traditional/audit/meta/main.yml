@@ -1,6 +1,7 @@
 ---
 galaxy_info:
   role_name: traditional_audit
+  author: neo
   description: "Read-only drift report: declared state versus live cell, runnable as --check --diff."
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"

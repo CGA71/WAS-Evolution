@@ -1,6 +1,7 @@
 ---
 galaxy_info:
   role_name: traditional_server_member
+  author: neo
   description: >-
     The application servers that are the members of a cluster, vertical or
     horizontal. Replayable on its own: it resolves the model, stages the
