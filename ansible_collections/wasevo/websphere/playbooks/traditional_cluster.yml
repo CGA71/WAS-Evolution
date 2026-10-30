@@ -56,17 +56,11 @@
           -e config_dmgr_hosts=dmgr instead.
         success_msg: "a target was supplied"
 
-- name: Declare the cluster
-  hosts: >-
-    {{ config_dmgr_hosts
-       | default((was_environment | default('no-environment-supplied')) | lower
-                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
-  gather_facts: true
-
-  tasks:
-    # Only when the default pattern is in play: it is the only case where an
-    # environment group has to exist, and asserting it unconditionally is what
-    # kept this playbook from running on the lab at all.
+    # Checked HERE, on localhost, and not in the play that uses the pattern.
+    # If the group does not exist that play matches no host at all, so an
+    # assertion inside it would never run and the job would end green having
+    # built nothing. Only the default pattern needs the group: an inventory
+    # with no environment group - the lab - supplies config_dmgr_hosts.
     - name: The chosen environment must exist in the inventory
       ansible.builtin.assert:
         that:
@@ -77,9 +71,17 @@
           'dmgr', 'nodeagents', 'ihs', 'was_lab']) | list | join(', ') }}.
           An inventory with no environment group - the lab - is run with
           -e config_dmgr_hosts=dmgr instead.
+        success_msg: "the environment group exists"
       when: config_dmgr_hosts is not defined
-      run_once: true
-      delegate_to: localhost
+
+- name: Declare the cluster
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
 
     - name: Resolve the model and the names
       ansible.builtin.include_role:

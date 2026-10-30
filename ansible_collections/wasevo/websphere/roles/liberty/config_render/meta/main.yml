@@ -2,6 +2,10 @@
 galaxy_info:
   role_name: liberty_config_render
   author: neo
+  description: >-
+    Render server.xml, jvm.options and server.env from the shared model.
+    Touches no cluster: it runs offline, which is what makes it the GitOps
+    boundary.
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"
 dependencies: []

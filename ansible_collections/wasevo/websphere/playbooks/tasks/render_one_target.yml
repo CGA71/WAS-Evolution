@@ -2,22 +2,22 @@
 # Render one target of the matrix. Kept separate so the loop stays readable and
 # so a single target can be rendered on its own during debugging.
 
-- name: "{{ target.label }} - load the target definition"
+- name: "Load the target definition for {{ target.label }}"
   ansible.builtin.include_vars:
     file: "{{ model_dir }}/{{ target.file }}"
 
-- name: "{{ target.label }} - validate and resolve the JVM intents"
+- name: "Validate and resolve the JVM intents for {{ target.label }}"
   ansible.builtin.include_role:
     name: wasevo.websphere.model
 
-- name: "{{ target.label }} - render the Liberty configuration"
+- name: "Render the Liberty configuration for {{ target.label }}"
   ansible.builtin.include_role:
     name: wasevo.websphere.liberty.config_render
   vars:
     config_render_dir: "{{ playbook_dir }}/../../../../rendered/{{ runtime.product }}-java{{ runtime.jdk.version }}"
   when: runtime.product in ['liberty_more', 'liberty_ocp']
 
-- name: "{{ target.label }} - traditional back-end: show the module arguments the model produces"
+- name: "Show the module arguments the traditional back-end produces for {{ target.label }}"
   ansible.builtin.debug:
     msg:
       cluster:
