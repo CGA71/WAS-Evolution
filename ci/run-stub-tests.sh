@@ -108,6 +108,16 @@ payload member_no_cluster <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# A check run on a cell that has no such cluster. NOT a refusal: under --check
+# the cluster is a future, created by the step before this one in the same run,
+# and a dry run of a first build is the run most worth rehearsing.
+payload member_future_check <<'JSON'
+{"resource":"cluster_member","state":"present",
+ "params":{"cluster_name":"ClusterNOTYET","cell_name":"Extranet_STUB",
+           "members":[{"node":"STUBNode01","name":"ClusterNOTYET_STUBNode01_01"}]},
+ "check_mode":true,"save_config":true,"sync_nodes":true}
+JSON
+
 # Two members on ONE node with genUniquePorts off. They both copy the
 # template's ports, which is a collision - and the reason the module defaults
 # it to true. WAS saves this configuration happily and the second server fails
@@ -250,6 +260,10 @@ expect_value "members left in the cell" "$(cell_members)" "2"
 
 expect_refusal "members in a cluster that does not exist" \
     member_no_cluster "does not exist in this cell"
+# The same request under --check is a plan, not a refusal: the cluster is a
+# future, and a dry run of a first build has to be possible.
+expect "--check on a cluster not created yet"   member_future_check true
+expect_value "and it still created nothing" "$(cell_members)" "2"
 expect_refusal "two JVMs on one node claiming one port" \
     member_port_clash "cannot share a port"
 

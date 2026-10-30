@@ -62,6 +62,14 @@
 - name: Simulation
   when: was_simulation | default(false)
   tags: [stage, simulation]
+  # Put in place even in check mode, for the same reason the driver above is:
+  # the stub is the thing a check run EXERCISES, not a change to a cell. Under
+  # --check the directory was not created and the files were not copied, so the
+  # lineinfile that follows failed with "Destination .../wsadmin.sh does not
+  # exist" - a dry run broken by its own dry-ness. Nothing here touches a real
+  # host: the block only runs where was_simulation is true, which is the CI
+  # pods and nowhere else.
+  check_mode: false
   block:
 
     - name: Create the fake profile tree

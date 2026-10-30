@@ -165,6 +165,30 @@ def _detached(member):
 def plan_present(admin, params, before):
     """What the cell is missing, computed without touching it."""
     if not before:
+        # In a check run the cluster is a FUTURE, not an absence: the step
+        # before this one in the same run is what creates it, and under
+        # --check that step wrote nothing. Refusing here would make a dry run
+        # of a first build impossible - which is the one run you most want to
+        # rehearse. So the plan reports every member as new, and says the
+        # cluster is not there yet.
+        if admin.get("check_mode"):
+            return True, {
+                "exists": False,
+                "cluster": params["cluster_name"],
+                "cluster_pending": True,
+                "members": _sorted([
+                    _detached({
+                        "name": member["name"],
+                        "node": member["node"],
+                        "weight": int(member.get("weight", 2)),
+                        "ports": dict(
+                            (endpoint, int(port))
+                            for endpoint, port in (member.get("ports") or {}).items()
+                        ),
+                    })
+                    for member in params.get("members") or []
+                ]),
+            }
         raise ValueError(
             "cluster %s does not exist in this cell, so it cannot be given "
             "members. Declare the cluster first - was_cluster, state present - "

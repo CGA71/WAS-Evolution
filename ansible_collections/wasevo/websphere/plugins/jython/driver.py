@@ -127,6 +127,12 @@ def main():
         "AdminControl": AdminControl,
         "AdminApp": AdminApp,
         "AdminTask": AdminTask,
+        # Handlers need it to tell a missing object apart from a future one. A
+        # cluster that does not exist is a refusal in a real run and a FUTURE
+        # in a check run, because the step before this one in the same run is
+        # what creates it. Same reasoning as the profile roles, which stand
+        # their hard refusals down under --check.
+        "check_mode": check_mode,
     }
 
     handler = load_handler(resource)
