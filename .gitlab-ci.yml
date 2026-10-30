@@ -134,11 +134,19 @@ model-matrix:
       echo "refused as expected"
 
 # One datasource, declared once, rendered for all three phases.
+# One declared datasource, rendered into all three trajectory couples. If the
+# three renders disagree, layer 1 is wrong - which is the point of doing this
+# on one object in wave 0 rather than discovering it thirty modules later.
+#
+# The environment is passed here too. It needs no inventory - the play is on
+# localhost - but it resolves the model, and the model refuses to run without
+# the environment that names every object it renders. The code is arbitrary:
+# what is being compared is the three renders of one object, not the name.
 pilot-render:
   extends: .static
   stage: validate
   script:
-    - ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml
+    - ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml -e was_environment=PILOT
   artifacts:
     paths: [rendered/]
     expire_in: 1 week

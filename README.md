@@ -308,9 +308,10 @@ COL=ansible_collections/wasevo/websphere/playbooks
 # install dependencies
 ansible-galaxy collection install -r collections/requirements.yml
 
-# render the pilot datasource in all three trajectory couples. No inventory and
-# no environment: it renders one declared object three ways, on localhost
-ansible-playbook $COL/pilot_render_matrix.yml
+# render the pilot datasource in all three trajectory couples. No inventory -
+# the play is on localhost - but the environment is still an input: the model
+# names every object it renders
+ansible-playbook $COL/pilot_render_matrix.yml -e was_environment=PILOT
 
 # validate one environment - the environment is a launch input, not a
 # directory, so it is passed even for a validation that touches nothing
@@ -1374,9 +1375,9 @@ COL=ansible_collections/wasevo/websphere/playbooks
 ansible-galaxy collection install -r collections/requirements.yml
 
 # rendre le datasource pilote dans les trois couples de la trajectoire. Sans
-# inventaire ni environnement : il rend un objet declare de trois facons,
-# sur localhost
-ansible-playbook $COL/pilot_render_matrix.yml
+# inventaire - le play tourne sur localhost - mais l'environnement reste une
+# entree : le modele nomme chaque objet qu'il rend
+ansible-playbook $COL/pilot_render_matrix.yml -e was_environment=PILOT
 
 # valider un environnement - l'environnement est une entree de lancement et
 # pas un repertoire, donc il se passe meme pour une validation qui ne touche
