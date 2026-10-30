@@ -131,6 +131,24 @@
               cell is how a dry run tells the truth.
           when: not (cluster_wsadmin.stat.exists | default(false))
 
+        # Asked for by name, before the module reads them. Without this the
+        # failure is "'was_admin_password' is undefined" pointing at a line of
+        # YAML, which says nothing about where the value comes from. wsadmin
+        # needs the administrator of the CELL, not a local account, and it
+        # comes from a credential - in AWX from the "WAS administrative user"
+        # credential type, on the command line from a vault or -e.
+        - name: Administrative credentials must be supplied to reach the cell
+          ansible.builtin.assert:
+            that:
+              - was_admin_user | default('') | length > 0
+              - was_admin_password | default('') | length > 0
+            fail_msg: >-
+              Reaching a cell with administrative security enabled needs
+              was_admin_user and was_admin_password - the deployment manager's
+              administrator, not a local account. Supply them from an AWX
+              credential or a vault.
+            success_msg: "administrative credentials supplied"
+
         - name: The cluster
           wasevo.websphere.was_cluster:
             name: "{{ was_cluster_name }}"

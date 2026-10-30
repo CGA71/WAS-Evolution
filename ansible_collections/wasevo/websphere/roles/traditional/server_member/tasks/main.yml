@@ -206,6 +206,21 @@
     # check mode is honoured inside the driver: it reads the cell, plans the
     # gap and writes nothing, so a check run reports the real difference
     # instead of a guess.
+    # Asked for by name, before the module reads them - otherwise the failure
+    # is "'was_admin_password' is undefined" pointing at a line of YAML, which
+    # says nothing about where the value comes from.
+    - name: Administrative credentials must be supplied to reach the cell
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Reaching a cell with administrative security enabled needs
+          was_admin_user and was_admin_password - the deployment manager's
+          administrator, not a local account. Supply them from an AWX
+          credential or a vault.
+        success_msg: "administrative credentials supplied"
+
     - name: Reconcile the cluster members
       wasevo.websphere.was_cluster_member:
         cluster_name: "{{ was_cluster_name }}"

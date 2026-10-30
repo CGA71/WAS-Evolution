@@ -248,16 +248,16 @@ sim:configure:
     - |
       echo "=============== dry run first ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        -e was_environment=SIM \
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
         --check --diff
     - |
       echo "=============== apply ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        -e was_environment=SIM | tee run1.log
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only | tee run1.log
     - |
       echo "=============== replay: must change nothing ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        -e was_environment=SIM | tee run2.log
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only | tee run2.log
       set -e
       # The second run is the only real proof of idempotency. The legacy
       # approach could not make this claim: its marker files reported "nothing
@@ -346,14 +346,35 @@ sim:profiles:
     - |
       echo "=============== nothing was deployed ==============="
       set -e
-      # The point of a check run: no profile, no product, no response file left
-      # behind on any simulated host.
+      # The point of a check run: no profile and no response file left behind
+      # on any simulated host.
+      #
+      # WHY THIS IS NOT "/app/profiles IS EMPTY" ANY MORE. The wsadmin
+      # stand-in has to live where the modules look for wsadmin, which is
+      # <profile path>/bin/wsadmin.sh, so staging it creates a directory under
+      # /app/profiles. That directory is not a profile: it holds three stub
+      # files and nothing else.
+      #
+      # So what is asserted is the absence of what manageprofiles ACTUALLY
+      # creates, which is also what the profile roles verify afterwards -
+      # startNode.sh, startServer.sh, portdef.props, a config tree. A check run
+      # that produced any of those would mean manageprofiles had been called.
+      #
+      # /app/data/profiles is still required to be empty: that is the response
+      # file directory, and a rendered response file carries the administrative
+      # password.
       for ns_pod in was-sim-dmgr/was-dmgr-01 was-sim-nodeagents/was-node-01 was-sim-nodeagents/was-node-02; do
         ns="${ns_pod%%/*}"; pod="${ns_pod##*/}"
-        left=$(kubectl -n "$ns" exec "$pod" -- sh -c 'ls -A /app/profiles /app/data/profiles 2>/dev/null' || true)
-        [ -z "$left" ] || { echo "$pod has something under /app/profiles or /app/data/profiles: $left"; exit 1; }
+        real=$(kubectl -n "$ns" exec "$pod" -- sh -c \
+          'ls -1 /app/profiles/*/bin/startNode.sh /app/profiles/*/bin/startServer.sh \
+                 /app/profiles/*/properties/portdef.props /app/profiles/*/config 2>/dev/null' || true)
+        [ -z "$real" ] || { echo "$pod carries a real profile after a check run: $real"; exit 1; }
+        responses=$(kubectl -n "$ns" exec "$pod" -- sh -c 'ls -A /app/data/profiles 2>/dev/null' || true)
+        [ -z "$responses" ] || { echo "$pod left something in the response directory: $responses"; exit 1; }
+        stub=$(kubectl -n "$ns" exec "$pod" -- sh -c 'ls -A /app/profiles/*/bin 2>/dev/null' || true)
+        echo "  $pod: no profile, no response file. Under /app/profiles: ${stub:-nothing}"
       done
-      echo "no profile, no response file and no product on any simulated host"
+      echo "no profile and no response file on any simulated host"
   artifacts:
     when: always
     paths: [nd.log, standalone.log, refused.log]
@@ -379,15 +400,16 @@ sim:members:
     - |
       echo "=============== vertical x horizontal: dry run ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_cluster_members_per_node=2 --check --diff | tee members-check.log
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
+        -e was_cluster_members_per_node=2 --check --diff | tee members-check.log
     - |
       echo "=============== apply ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_cluster_members_per_node=2 | tee members1.log
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only -e was_cluster_members_per_node=2 | tee members1.log
     - |
       echo "=============== replay: must change nothing ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_cluster_members_per_node=2 | tee members2.log
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only -e was_cluster_members_per_node=2 | tee members2.log
       set -e
       bad=$(grep -E "^was-(dmgr|node)-[0-9]+ +:" members2.log | grep -v "changed=0" || true)
       if [ -n "$bad" ]; then
@@ -421,7 +443,8 @@ sim:members:
       echo "=============== a count above the bound must be refused ==============="
       set +e
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_cluster_members_per_node=99 --check > refused-count.log 2>&1
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
+        -e was_cluster_members_per_node=99 --check > refused-count.log 2>&1
       rc=$?
       set -e
       [ "$rc" -ne 0 ] || { echo "99 members per node was accepted"; exit 1; }
@@ -436,7 +459,8 @@ sim:members:
       # it would invent a convention they did not ask for.
       set +e
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_cluster_members_per_node=2 -e was_cluster_member_name=OneServerOnly \
+        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
+        -e was_cluster_members_per_node=2 -e was_cluster_member_name=OneServerOnly \
         --check > refused-name.log 2>&1
       rc=$?
       set -e
