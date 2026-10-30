@@ -20,10 +20,24 @@
 
   vars:
     model_dir: "{{ playbook_dir }}/../../../../model/example"
-    targets:
+
+    # The three phases of the trajectory, and the default.
+    pilot_targets_default:
       - { file: target_phase1_traditional.yml, label: "phase 1 - traditional + IBM Java 8" }
       - { file: target_phase2_liberty_more.yml, label: "phase 2 - Liberty + Semeru 21" }
       - { file: target_phase3_liberty_ocp.yml, label: "phase 3 - OpenShift + Liberty + Semeru 21" }
+
+    # Overridable, so the same render can be pointed at one deliberately
+    # invalid target and the refusal asserted. The pipeline does exactly that
+    # with example_diagnostic_only.yml - Liberty on IBM Java 8, the wave-3
+    # bisection step - and expects the model to refuse it.
+    #
+    # That gate used to pass `-e model_target=...`, which nothing read: the
+    # list below was hardcoded, the three valid targets rendered, the play
+    # succeeded, and the check only passed because the play was failing for an
+    # unrelated reason - no environment supplied. A test that cannot fail for
+    # the reason it names is worse than no test.
+    targets: "{{ pilot_targets | default(pilot_targets_default) }}"
 
   tasks:
     - name: Load the shared model
