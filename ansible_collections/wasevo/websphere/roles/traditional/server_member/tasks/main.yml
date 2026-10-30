@@ -1,16 +1,237 @@
 ---
-# Application server creation as a cluster member.
+# Create the application servers that are the members of the cluster.
 #
-# Scheduled for: wave 1
-# Source material: pbk_server_creation_membre_cluster.yml
+# Runs on the DEPLOYMENT MANAGER, because that is where the master
+# configuration repository is and where a wsadmin session exists. The members
+# themselves land on the federated nodes, which receive them on the following
+# node synchronisation.
 #
-# Not implemented yet. This file exists so the role is tracked, so the wave it
-# belongs to is recorded next to the code, and so a playbook that references it
-# fails with a clear message rather than a missing-role error.
+# ONE CALL FOR THE WHOLE CLUSTER. A wsadmin JVM start costs 30 to 60 seconds,
+# so the member list is assembled here and handed over in a single module call
+# rather than looped over. Eight members built one at a time is eight starts.
+#
+# VERTICAL OR HORIZONTAL IS NOT A SETTING. Horizontal is how many hosts the
+# node agent group holds; vertical is was_cluster_members_per_node on those
+# hosts; both at once is the product of the two. The role reads the list each
+# node published and makes the cell match it.
+#
+# REPLAYABLE ON ITS OWN. Everything it needs, it does: the model, the driver,
+# the preconditions. Rerun it after changing a member name, a weight or a
+# count and it converges, without replaying the install or the profiles.
 
-- name: Role not implemented yet
-  ansible.builtin.fail:
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [cluster, member, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [cluster, member, always]
+
+# A standalone server is its own administrative domain: no cell to own a
+# cluster, no node agent, and therefore no cluster member. topology.yml
+# publishes was_can_cluster, so this refusal happens before wsadmin is ever
+# launched.
+- name: A standalone topology has no cluster to put members in
+  ansible.builtin.debug:
     msg: >-
-      wasevo.websphere.traditional/server_member is scheduled for wave 1 and is not implemented.
-      See README section 5 to 7 for the action list of that wave.
-  when: not (allow_unimplemented_roles | default(false))
+      was_topology is "{{ was_topology }}", so there is no cluster and no
+      member to create. A standalone server IS the application server - see
+      the profile_standalone role. Nothing to do here.
+  when: not (was_can_cluster | default(false) | bool)
+  tags: [cluster, member]
+
+- name: Create the cluster members
+  when: was_can_cluster | default(false) | bool
+  tags: [cluster, member]
+  block:
+
+    # ------------------------------------------------------------------
+    # Preconditions, each naming the job that produces what is missing
+    # ------------------------------------------------------------------
+    - name: The inventory must declare federated nodes
+      ansible.builtin.assert:
+        that:
+          - (groups[was_nodeagent_group] | default([])) | length > 0
+        fail_msg: >-
+          This inventory has no host in the "{{ was_nodeagent_group }}" group.
+          A cluster member is an application server on a FEDERATED node, so
+          there has to be at least one. Groups present:
+          {{ groups.keys() | reject('in', ['all', 'ungrouped']) | list | join(', ') }}.
+        success_msg: "{{ (groups[was_nodeagent_group] | default([])) | length }} federated node(s) declared"
+
+    # Checked here rather than left to the module, which would say "wsadmin
+    # not found" - true, but it does not say which job was skipped.
+    - name: The deployment manager profile must exist on this host
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+      register: member_wsadmin
+      check_mode: false
+
+    - name: Refuse clearly when it does not
+      ansible.builtin.fail:
+        msg: >-
+          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+          {{ inventory_hostname }}. This role runs against the deployment
+          manager profile, which is created by the profile job
+          (lab_create_profiles.yml, or the profile_dmgr role). This job can be
+          launched on its own, so it says what is missing instead of dying
+          inside a shell call.
+      when: not (member_wsadmin.stat.exists | default(false))
+
+    # ------------------------------------------------------------------
+    # What each node published, and what it means here
+    # ------------------------------------------------------------------
+    # The names come from the node hosts: a member name is built from the node
+    # name, and the node is the only host that knows its own. The nodes
+    # publish them with roles/model tasks_from=cluster_members.yml, which the
+    # first play of traditional_cluster_members.yml runs.
+    - name: Every federated node must have published its member list
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].was_cluster_members is defined
+          - (hostvars[item].was_cluster_members | default([])) | length > 0
+        fail_msg: >-
+          {{ item }} has published no was_cluster_members. A member name is
+          composed on the node, because it is built from the node name - so the
+          play that resolves the names has to run on
+          {{ was_nodeagent_group }} before this role runs on the deployment
+          manager. Use the playbook
+          wasevo.websphere.traditional_cluster_members, which does both in
+          order; a run limited to the deployment manager alone cannot see those
+          names.
+        success_msg: "{{ item }}: {{ (hostvars[item].was_cluster_members | default([])) | join(', ') }}"
+      loop: "{{ groups[was_nodeagent_group] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # One flat list of {node, name, weight, gen_unique_ports, ports}, which is
+    # exactly what the module takes. Nothing is composed here: the names come
+    # from the nodes, the node names from the inventory, and the rest from
+    # defaults a host can override.
+    #
+    # Emptied first. set_fact persists for the whole run, and a role included
+    # twice - two clusters in one play - would otherwise append to the first
+    # cluster's list and create its members a second time.
+    - name: Start from an empty specification
+      ansible.builtin.set_fact:
+        member_spec: []
+
+    - name: Assemble the member specification, one entry per JVM
+      ansible.builtin.set_fact:
+        member_spec: >-
+          {{ member_spec + [{
+               'node': hostvars[item.0.host].was_node_name,
+               'name': item.1,
+               'weight': (hostvars[item.0.host].was_cluster_member_weight
+                          | default(server_member_weight)) | int,
+               'gen_unique_ports': (hostvars[item.0.host].was_cluster_member_gen_unique_ports
+                                    | default(server_member_gen_unique_ports)) | bool,
+               'ports': (hostvars[item.0.host].was_cluster_member_ports
+                         | default({})).get(item.1, {}),
+             }] }}
+      loop: "{{ _members_by_node | subelements('members') }}"
+      vars:
+        # A list of {host, members}, because subelements needs the inner list
+        # to be a key of a dict. One line per node host, in inventory order,
+        # so the first member of the cluster is the first member of the first
+        # node - which is the one the server template is taken from.
+        _members_by_node: >-
+          {%- set out = [] -%}
+          {%- for node_host in groups[was_nodeagent_group] -%}
+            {%- set _ = out.append({
+                  'host': node_host,
+                  'members': hostvars[node_host].was_cluster_members}) -%}
+          {%- endfor -%}
+          {{ out }}
+      loop_control:
+        label: "{{ hostvars[item.0.host].was_node_name }}/{{ item.1 }}"
+
+    # One "node/name" string per member, which is both what the assertion
+    # below compares and what the report prints.
+    - name: Label each member by its node and its name
+      ansible.builtin.set_fact:
+        member_labels: >-
+          {%- set out = [] -%}
+          {%- for member in member_spec -%}
+            {%- set _ = out.append(member.node ~ '/' ~ member.name) -%}
+          {%- endfor -%}
+          {{ out }}
+        member_nodes: "{{ member_spec | map(attribute='node') | unique | list }}"
+
+    - name: Two servers in the cell cannot share a node and a name
+      ansible.builtin.assert:
+        that:
+          - member_spec | length > 0
+          - member_labels | unique | length == member_spec | length
+        fail_msg: >-
+          The assembled member list has a duplicate node/name pair:
+          {{ member_labels }}. wsadmin accepts the second one at creation and
+          every later lookup by name then finds the first. Two nodes carrying
+          members with the same name is fine; the same name twice on one node
+          is not.
+        success_msg: "{{ member_spec | length }} member(s) to reconcile"
+
+    # The shape is reported, not configured: it is a consequence of the member
+    # list. Printing it is how an operator sees that the count they answered
+    # produced the cluster they meant.
+    - name: Report what will be reconciled
+      ansible.builtin.debug:
+        msg: >-
+          {{ was_cluster_name }} in {{ was_cell_name }}:
+          {{ member_spec | length }} member(s) over {{ member_nodes | length }} node(s)
+          -- {{ 'vertical and horizontal'
+                if (member_nodes | length > 1 and member_spec | length > member_nodes | length)
+                else ('horizontal' if member_nodes | length > 1
+                      else ('vertical' if member_spec | length > 1 else 'a single member')) }}
+          -- {{ member_labels | join(', ') }}
+
+    # ------------------------------------------------------------------
+    # The driver, staged by this role rather than by an earlier job
+    # ------------------------------------------------------------------
+    - name: Stage the Jython driver on the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    # ------------------------------------------------------------------
+    # The call. One wsadmin session for every member.
+    # ------------------------------------------------------------------
+    # check mode is honoured inside the driver: it reads the cell, plans the
+    # gap and writes nothing, so a check run reports the real difference
+    # instead of a guess.
+    - name: Reconcile the cluster members
+      wasevo.websphere.was_cluster_member:
+        cluster_name: "{{ was_cluster_name }}"
+        cell_name: "{{ was_cell_name }}"
+        members: "{{ member_spec }}"
+        template_name: "{{ server_member_template_name }}"
+        template_server_node: "{{ server_member_template_server_node | default(omit, true) }}"
+        template_server_name: "{{ server_member_template_server_name | default(omit, true) }}"
+        node_group: "{{ server_member_node_group | default(omit, true) }}"
+        core_group: "{{ server_member_core_group | default(omit, true) }}"
+        state: "{{ server_member_state }}"
+        profile_path: "{{ was_profile_path }}"
+        admin_user: "{{ was_admin_user }}"
+        admin_password: "{{ was_admin_password }}"
+        jython_dir: "{{ was_jython_dir }}"
+      register: member_result
+
+    - name: Report the cell as it is now
+      ansible.builtin.debug:
+        msg:
+          - "cluster : {{ was_cluster_name }} in {{ was_cell_name }}"
+          - "state   : {{ server_member_state }}"
+          - "changed : {{ member_result.changed }}"
+          - "members : {{ _live | default('(none)', true) }}"
+          - "note    : the members are created, not started. The node agent
+                       starts them - a runtime operation with its own log."
+      vars:
+        _live: >-
+          {%- set out = [] -%}
+          {%- for member in member_result.members | default([]) -%}
+            {%- set _ = out.append(member.node ~ '/' ~ member.name
+                                   ~ ' w' ~ member.weight) -%}
+          {%- endfor -%}
+          {{ out | join(', ') }}

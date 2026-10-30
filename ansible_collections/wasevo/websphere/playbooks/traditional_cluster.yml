@@ -1,0 +1,113 @@
+---
+# The cluster object, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e was_topology=nd -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. This playbook exists so the cluster
+# can be declared - or corrected - on its own, without replaying the install,
+# the profiles or the members. That is one wsadmin session instead of the whole
+# chain, which is what makes a fix after a change cheap enough to actually do.
+#
+# It is also why it trusts no earlier node: the model is resolved here, the
+# Jython driver is staged here, and a missing deployment manager profile is
+# named as such rather than surfacing as a wsadmin error.
+#
+# THE HOST PATTERN IS OVERRIDABLE. By default it is the intersection of an
+# environment group and the deployment manager group, so the environment is a
+# launch input rather than a directory. The lab has no environment group on
+# purpose - the same VM is built as any environment - so it passes
+# config_dmgr_hosts=dmgr instead, exactly as lab_create_profiles.yml does for
+# the profile roles.
+#
+# Always worth a --check --diff first: the dry run reads the cell and reports
+# the real gap, which the legacy marker-file approach could not.
+
+- name: Declare the cluster
+  hosts: "{{ config_dmgr_hosts | default(was_environment | mandatory | lower ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}"
+  gather_facts: true
+
+  tasks:
+    # Only when the default pattern is in play: it is the only case where an
+    # environment group has to exist, and asserting it unconditionally is what
+    # kept this playbook from running on the lab at all.
+    - name: The chosen environment must exist in the inventory
+      ansible.builtin.assert:
+        that:
+          - (was_environment | lower) in groups
+        fail_msg: >-
+          No inventory group named {{ was_environment | lower }}. Known
+          environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
+          'dmgr', 'nodeagents', 'ihs', 'was_lab']) | list | join(', ') }}.
+          An inventory with no environment group - the lab - is run with
+          -e config_dmgr_hosts=dmgr instead.
+      when: config_dmgr_hosts is not defined
+      run_once: true
+      delegate_to: localhost
+
+    - name: Resolve the model and the names
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+
+    - name: Resolve and validate the topology
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+        tasks_from: topology.yml
+
+    - name: A standalone topology has no cluster
+      ansible.builtin.debug:
+        msg: >-
+          was_topology is "{{ was_topology }}": a standalone server is its own
+          administrative domain and holds no cluster. Nothing to do.
+      when: not (was_can_cluster | bool)
+
+    - name: Declare the cluster
+      when: was_can_cluster | bool
+      block:
+
+        - name: The deployment manager profile must exist on this host
+          ansible.builtin.stat:
+            path: "{{ was_profile_path }}/bin/wsadmin.sh"
+          register: cluster_wsadmin
+          check_mode: false
+
+        - name: Refuse clearly when it does not
+          ansible.builtin.fail:
+            msg: >-
+              No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+              {{ inventory_hostname }}. The cluster lives in the master
+              configuration repository, which is the deployment manager
+              profile - created by the profile job. This playbook can be
+              launched on its own, so it names what is missing instead of
+              dying inside a shell call.
+          when: not (cluster_wsadmin.stat.exists | default(false))
+
+        - name: Stage the Jython driver on the deployment manager
+          ansible.builtin.include_role:
+            name: wasevo.websphere.traditional.config
+
+        - name: The cluster
+          wasevo.websphere.was_cluster:
+            name: "{{ was_cluster_name }}"
+            cell_name: "{{ was_cell_name }}"
+            prefer_local: "{{ was_cluster_prefer_local | default('true') }}"
+            state: "{{ was_cluster_state | default('present') }}"
+            profile_path: "{{ was_profile_path }}"
+            admin_user: "{{ was_admin_user }}"
+            admin_password: "{{ was_admin_password }}"
+            jython_dir: "{{ was_jython_dir }}"
+          register: cluster_result
+
+        - name: Report
+          ansible.builtin.debug:
+            msg:
+              - "environment : {{ was_environment }} ({{ was_env_long_name }})"
+              - "cell        : {{ was_cell_name }}"
+              - "cluster     : {{ was_cluster_name }}"
+              - "changed     : {{ cluster_result.changed }}"
+              - "members     : {{ (cluster_result.cluster.members | default([])) | length }}
+                                 -- created by traditional_cluster_members.yml,
+                                 which is a separate job for the same reason
+                                 this one is"

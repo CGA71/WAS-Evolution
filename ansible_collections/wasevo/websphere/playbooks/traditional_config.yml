@@ -1,58 +1,37 @@
 ---
 # Traditional plane configuration, for ONE environment chosen at launch.
 #
-# The host pattern is the intersection of an environment group and a role
-# group, so the environment is an input rather than a directory:
-#
 #   AWX  : the Survey question "Target environment" sets was_environment
 #   shell: ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# WHAT THIS FILE IS. The whole-plane entry point: it runs the configuration
+# steps in the order a cell needs them. It defines none of them. Each step is
+# its own playbook, driving its own role, launchable on its own as its own AWX
+# job template - because replaying one step after a change has to cost one
+# wsadmin session, not the entire chain.
+#
+#   traditional_cluster.yml          the cluster object
+#   traditional_cluster_members.yml  the application servers in it
+#
+# So there is exactly one definition of each step, and this file cannot drift
+# from the step it used to carry inline - which is what happened to the legacy
+# launch_*.sh scripts, each with its own copy of the same cell build.
+#
+# Both imported playbooks take the same launch inputs as this one, resolve the
+# model themselves and stage the Jython driver themselves. Running this is the
+# same work as running them in order, and running one of them is a supported
+# way to fix one thing.
+#
+# THE HOST PATTERN IS A LAUNCH INPUT. Each step defaults to the intersection of
+# an environment group and the deployment manager group, so the environment is
+# an answer rather than a directory. An inventory with no environment group -
+# the lab, deliberately, because the same VM is built as any environment -
+# passes -e config_dmgr_hosts=dmgr.
 #
 # Always run with --check --diff first. The whole point of the module approach
 # is that the dry run tells the truth, which the legacy marker-file approach
 # could not.
 
-- name: Configure the deployment manager
-  hosts: "{{ was_environment | mandatory | lower }}:&dmgr"
-  gather_facts: true
+- import_playbook: traditional_cluster.yml
 
-  module_defaults:
-    group/wasevo.websphere.traditional:
-      profile_path: "{{ was_profile_path }}"
-      admin_user: "{{ was_admin_user }}"
-      admin_password: "{{ was_admin_password }}"
-      jython_dir: "{{ was_jython_dir }}"
-
-  tasks:
-    - name: The chosen environment must actually exist in the inventory
-      ansible.builtin.assert:
-        that:
-          - (was_environment | lower) in groups
-        fail_msg: >-
-          No inventory group named {{ was_environment | lower }}. Known
-          environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
-          'dmgr', 'nodeagents', 'ihs']) | list | join(', ') }}.
-      run_once: true
-      delegate_to: localhost
-
-    - name: Stage the Jython driver on the target
-      ansible.builtin.include_role:
-        name: wasevo.websphere.traditional.config
-
-    - name: Validate the model before touching the cell
-      ansible.builtin.include_role:
-        name: wasevo.websphere.model
-
-    - name: Declare the cluster
-      wasevo.websphere.was_cluster:
-        name: "{{ was_cluster_name }}"
-        cell_name: "{{ was_cell_name }}"
-        prefer_local: "true"
-        state: present
-      register: cluster_result
-
-    - name: Report
-      ansible.builtin.debug:
-        msg:
-          - "environment : {{ was_environment }} ({{ was_env_long_name }})"
-          - "cell        : {{ was_cell_name }}"
-          - "cluster     : {{ cluster_result.cluster | default({}) }}"
+- import_playbook: traditional_cluster_members.yml

@@ -27,6 +27,13 @@
 # `| default(<pattern>, true)`. The `true` is what makes an empty answer fall
 # back to the pattern rather than overriding it with "". Leave a name blank and
 # it is derived; fill it in and it is imposed.
+#
+# The one question that is not a name is "Application servers per node", which
+# is the VERTICAL axis of the cluster - how many application server JVMs each
+# federated node carries. The horizontal axis is not asked and cannot be: a
+# survey is flat, it has no repeating group, so the list of nodes comes from
+# the inventory. It is an integer question with a default, so an unanswered one
+# sends 1 rather than an empty string.
 
 set -euo pipefail
 

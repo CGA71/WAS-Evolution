@@ -1,0 +1,76 @@
+---
+# The application servers of the cluster, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e was_topology=nd \
+#       -e config_dmgr_hosts=dmgr -e was_cluster_members_per_node=2
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Replaying this after a change - a
+# member added, a weight corrected, a port pinned - costs one wsadmin session,
+# not the install and the profiles as well. It trusts no earlier node: it
+# resolves the model, stages the Jython driver and checks its own
+# preconditions, and when something is missing it names the job that produces
+# it.
+#
+# WHY TWO PLAYS.
+#
+# A member name is built from the NODE name, and the node is the only host
+# that knows its own - was_node_name can be a group_vars template that only
+# resolves once the model has published was_env_upper on that host. So the
+# nodes publish their member list first (play 1), and the deployment manager
+# reads hostvars[<node>].was_cluster_members and creates them (play 2), which
+# is where the single wsadmin session lives.
+#
+# Play 1 gathers no facts and touches nothing: it is a name resolution, and it
+# costs a fraction of a second per host.
+#
+# VERTICAL AND HORIZONTAL ARE THE SAME RUN.
+#
+#   horizontal   how many hosts the node agent group holds - one member each
+#   vertical     was_cluster_members_per_node on those hosts - several JVMs
+#                on one node, with genUniquePorts so they do not collide
+#   both         the product of the two, which is what an estate looks like
+#
+# There is no cluster-type variable anywhere. The shape is a consequence of the
+# member list, never a switch.
+
+- name: Resolve the member names on each federated node
+  hosts: "{{ members_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"
+  gather_facts: false
+
+  tasks:
+    - name: Resolve the model and the names
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+
+    - name: Which members this node carries
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+        tasks_from: cluster_members.yml
+
+# Separate play, on the deployment manager: that is where the master
+# configuration repository is, and the only place a wsadmin session exists.
+- name: Create the cluster members from the deployment manager
+  hosts: "{{ config_dmgr_hosts | default(was_environment | mandatory | lower ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}"
+  gather_facts: true
+
+  tasks:
+    - name: The chosen environment must exist in the inventory
+      ansible.builtin.assert:
+        that:
+          - (was_environment | lower) in groups
+        fail_msg: >-
+          No inventory group named {{ was_environment | lower }}. Known
+          environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
+          'dmgr', 'nodeagents', 'ihs', 'was_lab']) | list | join(', ') }}.
+          An inventory with no environment group - the lab - is run with
+          -e config_dmgr_hosts=dmgr instead.
+      when: config_dmgr_hosts is not defined
+      run_once: true
+      delegate_to: localhost
+
+    - name: The cluster members
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.server_member

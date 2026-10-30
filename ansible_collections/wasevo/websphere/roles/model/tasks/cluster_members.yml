@@ -1,0 +1,134 @@
+---
+# Which cluster members this host carries, by name.
+#
+# Runs on the node, not on the deployment manager, because a member name is
+# built from the node name and the node is the only host that knows its own.
+# The deployment manager then reads hostvars[<node>].was_cluster_members and
+# creates them, which is the one place a wsadmin session exists.
+#
+# VERTICAL AND HORIZONTAL ARE NOT TWO MECHANISMS. A cluster member is one JVM
+# on one node. Several on the same node is a vertical cluster; one on each of
+# several nodes is horizontal; both at once is what an estate actually looks
+# like. So there is no "cluster type" variable anywhere: horizontal is how
+# many hosts the nodeagents group holds, vertical is was_cluster_members_per_node,
+# and the product of the two is the cluster.
+#
+# NO NAME IS COMPOSED HERE. The loop below re-renders
+# was_cluster_member_name_pattern from vars/naming.yml once per index - the
+# same pattern naming.yml uses for the single-member case, and the only place
+# in this repository where a member name is composed. This file decides how
+# MANY names, not what they look like.
+#
+# NOT included by tasks/main.yml, deliberately. A deployment manager host
+# resolves the model too, and it has no cluster member to carry: publishing a
+# member list for the dmgr node would be a name nobody asked for, reported in
+# every profile job. Roles that need the list include this file by name:
+#
+#   - ansible.builtin.include_role:
+#       name: wasevo.websphere.model
+#       tasks_from: cluster_members.yml
+#
+# It expects tasks/naming.yml to have run first, for was_cluster_name and
+# was_node_name.
+
+- name: How many members this node carries
+  ansible.builtin.set_fact:
+    _member_count: "{{ was_cluster_members_per_node | default(1) | int }}"
+    _member_first: "{{ was_cluster_member_index | default(1) | int }}"
+  tags: [model, naming, members, always]
+
+- name: The member count must be a sane positive number
+  ansible.builtin.assert:
+    that:
+      - _member_count | int >= 1
+      - _member_count | int <= model_max_members_per_node | int
+    fail_msg: >-
+      was_cluster_members_per_node is {{ _member_count }}. One member per node
+      is the minimum - a node with none is a node agent and nothing else, which
+      is what leaving the cluster job unrun gives you. The upper bound is
+      {{ model_max_members_per_node }} and exists to catch a survey answer
+      typed into the wrong field: every member is a full JVM with its own heap,
+      and a node does not quietly hold thirty of them.
+  tags: [model, naming, members, validate]
+
+# One iteration per index, re-rendering the pattern each time. loop_var is
+# was_cluster_member_index on purpose: that is the variable the pattern reads,
+# so the pattern needs no vertical-aware variant.
+- name: Compose one member name per index
+  ansible.builtin.set_fact:
+    _member_names: "{{ (_member_names | default([])) + [was_cluster_member_name_pattern | trim] }}"
+  loop: "{{ range(_member_first | int, (_member_first | int) + (_member_count | int)) | list }}"
+  loop_control:
+    loop_var: was_cluster_member_index
+    label: "index {{ was_cluster_member_index }}"
+  tags: [model, naming, members, always]
+
+# naming.yml published was_cluster_member_name as "whatever was defined, else
+# the pattern at the host's own index". Comparing it with the first derived
+# name is therefore the test for "somebody imposed this name": if the two
+# agree, nobody did, or what they imposed is what the pattern produces anyway
+# and the distinction stops mattering.
+- name: Was a single member name imposed by hand
+  ansible.builtin.set_fact:
+    _member_name_imposed: >-
+      {{ (was_cluster_member_name | default('') | trim)
+         not in ['', (_member_names | first)] }}
+  tags: [model, naming, members, always]
+
+- name: A name imposed for one member cannot name several
+  ansible.builtin.fail:
+    msg: >-
+      was_cluster_member_name is "{{ was_cluster_member_name }}" and
+      was_cluster_members_per_node is {{ _member_count }}. One name cannot name
+      {{ _member_count }} JVMs, and appending an index to a name somebody chose
+      by hand would invent a convention they did not ask for. Two ways out:
+      declare was_cluster_member_names as a list of {{ _member_count }} names
+      for this node, or leave was_cluster_member_name unset and let the pattern
+      number them {{ _member_names | join(', ') }}.
+  when:
+    - _member_count | int > 1
+    - _member_name_imposed | bool
+    - (was_cluster_member_names | default([])) | length == 0
+  tags: [model, naming, members, validate]
+
+# Precedence, strongest first: an explicit list for this node, then a single
+# imposed name, then the derived names. The list is authoritative for the node
+# that declares it - including for how many members that node carries, because
+# a list of three names and a count of two is a contradiction and the names
+# are the more specific statement.
+- name: Publish the member names this node carries
+  ansible.builtin.set_fact:
+    was_cluster_members: >-
+      {{ (was_cluster_member_names | default([]) | map('trim') | list)
+         if (was_cluster_member_names | default([])) | length > 0
+         else ([was_cluster_member_name | trim]
+               if (_member_count | int == 1 and _member_name_imposed | bool)
+               else _member_names) }}
+  tags: [model, naming, members, always]
+
+- name: Every member name must be non-empty, whitespace-free and distinct
+  ansible.builtin.assert:
+    that:
+      - was_cluster_members | length > 0
+      - was_cluster_members | select('match', '^\s*$') | list | length == 0
+      - was_cluster_members | select('search', '\s') | list | length == 0
+      - was_cluster_members | unique | length == was_cluster_members | length
+    fail_msg: >-
+      The member names for {{ inventory_hostname }} are
+      {{ was_cluster_members }}. A WAS server name cannot be empty, cannot
+      contain whitespace, and two servers on one node cannot share a name:
+      wsadmin accepts the second one at creation and then every lookup by name
+      finds the first. Check was_cluster_member_names for this host.
+  tags: [model, naming, members, validate]
+
+- name: Report the members this node will carry
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} on node {{ was_node_name }}:
+      {{ was_cluster_members | length }} member(s) of {{ was_cluster_name }} --
+      {{ was_cluster_members | join(', ') }}
+      ({{ 'names declared in the inventory'
+          if (was_cluster_member_names | default([])) | length > 0
+          else ('name imposed for the single member' if _member_name_imposed | bool
+                else 'names derived from the pattern') }})
+  tags: [model, naming, members]

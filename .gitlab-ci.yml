@@ -67,6 +67,10 @@ syntax:
     - ansible-playbook --syntax-check $COLLECTION/playbooks/pilot_render_matrix.yml
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/forge_preflight.yml
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_config.yml
+    # Each step of the traditional plane is its own playbook so it can be
+    # replayed on its own, so each one is syntax-checked on its own too.
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster.yml
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster_members.yml
 
 # The environment is a launch input, so the loop passes it as one - exactly as
 # the AWX survey does. There is no list of environment codes to iterate: what
@@ -302,6 +306,103 @@ sim:profiles:
     paths: [nd.log, standalone.log, refused.log]
     expire_in: 1 week
 
+# The cluster members, which are the application servers.
+#
+# sim:configure already builds one member per node through traditional_config.yml,
+# which is a HORIZONTAL cluster. This job is the vertical axis and the replay:
+# two members per node over two nodes is four JVMs, which is the shape that
+# catches everything specific about members - the -firstMember rule that must
+# fire exactly once per cluster, and the generated ports that must differ for
+# two JVMs on one node.
+#
+# It also runs the playbook ON ITS OWN rather than through traditional_config.yml,
+# because being separately launchable is the point of splitting it out: one
+# wsadmin session to fix the members after a change, not the whole chain.
+sim:members:
+  extends: .k3s
+  stage: simulate
+  needs: [sim:configure]
+  script:
+    - |
+      echo "=============== vertical x horizontal: dry run ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
+        -e was_cluster_members_per_node=2 --check --diff | tee members-check.log
+    - |
+      echo "=============== apply ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
+        -e was_cluster_members_per_node=2 | tee members1.log
+    - |
+      echo "=============== replay: must change nothing ==============="
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
+        -e was_cluster_members_per_node=2 | tee members2.log
+      set -e
+      bad=$(grep -E "^was-(dmgr|node)-[0-9]+ +:" members2.log | grep -v "changed=0" || true)
+      if [ -n "$bad" ]; then
+        echo "IDEMPOTENCY FAILURE - the second run changed something:"
+        echo "$bad"
+        exit 1
+      fi
+      echo "second run reported changed=0 on every host"
+    - |
+      set -e
+      echo "=============== the shape must be what was asked for ==============="
+      # Four members over two nodes, and the role saying so in those words:
+      # the count alone would pass with four members on one node, which is a
+      # different cluster.
+      grep -q "4 member(s) over 2 node(s)" members1.log \
+        || { echo "the run did not build 4 members over 2 nodes"; exit 1; }
+      grep -q "vertical and horizontal" members1.log \
+        || { echo "the role did not recognise the shape it built"; exit 1; }
+      echo "4 JVMs, 2 per node, on 2 nodes"
+    - |
+      set -e
+      echo "=============== two JVMs on one node cannot share a port ==============="
+      # Asserted in the fake cell, which is where the serverindex lives. The
+      # generated ports of the two members of a node must differ; if they did
+      # not, the second server would fail to start hours later with an
+      # address-already-in-use error.
+      kubectl -n $NS_DMGR exec was-dmgr-01 -- cat /opt/exploit/was-sim-state.json \
+        | python3 ci/assert-member-ports.py
+    - |
+      set -e
+      echo "=============== a count above the bound must be refused ==============="
+      set +e
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
+        -e was_cluster_members_per_node=99 --check > refused-count.log 2>&1
+      rc=$?
+      set -e
+      [ "$rc" -ne 0 ] || { echo "99 members per node was accepted"; exit 1; }
+      grep -q "upper bound" refused-count.log \
+        || { echo "the refusal did not say there is a bound"; exit 1; }
+      echo "refused, and the message says why there is a bound"
+    - |
+      set -e
+      echo "=============== one imposed name cannot name several JVMs ==============="
+      # The ambiguity that must not be guessed at: a name somebody chose by
+      # hand, and a count that needs more than one name. Appending an index to
+      # it would invent a convention they did not ask for.
+      set +e
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
+        -e was_cluster_members_per_node=2 -e was_cluster_member_name=OneServerOnly \
+        --check > refused-name.log 2>&1
+      rc=$?
+      set -e
+      [ "$rc" -ne 0 ] || { echo "one name was accepted for two members"; exit 1; }
+      grep -q "cannot name" refused-name.log \
+        || { echo "the refusal did not name the conflict"; exit 1; }
+      grep -q "was_cluster_member_names" refused-name.log \
+        || { echo "the refusal did not say how to declare several names"; exit 1; }
+      echo "refused, and the message gives both ways out"
+  artifacts:
+    when: always
+    paths:
+      - members-check.log
+      - members1.log
+      - members2.log
+      - refused-count.log
+      - refused-name.log
+    expire_in: 1 week
+
 sim:isolation:
   extends: .k3s
   stage: simulate
@@ -327,7 +428,7 @@ sim:isolation:
 sim:teardown:
   extends: .k3s
   stage: teardown
-  needs: [sim:configure, sim:isolation]
+  needs: [sim:configure, sim:members, sim:isolation]
   when: always
   script:
     # Pods only. The namespaces, the ServiceAccount and the NetworkPolicies are

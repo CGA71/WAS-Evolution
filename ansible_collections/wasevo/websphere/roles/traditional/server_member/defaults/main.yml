@@ -1,0 +1,65 @@
+---
+# The application servers of a cluster. A cluster member IS an application
+# server: manageprofiles never creates one, so this role is what turns a
+# federated node into a node that runs an application.
+#
+# REPLAYABLE ON ITS OWN. This role resolves the model, stages the Jython
+# driver and checks its own preconditions, so it can be rerun after a change
+# without replaying the install or the profiles - one wsadmin session instead
+# of the whole chain. It trusts no earlier workflow node, and when something
+# it needs is missing it says which job produces it.
+
+# Which inventory group holds the federated nodes. The members are read from
+# the hosts of this group: horizontal is how many hosts it has.
+was_nodeagent_group: nodeagents
+
+# Routing weight for every member this run creates. WAS defaults to 2. A
+# member at 0 receives no new requests, which is how one is drained before
+# removal; set that per host with was_cluster_member_weight.
+server_member_weight: 2
+
+# Let WAS allocate free ports for each member instead of copying the
+# template's. True is what makes a VERTICAL cluster work: two JVMs on one node
+# otherwise claim the same WC_defaulthost, SOAP and ORB ports, and the clash
+# only surfaces when the second one is started.
+#
+# Pin ports instead with was_cluster_member_ports per host, keyed by member
+# name then by endpoint name as serverindex.xml spells it:
+#
+#   was_cluster_member_ports:
+#     ClusterEXT01_EXTNode01_02:
+#       WC_defaulthost: 9082
+#
+# Pinned endpoints are the only ones read back and compared, so a member that
+# pins nothing costs no extra reads.
+server_member_gen_unique_ports: true
+
+# Server template for the FIRST member of the cluster. The WAS API applies it
+# exactly once per cluster, on the call that creates the first member; every
+# later member is copied from that one. That is a WAS rule, not a decision
+# this role makes.
+server_member_template_name: default
+
+# Use an existing server as the template instead of a named one. Both or
+# neither.
+server_member_template_server_node: ""
+server_member_template_server_name: ""
+
+# Empty means the WAS defaults, DefaultNodeGroup and DefaultCoreGroup. Named
+# here rather than hardcoded because a multi-node-group cell is exactly where
+# a wrong default becomes a member that cannot start.
+server_member_node_group: ""
+server_member_core_group: ""
+
+# present creates what is missing and adjusts weight and pinned ports.
+# absent deletes the members named - which deletes the application servers.
+server_member_state: present
+
+# The members are created, not started. Starting a server is a runtime
+# operation with its own failure modes and its own log to read, and mixing it
+# in here would make a configuration job report a runtime problem. The node
+# agent starts them on request, or at node start.
+
+# No dry-run switch of its own. Simulating is a CHECK RUN - ansible-playbook
+# --check, which AWX offers as "Job type: Check" - and the module honours it
+# inside wsadmin: the read and the plan run, the write does not.

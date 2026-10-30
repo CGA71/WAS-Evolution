@@ -58,8 +58,19 @@
       "choices": ""
     },
     {
+      "question_name": "Application servers per node",
+      "question_description": "How many application server JVMs each federated node carries - this is the VERTICAL axis of the cluster. The horizontal axis is not asked: it is how many hosts the node agent group holds, one member on each. Two here over two nodes is four JVMs. Members beyond the first on a node are given their own ports by WAS (genUniquePorts), because two JVMs on one node cannot share WC_defaulthost, SOAP and ORB; pin them with was_cluster_member_ports in the inventory when a predictable port is needed. The upper bound is 8, and it is a guard against a number typed into the wrong field: every member is a full JVM with its own heap.",
+      "variable": "was_cluster_members_per_node",
+      "type": "integer",
+      "required": false,
+      "min": 1,
+      "max": 8,
+      "default": 1,
+      "choices": ""
+    },
+    {
       "question_name": "Application server name",
-      "question_description": "The cluster member, which is one JVM. Leave blank to derive it as <cluster>_<node>_<index>. A value here names the member on every host in the run, so a per-host name belongs in the inventory instead.",
+      "question_description": "The cluster member, which is one JVM. Leave blank to derive it as <cluster>_<node>_<index>. A value here names the member on every host in the run, so a per-host name belongs in the inventory instead. It names ONE member: filling this in and answering more than one server per node is refused, because appending an index to a name you chose by hand would invent a convention you did not ask for - declare was_cluster_member_names as a list in the inventory for that.",
       "variable": "was_cluster_member_name",
       "type": "text",
       "required": false,

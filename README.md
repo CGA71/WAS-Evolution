@@ -320,8 +320,14 @@ ansible-playbook -i inventories/was $COL/model_validate.yml -e was_environment=R
 # traditional plane, dry run first - always
 ansible-playbook -i inventories/was $COL/traditional_config.yml   -e was_environment=<code> --check --diff
 
+# or one step at a time: each of these is replayable on its own, which is one
+# wsadmin session instead of the whole chain. See section 18.
+ansible-playbook -i inventories/was $COL/traditional_cluster.yml   -e was_environment=<code> --check --diff
+ansible-playbook -i inventories/was $COL/traditional_cluster_members.yml   -e was_environment=<code> -e was_cluster_members_per_node=2
+
 # In AWX none of these flags are typed: the Survey asks for the environment,
-# the channel and the production acknowledgement.
+# the channel, the application servers per node and the production
+# acknowledgement.
 ```
 
 ### Execution Environments
@@ -405,10 +411,18 @@ cluster handler through a `wsadmin.sh` stand-in. WAS ND cannot ship in a CI
 image — licensing, entitlement, several gigabytes — but almost nothing that goes
 wrong in the traditional plane is WAS behaviour. It is the plumbing: argument
 validation, the payload file, the launch, dispatch, read/plan/write, the JSON
-answer, `changed` and `diff`. All of that runs for real. Nine checks, including
+answer, `changed` and `diff`. All of that runs for real. Twenty-six checks, including
 two guards that fail the build if credentials ever reappear on a wsadmin command
 line or the properties file is not `0600`, and one that asserts node
 synchronisation fires on real changes only.
+
+Most of those checks are the whole life of a cluster member: created, replayed,
+drained to weight 0, its port pinned and the pinned port replayed, deleted,
+and refused when the cluster does not exist or when two JVMs of one node would
+claim the same port. The member handler is the first one to carry a **list**
+rather than a single object, and it is where a shallow dict copy in the planner
+silently skipped the write while the diff claimed the change had happened —
+caught here, by a replay that had to report no change and did not.
 
 **The same chain against real hosts on k3s.** Two namespaces:
 
@@ -432,6 +446,15 @@ again. **The third run must report `changed=0` on every host.** That replay is
 the only real proof of idempotency, and it is a claim the legacy approach could
 not make — its marker files reported "nothing to do" whether or not the cell
 still matched.
+
+`sim:members` is the vertical axis and the second replay. `sim:configure` builds
+one member per node, which is a horizontal cluster; this job runs
+`traditional_cluster_members.yml` **on its own** — being separately launchable
+is the point of splitting it out — with two members per node over two nodes,
+which is four JVMs. It then asserts the shape in the role's own words, that no
+two servers of a node hold the same port, that a count above the bound is
+refused, and that one imposed member name against a count of two is refused
+with both ways out named.
 
 `sim:isolation` asserts the boundary rather than describing it: the CI identity
 must **not** be able to exec into `kube-system`, `ci` or `default`, and both
@@ -604,6 +627,14 @@ repository what it contains.
 | 2 | `lab_apply_fixpacks.yml` | pass 1 — brings Installation Manager to the level WAS needs |
 | 3 | `lab_install_was.yml` | WAS for Developers and the SDK, in one `imcl` call |
 | 4 | `lab_apply_fixpacks.yml` | pass 2 — patches what node 3 just installed |
+| 5 | `lab_create_profiles.yml` | the profiles — deployment manager, then the federated node |
+| 6 | `traditional_cluster.yml` | the cluster |
+| 7 | `traditional_cluster_members.yml` | the application servers in it, vertical or horizontal |
+
+Nodes 6 and 7 are two job templates rather than one because each of them is
+replayable on its own — see section 18. On the lab they are launched with
+`-e config_dmgr_hosts=dmgr`, since this inventory declares no environment
+group.
 
 One job template, two workflow nodes for the fix packs. That only works because
 the role **discovers** what is installed rather than being handed a list: on
@@ -837,7 +868,135 @@ refused with a message naming the two accepted values, the password masked and
 never in the log — and, last, that `/app/profiles` and `/app/data/profiles` are
 empty on every simulated host afterwards.
 
-## 18. AWX
+## 18. The cluster and its application servers
+
+**A cluster member is an application server.** The same object: one JVM, created
+on a federated node and owned by the cell. `manageprofiles` never creates one —
+the managed template produces a node agent and nothing else — so the member is
+what turns a federated node into a node that runs an application, and it is a
+separate job from the profile that carries it.
+
+### Vertical, horizontal, or both — the member list decides
+
+| Shape | What it is | How it is declared |
+|---|---|---|
+| **horizontal** | one member on each of several nodes | how many hosts the node agent group holds |
+| **vertical** | several members on one node | `was_cluster_members_per_node` on those hosts |
+| **both** | the product of the two, which is what an estate looks like | both of the above |
+
+**There is no cluster-type variable anywhere**, and that is deliberate. A
+cluster member is one JVM on one node; the shape is a consequence of the list
+of members, never a switch that selects a mode. Two members per node over two
+nodes is four JVMs, declared by one answer and one inventory group, and the
+role reports the shape it built — `4 member(s) over 2 node(s) — vertical and
+horizontal` — so an operator sees that the number they answered produced the
+cluster they meant.
+
+The names come from the same single pattern as every other WAS object, in
+[`roles/model/vars/naming.yml`](ansible_collections/wasevo/websphere/roles/model/vars/naming.yml),
+re-rendered once per index:
+[`tasks/cluster_members.yml`](ansible_collections/wasevo/websphere/roles/model/tasks/cluster_members.yml)
+loops over the indices with `was_cluster_member_index` as the loop variable —
+the variable the pattern already reads — so nothing composes a second,
+vertical-aware form of the name.
+
+| Input | Scope | Wins over |
+|---|---|---|
+| `was_cluster_members_per_node` | the whole run, from the survey | — |
+| `was_cluster_member_names` | one node, a list, in the inventory | the count, including how many |
+| `was_cluster_member_name` | one member, in the inventory or the survey | the pattern |
+
+**One imposed name cannot name several JVMs.** Fill in the application server
+name, answer two servers per node, and the run is refused — because appending
+an index to a name somebody chose by hand invents a convention they did not
+ask for. The refusal names both ways out: declare `was_cluster_member_names`
+as a list, or leave the name unset and let the pattern number them. It is
+decided by comparing the published name with what the pattern would produce,
+so a name that happens to match the pattern — the lab writes its member name
+out in full — raises no conflict.
+
+### Two JVMs on one node cannot share a port
+
+Each member is a JVM with its own `WC_defaulthost`, SOAP and ORB endpoints. On
+a vertical cluster the second member would copy the first one's ports, and WAS
+**saves that configuration without complaint**: the second server then fails to
+start, possibly hours later, with an error about an address already in use, and
+the configuration that produced it looks correct in the console.
+
+So the module passes `genUniquePorts=true` and lets WAS allocate free ports.
+Pin them instead with `was_cluster_member_ports` per host, keyed by member name
+then by endpoint name as `serverindex.xml` spells it, when the IHS plugin or a
+firewall rule needs a predictable port. Only the endpoints actually pinned are
+read back and compared, so a member that pins nothing costs no extra reads —
+and a pinned port that drifts is reported like any other difference.
+
+`ci/assert-member-ports.py` asserts the property rather than describing it: it
+reads the fake cell the simulation keeps and fails the build if any two servers
+of one node hold the same port.
+
+### One wsadmin session for the whole cluster
+
+A wsadmin JVM start costs 30 to 60 seconds, so `was_cluster_member` takes the
+**whole member list** in one call instead of one member per call. Eight members
+built one at a time is eight starts and six minutes of JVM warm-up for a few
+seconds of work.
+
+- `-firstMember` is handled by the module, not by the caller. The WAS API
+  requires it exactly once per cluster, on the call that fixes the server
+  template every later member is copied from, and the handler knows from what
+  it read whether the cluster is still empty.
+- `weight` is read and reconciled, so a member can be drained to 0 — no new
+  requests — without being deleted.
+- Members the cell holds and the call does not name are **left alone**.
+  Removal is `state: absent` on an explicit list, never a side effect of not
+  naming something: a run limited to one node must not delete the members of
+  every other node.
+- Asking for members in a cell that has no such cluster is a **refusal with a
+  sentence**, not a stack trace. A handler raises `ValueError` to refuse a
+  request it understood; anything else keeps its traceback, because that is a
+  defect rather than an answer.
+
+### Each step is replayable on its own
+
+**One role, one playbook, one job template.** Correcting one thing after a
+change has to cost one wsadmin session, not the whole chain — otherwise the fix
+is a rebuild and nobody does it.
+
+| Playbook | Role | Replays |
+|---|---|---|
+| `traditional_cluster.yml` | `was_cluster` | the cluster object |
+| `traditional_cluster_members.yml` | `traditional/server_member` | the application servers in it |
+| `traditional_config.yml` | — | imports both, in order, and defines neither |
+
+So each playbook **trusts no earlier workflow node**: it resolves the model
+itself, stages the Jython driver itself, and checks its own preconditions.
+A missing deployment manager profile is reported as "the profile job has to
+run first", not as a wsadmin error three layers down — the same reason install
+job 3 checks for `imcl` itself instead of trusting job 1.
+
+`traditional_config.yml` carries the inline cluster task no longer. It imports
+the two playbooks, which is what keeps one definition of each step: the legacy
+`launch_*.sh` scripts each held their own copy of the same cell build, and the
+copies disagreed.
+
+**Why the member playbook has two plays.** A member name is built from the
+**node** name, and the node is the only host that knows its own —
+`was_node_name` can be a `group_vars` template that resolves only once the
+model has published `was_env_upper` on that host. So the nodes publish their
+member list first, gathering no facts and touching nothing, and the deployment
+manager then reads `hostvars[<node>].was_cluster_members` and creates them,
+which is where the single wsadmin session lives. A run limited to the
+deployment manager alone cannot see those names, and the role says so rather
+than building an empty cluster.
+
+The host pattern of each playbook is overridable. It defaults to the
+intersection of an environment group and the deployment manager group, so the
+environment stays a launch input; the lab has no environment group on purpose —
+the same VM is built as any environment — and passes
+`-e config_dmgr_hosts=dmgr`, exactly as `lab_create_profiles.yml` already does
+for the profile roles.
+
+## 19. AWX
 
 AWX runs inside k3s on the Ubuntu host, deployed by the AWX Operator, pinned.
 See [`ci/awx/README.md`](ci/awx/README.md).
@@ -862,7 +1021,7 @@ puts `ansible-playbook` on `PATH`.
 The admin password is generated by the operator into a Secret. Nothing in this
 repository carries it.
 
-## 19. Sources
+## 20. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
 - [Java SE 8 in WebSphere Application Server traditional V9](https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html)
@@ -1164,8 +1323,21 @@ ansible-playbook playbooks/model_validate.yml
 # rendre le datasource pilote dans les trois couples de la trajectoire
 ansible-playbook playbooks/pilot_render_matrix.yml
 
-# plan traditionnel, a blanc d'abord
+# valider un environnement - l'environnement est une entree de lancement,
+# pas un repertoire
+ansible-playbook -i inventories/was $COL/model_validate.yml -e was_environment=RA
+
+# plan traditionnel, a blanc d'abord - toujours
 ansible-playbook -i inventories/was $COL/traditional_config.yml -e was_environment=<code> --check --diff
+
+# ou une etape a la fois : chacune est rejouable seule, soit une session
+# wsadmin au lieu de toute la chaine. Voir la section 18.
+ansible-playbook -i inventories/was $COL/traditional_cluster.yml -e was_environment=<code> --check --diff
+ansible-playbook -i inventories/was $COL/traditional_cluster_members.yml -e was_environment=<code> -e was_cluster_members_per_node=2
+
+# Dans AWX aucune de ces options ne se tape : le formulaire demande
+# l'environnement, le canal, le nombre de serveurs d'application par noeud et
+# l'acquittement production.
 ```
 
 ### Execution Environments
@@ -1250,11 +1422,20 @@ datasource pour les trois phases.
 droits, plusieurs gigaoctets — mais presque rien de ce qui casse dans le plan
 traditionnel n'est du comportement WAS. C'est la plomberie : validation des
 arguments, fichier de payload, lancement, routage, read/plan/write, réponse
-JSON, `changed` et `diff`. Tout cela tourne réellement. Neuf contrôles, dont
-deux garde-fous qui cassent le build si des identifiants réapparaissent sur une
-ligne de commande wsadmin ou si le fichier de propriétés n'est pas en `0600`,
-et un qui vérifie que la synchronisation des nœuds ne part que sur un vrai
-changement.
+JSON, `changed` et `diff`. Tout cela tourne réellement. Vingt-six contrôles,
+dont deux garde-fous qui cassent le build si des identifiants réapparaissent
+sur une ligne de commande wsadmin ou si le fichier de propriétés n'est pas en
+`0600`, et un qui vérifie que la synchronisation des nœuds ne part que sur un
+vrai changement.
+
+La plupart de ces contrôles sont la vie entière d'un membre de cluster : créé,
+rejoué, vidé à poids 0, son port épinglé puis le port épinglé rejoué, supprimé,
+et refusé quand le cluster n'existe pas ou quand deux JVM d'un même nœud
+réclameraient le même port. Le handler des membres est le premier à porter une
+**liste** et non un objet unique, et c'est là qu'une copie de dictionnaire de
+surface dans le planificateur sautait silencieusement l'écriture pendant que le
+`diff` annonçait le changement comme fait — pris ici, par un rejeu qui devait
+annoncer aucun changement et ne le faisait pas.
 
 **La même chaîne contre de vrais hôtes sur k3s.** Deux namespaces :
 
@@ -1279,6 +1460,15 @@ application, puis à nouveau. **Le troisième passage doit reporter `changed=0`
 sur chaque hôte.** Ce rejeu est la seule preuve réelle d'idempotence, et c'est
 une affirmation que l'approche historique ne pouvait pas tenir : ses fichiers
 témoins annonçaient « rien à faire » que la cellule corresponde encore ou non.
+
+`sim:members` est l'axe vertical et le second rejeu. `sim:configure` construit
+un membre par nœud, soit un cluster horizontal ; ce job lance
+`traditional_cluster_members.yml` **seul** — être lançable séparément est tout
+l'intérêt de l'avoir découpé — avec deux membres par nœud sur deux nœuds, soit
+quatre JVM. Il vérifie ensuite la forme dans les mots du rôle lui-même, qu'aucun
+couple de serveurs d'un même nœud ne détient le même port, qu'un compteur
+au-dessus de la borne est refusé, et qu'un nom de membre imposé contre un
+compteur de deux est refusé en nommant les deux sorties.
 
 `sim:isolation` vérifie la frontière plutôt que de la décrire : l'identité CI ne
 doit **pas** pouvoir faire d'exec dans `kube-system`, `ci` ou `default`, et les
@@ -1455,6 +1645,14 @@ demande donc au dépôt ce qu'il contient.
 | 2 | `lab_apply_fixpacks.yml` | passe 1 — amène Installation Manager au niveau que WAS exige |
 | 3 | `lab_install_was.yml` | WAS for Developers et le SDK, dans un seul appel `imcl` |
 | 4 | `lab_apply_fixpacks.yml` | passe 2 — corrige ce que le nœud 3 vient d'installer |
+| 5 | `lab_create_profiles.yml` | les profils — gestionnaire de déploiement, puis le nœud fédéré |
+| 6 | `traditional_cluster.yml` | le cluster |
+| 7 | `traditional_cluster_members.yml` | les serveurs d'application qu'il contient, vertical ou horizontal |
+
+Les nœuds 6 et 7 sont deux job templates et non un seul parce que chacun est
+rejouable seul — voir la section 18. Sur le lab, ils se lancent avec
+`-e config_dmgr_hosts=dmgr`, cet inventaire ne déclarant aucun groupe
+d'environnement.
 
 Un seul job template, deux nœuds de workflow pour les fix packs. Cela ne
 fonctionne que parce que le rôle **découvre** ce qui est installé au lieu qu'on
@@ -1696,7 +1894,140 @@ message nommant les deux valeurs acceptées, le mot de passe masqué et jamais
 dans le log — et, pour finir, que `/app/profiles` et `/app/data/profiles` sont
 vides sur chaque hôte simulé après coup.
 
-## 18. AWX
+## 18. Le cluster et ses serveurs d'application
+
+**Un membre de cluster est un serveur d'application.** Le même objet : un JVM,
+créé sur un nœud fédéré et possédé par la cellule. `manageprofiles` n'en crée
+jamais — le template managed produit un agent de nœud et rien d'autre — donc le
+membre est ce qui transforme un nœud fédéré en nœud qui fait tourner une
+application, et c'est un job distinct de celui du profil qui le porte.
+
+### Vertical, horizontal, ou les deux : c'est la liste des membres qui décide
+
+| Forme | Ce que c'est | Comment on la déclare |
+|---|---|---|
+| **horizontal** | un membre sur chacun de plusieurs nœuds | le nombre d'hôtes du groupe nodeagents |
+| **vertical** | plusieurs membres sur un même nœud | `was_cluster_members_per_node` sur ces hôtes |
+| **les deux** | le produit des deux, ce à quoi ressemble un parc réel | les deux lignes ci-dessus |
+
+**Il n'existe nulle part de variable de « type de cluster »**, et c'est
+délibéré. Un membre est un JVM sur un nœud ; la forme est une conséquence de la
+liste des membres, jamais un commutateur qui sélectionne un mode. Deux membres
+par nœud sur deux nœuds, ce sont quatre JVM, déclarés par une réponse et un
+groupe d'inventaire — et le rôle annonce la forme qu'il a construite,
+`4 member(s) over 2 node(s) — vertical and horizontal`, pour qu'un opérateur
+voie que le nombre répondu a produit le cluster qu'il voulait.
+
+Les noms viennent du même motif unique que tout autre objet WAS, dans
+[`roles/model/vars/naming.yml`](ansible_collections/wasevo/websphere/roles/model/vars/naming.yml),
+rendu une fois par index :
+[`tasks/cluster_members.yml`](ansible_collections/wasevo/websphere/roles/model/tasks/cluster_members.yml)
+boucle sur les index avec `was_cluster_member_index` comme variable de boucle —
+la variable que le motif lit déjà — de sorte que rien ne compose une seconde
+forme du nom, spécifique au vertical.
+
+| Entrée | Portée | Surclasse |
+|---|---|---|
+| `was_cluster_members_per_node` | tout le run, depuis le formulaire | — |
+| `was_cluster_member_names` | un nœud, une liste, dans l'inventaire | le compteur, y compris le nombre |
+| `was_cluster_member_name` | un membre, dans l'inventaire ou le formulaire | le motif |
+
+**Un nom imposé ne peut pas nommer plusieurs JVM.** Remplir le nom du serveur
+d'application, répondre deux serveurs par nœud, et le run est refusé — parce
+qu'ajouter un index à un nom choisi à la main inventerait une convention que
+personne n'a demandée. Le refus nomme les deux sorties : déclarer
+`was_cluster_member_names` comme liste, ou laisser le nom vide et laisser le
+motif les numéroter. La décision se prend en comparant le nom publié à ce que
+le motif produirait, donc un nom qui coïncide avec le motif — le lab écrit le
+sien en entier — ne crée aucun conflit.
+
+### Deux JVM sur un même nœud ne peuvent pas partager un port
+
+Chaque membre est un JVM avec ses propres points d'écoute `WC_defaulthost`,
+SOAP et ORB. Sur un cluster vertical, le second membre recopierait les ports du
+premier, et WAS **enregistre cette configuration sans broncher** : le second
+serveur échoue alors au démarrage, peut-être des heures plus tard, sur une
+erreur d'adresse déjà utilisée — et la configuration qui a produit ça a l'air
+correcte dans la console.
+
+Le module passe donc `genUniquePorts=true` et laisse WAS allouer des ports
+libres. On les épingle à la place avec `was_cluster_member_ports` par hôte,
+indexé par nom de membre puis par nom de point d'écoute tel que
+`serverindex.xml` l'orthographie, quand le plugin IHS ou une règle de pare-feu
+exige un port prévisible. Seuls les points d'écoute réellement épinglés sont
+relus et comparés, donc un membre qui n'en épingle aucun ne coûte aucune
+lecture supplémentaire — et un port épinglé qui dérive est signalé comme
+n'importe quel autre écart.
+
+`ci/assert-member-ports.py` vérifie la propriété au lieu de la décrire : il lit
+la fausse cellule que garde la simulation et casse le build si deux serveurs
+d'un même nœud détiennent le même port.
+
+### Une seule session wsadmin pour tout le cluster
+
+Un démarrage de JVM wsadmin coûte 30 à 60 secondes, donc `was_cluster_member`
+prend **toute la liste des membres** en un appel, et non un membre par appel.
+Huit membres créés un par un, ce sont huit démarrages et six minutes de chauffe
+de JVM pour quelques secondes de travail.
+
+- `-firstMember` est géré par le module, pas par l'appelant. L'API WAS l'exige
+  exactement une fois par cluster, sur l'appel qui fixe le template de serveur
+  dont tous les membres suivants sont copiés, et le handler sait d'après ce
+  qu'il a lu si le cluster est encore vide.
+- Le `weight` est lu et réconcilié, donc un membre peut être vidé à 0 — plus
+  aucune nouvelle requête — sans être supprimé.
+- Les membres que la cellule détient et que l'appel ne nomme pas sont **laissés
+  en place**. La suppression est un `state: absent` sur une liste explicite,
+  jamais un effet de bord du fait de ne pas nommer quelque chose : un run limité
+  à un nœud ne doit pas supprimer les membres de tous les autres.
+- Demander des membres dans une cellule qui n'a pas ce cluster est un **refus
+  en une phrase**, pas une pile d'appels. Un handler lève `ValueError` pour
+  refuser une demande qu'il a comprise ; tout le reste garde son traceback,
+  parce que c'est un défaut et non une réponse.
+
+### Chaque étape est rejouable seule
+
+**Un rôle, un playbook, un job template.** Corriger une seule chose après une
+mise à jour doit coûter une session wsadmin, pas toute la chaîne — sinon le
+correctif est une reconstruction, et personne ne le fait.
+
+| Playbook | Rôle | Rejoue |
+|---|---|---|
+| `traditional_cluster.yml` | `was_cluster` | l'objet cluster |
+| `traditional_cluster_members.yml` | `traditional/server_member` | les serveurs d'application qu'il contient |
+| `traditional_config.yml` | — | importe les deux, dans l'ordre, et n'en définit aucun |
+
+Chaque playbook **ne fait donc confiance à aucun nœud de workflow antérieur** :
+il résout le modèle lui-même, dépose le driver Jython lui-même, et vérifie ses
+propres préconditions. Un profil de gestionnaire de déploiement absent est
+signalé comme « le job de profil doit tourner d'abord », pas comme une erreur
+wsadmin trois couches plus bas — la même raison qui fait que le job 3 de
+l'install vérifie `imcl` lui-même au lieu de croire le job 1.
+
+`traditional_config.yml` ne porte plus la tâche de cluster en ligne. Il importe
+les deux playbooks, ce qui maintient une définition unique de chaque étape : les
+anciens `launch_*.sh` portaient chacun leur copie de la même construction de
+cellule, et les copies divergeaient.
+
+**Pourquoi le playbook des membres a deux plays.** Un nom de membre est
+construit depuis le nom du **nœud**, et le nœud est le seul hôte qui connaisse
+le sien — `was_node_name` peut être un template de `group_vars` qui ne se
+résout qu'une fois `was_env_upper` publié par le modèle sur cet hôte. Les nœuds
+publient donc d'abord leur liste de membres, sans collecter de facts et sans
+rien toucher, puis le gestionnaire de déploiement lit
+`hostvars[<nœud>].was_cluster_members` et les crée, là où vit la session
+wsadmin unique. Un run limité au seul gestionnaire de déploiement ne peut pas
+voir ces noms, et le rôle le dit au lieu de construire un cluster vide.
+
+Le motif d'hôtes de chaque playbook est surchargeable. Par défaut, c'est
+l'intersection d'un groupe d'environnement et du groupe du gestionnaire de
+déploiement, pour que l'environnement reste une entrée de lancement ; le lab
+n'a volontairement aucun groupe d'environnement — la même VM est construite
+comme n'importe quel environnement — et passe `-e config_dmgr_hosts=dmgr`,
+exactement comme le fait déjà `lab_create_profiles.yml` pour les rôles de
+profil.
+
+## 19. AWX
 
 AWX tourne dans k3s sur l'hôte Ubuntu, déployé par l'AWX Operator, en version
 figée. Voir [`ci/awx/README.md`](ci/awx/README.md).
@@ -1721,7 +2052,7 @@ qui met `ansible-playbook` dans le `PATH`.
 Le mot de passe admin est généré par l'opérateur dans un Secret. Rien dans ce
 dépôt ne le porte.
 
-## 19. Sources
+## 20. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
 - [Java SE 8 in WebSphere Application Server traditional V9](https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html)

@@ -131,30 +131,40 @@ def main():
 
     handler = load_handler(resource)
 
-    before = handler.read(admin, params)
-    after = before
-    changed = False
-
-    if state == "present":
-        changed, after = handler.plan_present(admin, params, before)
-    elif state == "absent":
-        changed, after = handler.plan_absent(admin, params, before)
-    else:
+    if state not in ("present", "absent"):
         emit({"failed": True, "msg": "unknown state: %s" % state})
         return 1
 
-    if changed and not check_mode:
-        if state == "present":
-            handler.write_present(admin, params, before)
-        else:
-            handler.write_absent(admin, params, before)
+    # A handler raises ValueError to REFUSE a request it understood perfectly
+    # well - a cluster member asked for in a cell that has no such cluster.
+    # That is an answer, not a crash, so it is reported as the message alone;
+    # the module prints it and the operator reads a sentence. Anything else is
+    # a defect and keeps its traceback, which is what the outer handler does.
+    try:
+        before = handler.read(admin, params)
+        after = before
+        changed = False
 
-        if payload.get("save_config", True):
-            AdminConfig.save()
-        if payload.get("sync_nodes", True) and hasattr(handler, "sync"):
-            handler.sync(admin, params)
-        # Re-read so `after` describes reality rather than our intent.
-        after = handler.read(admin, params)
+        if state == "present":
+            changed, after = handler.plan_present(admin, params, before)
+        else:
+            changed, after = handler.plan_absent(admin, params, before)
+
+        if changed and not check_mode:
+            if state == "present":
+                handler.write_present(admin, params, before)
+            else:
+                handler.write_absent(admin, params, before)
+
+            if payload.get("save_config", True):
+                AdminConfig.save()
+            if payload.get("sync_nodes", True) and hasattr(handler, "sync"):
+                handler.sync(admin, params)
+            # Re-read so `after` describes reality rather than our intent.
+            after = handler.read(admin, params)
+    except ValueError as exc:
+        emit({"failed": True, "msg": "%s refused: %s" % (resource, exc)})
+        return 1
 
     emit({
         "changed": changed,
