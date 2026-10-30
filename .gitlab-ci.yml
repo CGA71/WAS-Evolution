@@ -90,14 +90,17 @@ model-matrix:
       ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml         -e was_environment=ENVCODE
     - |
       echo "=============== a prod tier must be refused unacknowledged ==============="
-      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml            -e was_environment=ENVCODE -e was_environment_tier=prod; then
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+           -e was_environment=ENVCODE -e was_environment_tier=prod; then
         echo "FAIL: production was accepted without acknowledgement"; exit 1
       fi
       echo "refused as expected"
     - |
       set -e
       echo "=============== and passes once acknowledged ==============="
-      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml         -e was_environment=ENVCODE -e was_environment_tier=prod         -e model_allow_production=true
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+        -e was_environment=ENVCODE -e was_environment_tier=prod \
+        -e model_allow_production=true
     - |
       echo "=============== an unusable code must be refused ==============="
       # Not "unknown" - any code a site uses is accepted. This one is refused
@@ -250,7 +253,10 @@ sim:profiles:
   script:
     - |
       echo "=============== nd: check run ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml         -e was_topology=nd         -e was_admin_user=ci -e was_admin_password=check-only         --check --diff | tee nd.log
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml \
+        -e was_topology=nd \
+        -e was_admin_user=ci -e was_admin_password=check-only \
+        --check --diff | tee nd.log
     - |
       set -e
       echo "=============== nd: what would be sent must be ND ==============="
@@ -272,19 +278,24 @@ sim:profiles:
       echo "both ND response files carry what manageprofiles needs, password masked"
     - |
       echo "=============== standalone: check run ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml         -e was_topology=standalone         -e was_admin_user=ci -e was_admin_password=check-only         --check --diff | tee standalone.log
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml \
+        -e was_topology=standalone \
+        -e was_admin_user=ci -e was_admin_password=check-only \
+        --check --diff | tee standalone.log
     - |
       set -e
       echo "=============== standalone: no cluster, no federation ==============="
       grep -q "no cluster" standalone.log || { echo "the standalone topology did not report that it cannot cluster"; exit 1; }
-      grep -q "there is no deployment manager to create" standalone.log || { echo "profile_dmgr did not stand down on a standalone run"; exit 1; }
+      grep -q "there is no deployment manager to create" standalone.log \
+        || { echo "profile_dmgr did not stand down on a standalone run"; exit 1; }
       grep -q "there is no cell to join" standalone.log || { echo "profile_nodeagent did not stand down on a standalone run"; exit 1; }
       grep -q "profileTemplates/default" standalone.log || { echo "the standalone run did not render the default template"; exit 1; }
       echo "standalone built one cell and refused the ND machinery"
     - |
       echo "=============== an unknown topology must be refused ==============="
       set +e
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml         -e was_topology=whatever --check > refused.log 2>&1
+      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml \
+        -e was_topology=whatever --check > refused.log 2>&1
       rc=$?
       set -e
       [ "$rc" -ne 0 ] || { echo "a topology of 'whatever' was accepted"; exit 1; }
