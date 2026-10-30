@@ -11,21 +11,21 @@
   ansible.builtin.file:
     path: "{{ was_jython_dir }}"
     state: directory
-    owner: "{{ was_admin_user }}"
-    group: "{{ was_admin_group }}"
+    owner: "{{ site_was_user }}"
+    group: "{{ site_was_group }}"
     mode: "0750"
-  become: true
+  become: "{{ config_become | bool }}"
   tags: [stage, always]
 
 - name: Stage the driver and its handlers
   ansible.builtin.copy:
     src: "{{ role_path }}/../../../plugins/jython/"
     dest: "{{ was_jython_dir }}/"
-    owner: "{{ was_admin_user }}"
-    group: "{{ was_admin_group }}"
+    owner: "{{ site_was_user }}"
+    group: "{{ site_was_group }}"
     mode: "0640"
     directory_mode: "0750"
-  become: true
+  become: "{{ config_become | bool }}"
   # The driver is code, not configuration: staging it is not a change to the
   # cell, and it must happen even in check mode or every dry run fails.
   check_mode: false

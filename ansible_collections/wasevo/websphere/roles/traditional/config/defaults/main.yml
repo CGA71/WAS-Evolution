@@ -1,4 +1,28 @@
 ---
+# Where the Jython driver is staged on the target. The modules look for it
+# here, and was_cluster fails with an explicit message if it is absent.
 was_jython_dir: /opt/exploit/scripts/jython-ansible
-was_admin_user: wsadmin
-was_admin_group: wsadmin
+
+# WHO OWNS THE STAGED FILES. site_was_user, not was_admin_user. The two are
+# different things, and this role used to conflate them - the same mistake
+# roles/forge_preflight/defaults/main.yml already records:
+#
+#   site_was_user   the OS account that owns the installation and runs the
+#                   processes. It exists on the machine.
+#   was_admin_user  the WAS administrative console user. It has no OS
+#                   existence at all and comes from a credential.
+#
+# The conflation was not cosmetic. This role defaulted was_admin_user to
+# "wsadmin" while profile_dmgr defaults it to "" and refuses an empty one, so
+# which value a run saw depended on which role had been loaded last - and
+# "wsadmin"/"wsadmin" as a working administrative credential is exactly what
+# README section 12 says is not carried over from the source repository.
+#
+# The ownership now follows the site facts, which every inventory declares.
+
+# Whether to escalate when creating the directory and copying the driver. True
+# on a real target, where the directory is outside the service account's
+# reach. An inventory that says ansible_become: false means it - the CI
+# simulation pods run as root and carry no sudo at all - so the default
+# honours that statement rather than overriding it per task.
+config_become: "{{ ansible_become | default(true) }}"
