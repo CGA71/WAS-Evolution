@@ -1,7 +1,15 @@
 ---
 galaxy_info:
   role_name: traditional_server_member
-  description: "Application server creation as a cluster member."
+  description: >-
+    The application servers that are the members of a cluster, vertical or
+    horizontal. Replayable on its own: it resolves the model, stages the
+    Jython driver and checks its own preconditions.
   license: GPL-3.0-or-later
   min_ansible_version: "2.15"
+
+# Deliberately empty. The roles this one needs - model, traditional.config -
+# are included dynamically from tasks/main.yml rather than declared here, so
+# that the dependency is visible at the point of use and so this role stays
+# runnable on its own without pulling a dependency chain it does not control.
 dependencies: []

@@ -28,7 +28,36 @@ was_node_name: "{{ was_env_upper }}Node01"
 # The application server. In an ND cell an application server that belongs to a
 # cluster is a cluster member, so this one name is both: it is what
 # manageprofiles never creates and what the cluster job creates on this node.
+#
+# This is deliberately the SAME string the role pattern produces
+# (cluster_node_index). Writing it out names the object this inventory creates
+# instead of leaving it implicit - and because it matches the pattern, raising
+# the member count below still works: the model only refuses a count above 1
+# when the single name imposed is one the pattern would NOT have produced, and
+# then it says to declare was_cluster_member_names instead.
 was_cluster_member_name: "{{ was_cluster_name }}_{{ was_node_name }}_01"
+
+# --------------------------------------------------------------------------
+# How many application servers on this node
+# --------------------------------------------------------------------------
+# VERTICAL is this number; HORIZONTAL is how many hosts the nodeagents group
+# holds. The lab has one VM, so one host, so one line in that group: a vertical
+# cluster is the only kind it can grow, and it grows by raising this.
+#
+# One is the lab default because one JVM is what a 6 Gi VM carries comfortably
+# while WAS itself is also running a deployment manager on it. Answer
+# "Application servers per node" in the survey to go higher for a run - the
+# survey is an extra var and outranks this file.
+#
+# Two members on one node means two JVMs claiming ports, so the module passes
+# genUniquePorts=true and WAS allocates the second one its own. Pin them
+# instead with was_cluster_member_ports when the plugin or a firewall needs a
+# predictable port:
+#
+#   was_cluster_member_ports:
+#     "{{ was_cluster_name }}_{{ was_node_name }}_02":
+#       WC_defaulthost: 9082
+was_cluster_members_per_node: 1
 
 # --------------------------------------------------------------------------
 # Ports

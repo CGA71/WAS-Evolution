@@ -13,3 +13,9 @@ model_render_dir: "{{ playbook_dir }}/../rendered"
 # wrong inventory path; the AAP workflow carries an Approval Node for the same
 # purpose at the other end.
 model_allow_production: false
+
+# Upper bound on vertical cluster members per node. Not a WAS limit: a guard
+# against a survey answer typed into the wrong field, because every member is a
+# full JVM with its own heap. Raise it in the inventory if a node really does
+# carry more.
+model_max_members_per_node: 8
