@@ -8,10 +8,29 @@
 # Control side only, when no target is reachable (CI, or a laptop):
 #   ... -e forge_preflight_control_only=true
 
+- name: An environment must be supplied before a host pattern is built from it
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Refuse a run with neither an environment nor an explicit host pattern
+      ansible.builtin.assert:
+        that:
+          - (was_environment | default('') | trim | length > 0)
+            or (forge_preflight_hosts | default('') | trim | length > 0)
+        fail_msg: >-
+          No environment was supplied, so there is no host pattern to check
+          anything against. A preflight that matches no host passes while
+          verifying nothing, which is worse than failing. Pass
+          -e was_environment=<code>, or -e forge_preflight_hosts=<pattern> to
+          check a set of hosts directly.
+        success_msg: "a target was supplied"
+
 - name: Verify the forge dependencies
   hosts: >-
     {{ forge_preflight_hosts if forge_preflight_hosts is defined
-       else (was_environment | mandatory | lower) }}
+       else (was_environment | default('no-environment-supplied') | lower) }}
   gather_facts: false
 
   tasks:

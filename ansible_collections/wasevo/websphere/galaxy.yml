@@ -10,7 +10,13 @@ description: >-
   WebSphere Liberty, covering the three-phase trajectory to OpenShift.
 license:
   - GPL-3.0-or-later
+# The first two are from Galaxy's required list - a collection has to carry at
+# least one of them, and these are the two that describe it: middleware
+# infrastructure, and the applications it deploys. The rest are what someone
+# would actually search for.
 tags:
+  - infrastructure
+  - application
   - websphere
   - was
   - liberty

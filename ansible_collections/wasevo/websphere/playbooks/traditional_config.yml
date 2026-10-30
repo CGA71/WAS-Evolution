@@ -32,6 +32,8 @@
 # is that the dry run tells the truth, which the legacy marker-file approach
 # could not.
 
-- import_playbook: traditional_cluster.yml
+- name: The cluster
+  import_playbook: traditional_cluster.yml
 
-- import_playbook: traditional_cluster_members.yml
+- name: The application servers in it
+  import_playbook: traditional_cluster_members.yml

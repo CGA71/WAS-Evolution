@@ -127,26 +127,40 @@ model-matrix:
       echo "refused as expected"
     - |
       echo "=============== the diagnostic JDK must be refused ==============="
+      # The environment and the channel are passed so that this refusal is the
+      # one being asserted. Without them the play fails on "no environment was
+      # supplied" and the check passed for the wrong reason - a test that can
+      # only succeed is not a test. Hence the grep as well as the exit code.
       if ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml \
-           -e model_target=example_diagnostic_only.yml; then
+           -e was_environment=PILOT -e was_channel=Extranet \
+           -e model_target=example_diagnostic_only.yml > diagnostic.log 2>&1; then
         echo "FAIL: the diagnostic JDK was accepted"; exit 1
       fi
-      echo "refused as expected"
+      grep -qi "diagnostic" diagnostic.log \
+        || { echo "FAIL: it was refused, but not for the diagnostic JDK:"; tail -20 diagnostic.log; exit 1; }
+      echo "refused as expected, and for the right reason"
 
 # One datasource, declared once, rendered for all three phases.
 # One declared datasource, rendered into all three trajectory couples. If the
 # three renders disagree, layer 1 is wrong - which is the point of doing this
 # on one object in wave 0 rather than discovering it thirty modules later.
 #
-# The environment is passed here too. It needs no inventory - the play is on
-# localhost - but it resolves the model, and the model refuses to run without
-# the environment that names every object it renders. The code is arbitrary:
-# what is being compared is the three renders of one object, not the name.
+# The environment AND the channel are passed here. The play needs no inventory
+# - it runs on localhost - but it resolves the model, and the model refuses to
+# run without the two inputs that name every object it renders. Both are
+# arbitrary here: what is being compared is the three renders of one object,
+# not the names.
+#
+# They have to be passed explicitly because GitLab checks out into a
+# world-writable directory, so Ansible refuses to read ansible.cfg - and
+# ansible.cfg is what points at inventories/was, whose group_vars would
+# otherwise supply the channel. Everything that file configures has to be an
+# argument here.
 pilot-render:
   extends: .static
   stage: validate
   script:
-    - ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml -e was_environment=PILOT
+    - ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml -e was_environment=PILOT -e was_channel=Extranet
   artifacts:
     paths: [rendered/]
     expire_in: 1 week
@@ -217,6 +231,14 @@ sim:preflight:
     # the pod starts from a stock image and prereqs_os is what installs them.
     - ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/forge_preflight.yml
 
+# THE ENVIRONMENT IS PASSED AS AN EXTRA VAR, EVEN THOUGH THE INVENTORY
+# DECLARES IT. A play's `hosts:` is rendered before any host is in scope, so it
+# cannot see inventory variables - group_vars/all/10_environment.yml included -
+# and these playbooks take their host pattern from was_environment because the
+# environment is a launch input. In AWX the survey answer is an extra var; here
+# -e is the same thing. Without it the run dies on "Mandatory variable
+# 'was_environment' not defined", which is a message about the pattern and
+# reads like a missing inventory.
 sim:configure:
   extends: .k3s
   stage: simulate
@@ -225,15 +247,16 @@ sim:configure:
     - |
       echo "=============== dry run first ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
+        -e was_environment=SIM \
         --check --diff
     - |
       echo "=============== apply ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        | tee run1.log
+        -e was_environment=SIM | tee run1.log
     - |
       echo "=============== replay: must change nothing ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        | tee run2.log
+        -e was_environment=SIM | tee run2.log
       set -e
       # The second run is the only real proof of idempotency. The legacy
       # approach could not make this claim: its marker files reported "nothing
@@ -355,15 +378,15 @@ sim:members:
     - |
       echo "=============== vertical x horizontal: dry run ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_cluster_members_per_node=2 --check --diff | tee members-check.log
+        -e was_environment=SIM -e was_cluster_members_per_node=2 --check --diff | tee members-check.log
     - |
       echo "=============== apply ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_cluster_members_per_node=2 | tee members1.log
+        -e was_environment=SIM -e was_cluster_members_per_node=2 | tee members1.log
     - |
       echo "=============== replay: must change nothing ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_cluster_members_per_node=2 | tee members2.log
+        -e was_environment=SIM -e was_cluster_members_per_node=2 | tee members2.log
       set -e
       bad=$(grep -E "^was-(dmgr|node)-[0-9]+ +:" members2.log | grep -v "changed=0" || true)
       if [ -n "$bad" ]; then
@@ -397,7 +420,7 @@ sim:members:
       echo "=============== a count above the bound must be refused ==============="
       set +e
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_cluster_members_per_node=99 --check > refused-count.log 2>&1
+        -e was_environment=SIM -e was_cluster_members_per_node=99 --check > refused-count.log 2>&1
       rc=$?
       set -e
       [ "$rc" -ne 0 ] || { echo "99 members per node was accepted"; exit 1; }
@@ -412,7 +435,7 @@ sim:members:
       # it would invent a convention they did not ask for.
       set +e
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_cluster_members_per_node=2 -e was_cluster_member_name=OneServerOnly \
+        -e was_environment=SIM -e was_cluster_members_per_node=2 -e was_cluster_member_name=OneServerOnly \
         --check > refused-name.log 2>&1
       rc=$?
       set -e

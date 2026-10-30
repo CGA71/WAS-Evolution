@@ -1,6 +1,7 @@
 ---
 galaxy_info:
   role_name: liberty_deploy
+  author: neo
   description: >-
     Apply the WebSphereLibertyApplication CR, ConfigMap and Secret through
     kubernetes.core. Kept separate from config_render, which has no cluster

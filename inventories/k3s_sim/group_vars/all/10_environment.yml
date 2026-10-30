@@ -7,3 +7,19 @@ was_environment: SIM
 was_environment_long_name: "CI simulation"
 was_environment_tier: non_prod
 was_channel: Extranet
+
+# --------------------------------------------------------------------------
+# Topology
+# --------------------------------------------------------------------------
+# The simulation is an ND cell: a deployment manager pod and two node agent
+# pods, which is what makes a cluster and its members expressible at all.
+#
+# Declared here rather than passed by every job because this is a site where it
+# does not vary - which README section 17 names as the case for putting it in
+# group_vars. The one job that cares about the other value, sim:profiles,
+# overrides it with -e for each run: an extra var outranks this file, so both
+# topologies stay exercised.
+#
+# It is still an ANSWER, not a derivation. Nothing here reads the shape of the
+# inventory and concludes "this must be ND"; the inventory says so.
+was_topology: nd

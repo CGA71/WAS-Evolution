@@ -1,6 +1,7 @@
 ---
 galaxy_info:
   role_name: traditional_was_fixpack
+  author: neo
   description: >-
     Apply IBM fixpacks to Installation Manager, the SDK, WAS, Liberty, IHS and
     the web server plugin. Discovery-driven, so the same job is correct both
