@@ -133,7 +133,8 @@ model-matrix:
       # only succeed is not a test. Hence the grep as well as the exit code.
       if ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml \
            -e was_environment=PILOT -e was_channel=Extranet \
-           -e model_target=example_diagnostic_only.yml > diagnostic.log 2>&1; then
+           -e '{"pilot_targets": [{"file": "example_diagnostic_only.yml", "label": "the diagnostic JDK"}]}' \
+           > diagnostic.log 2>&1; then
         echo "FAIL: the diagnostic JDK was accepted"; exit 1
       fi
       grep -qi "diagnostic" diagnostic.log \
