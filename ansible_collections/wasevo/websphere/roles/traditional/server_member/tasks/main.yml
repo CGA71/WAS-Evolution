@@ -70,6 +70,10 @@
       register: member_wsadmin
       check_mode: false
 
+    # Holds in a check run too, unlike the profile roles' refusals. Theirs
+    # describe a future - the product is not installed YET. This one does not:
+    # the dry run reads the live cell to report the real gap, and there is
+    # nothing to read it with.
     - name: Refuse clearly when it does not
       ansible.builtin.fail:
         msg: >-
@@ -78,7 +82,8 @@
           manager profile, which is created by the profile job
           (lab_create_profiles.yml, or the profile_dmgr role). This job can be
           launched on its own, so it says what is missing instead of dying
-          inside a shell call.
+          inside a shell call. A check run needs it too: reading the cell is
+          how a dry run tells the truth.
       when: not (member_wsadmin.stat.exists | default(false))
 
     # ------------------------------------------------------------------
