@@ -16,8 +16,9 @@ description:
   - Creates, adjusts or removes the application servers that make up a server
     cluster in a WAS ND cell, through C(wsadmin).
   - A cluster member is an application server. The same object, owned by the
-    cell and created on a federated node. C(manageprofiles) never creates one:
-    the managed template produces a node agent and nothing else, so this is
+    cell and created on a federated node. C(manageprofiles) never creates
+    one, because the managed template produces a node agent and nothing
+    else, so this is
     what turns a federated node into a node that runs an application.
   - Takes the whole member list of a cluster in one call, because a C(wsadmin)
     JVM start costs 30 to 60 seconds. Eight members built one call at a time
@@ -39,9 +40,9 @@ notes:
     C(wasevo.websphere.traditional.server_member) role does that itself rather
     than trusting an earlier job to have done it.
   - Members the cell holds and the call does not name are left alone. Removal
-    is C(state: absent) on an explicit list, never a side effect of not
-    naming something: a run limited to one node must not delete the members of
-    every other node.
+    is C(state=absent) on an explicit list, never a side effect of not
+    naming something - a run limited to one node must not delete the members
+    of every other node.
 options:
   cluster_name:
     description: Cluster the members belong to. It must already exist.
@@ -54,7 +55,7 @@ options:
   members:
     description:
       - The members this call is about, one entry per application server JVM.
-      - For C(state: present) the cell is made to match. For C(state: absent)
+      - For C(state=present) the cell is made to match. For C(state=absent)
         exactly these are removed.
     type: list
     elements: dict
@@ -119,8 +120,9 @@ options:
       - C(present) creates the members that are missing and adjusts weight and
         pinned ports on the ones that exist.
       - C(absent) deletes exactly the members named, which deletes the
-        application servers. Implemented deliberately: decommissioning in
-        wave 6 depends on it, and the legacy repository left this out.
+        application servers. Implemented deliberately, because
+        decommissioning in wave 6 depends on it and the legacy repository
+        left it out.
     type: str
     choices: [present, absent]
     default: present

@@ -51,9 +51,9 @@ options:
   state:
     description:
       - C(present) creates or updates the cluster.
-      - C(absent) deletes it. Implemented deliberately: the legacy code
-        advertises C(absent) on 34 resource types and implements it on 5, and
-        decommissioning depends on it.
+      - C(absent) deletes it, implemented deliberately, because the legacy
+        code advertises C(absent) on 34 resource types and implements it on
+        5 while decommissioning depends on it.
     type: str
     choices: [present, absent]
     default: present

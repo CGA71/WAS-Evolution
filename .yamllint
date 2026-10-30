@@ -17,6 +17,20 @@ rules:
   indentation:
     spaces: 2
     indent-sequences: consistent
+  # The three below are not preferences: ansible-lint refuses a yamllint
+  # configuration that contradicts them and then disables its own fix mode,
+  # which it reports as "Found incompatible custom yamllint configuration".
+  #
+  # comments-indentation off, because a comment that explains the task BELOW it
+  # is indented with that task, which this rule reads as wrong.
+  comments-indentation: false
+  # An unquoted 0600 is the integer 384 in YAML, and a mode that silently
+  # becomes another mode is precisely the class of bug this repository writes
+  # tests against. Every mode here is a quoted string; these two make that a
+  # rule rather than a habit.
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
 
 ignore: |
   collections/ansible_collections/
