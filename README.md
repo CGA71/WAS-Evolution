@@ -308,13 +308,12 @@ COL=ansible_collections/wasevo/websphere/playbooks
 # install dependencies
 ansible-galaxy collection install -r collections/requirements.yml
 
-# validate the model without touching anything
-ansible-playbook playbooks/model_validate.yml
+# render the pilot datasource in all three trajectory couples. No inventory and
+# no environment: it renders one declared object three ways, on localhost
+ansible-playbook $COL/pilot_render_matrix.yml
 
-# render the pilot datasource in all three trajectory couples
-ansible-playbook playbooks/pilot_render_matrix.yml
-
-# validate one environment - the environment is a launch input, not a directory
+# validate one environment - the environment is a launch input, not a
+# directory, so it is passed even for a validation that touches nothing
 ansible-playbook -i inventories/was $COL/model_validate.yml -e was_environment=RA
 
 # traditional plane, dry run first - always
@@ -1374,14 +1373,14 @@ COL=ansible_collections/wasevo/websphere/playbooks
 # installer les dependances
 ansible-galaxy collection install -r collections/requirements.yml
 
-# valider le modele sans rien toucher
-ansible-playbook playbooks/model_validate.yml
+# rendre le datasource pilote dans les trois couples de la trajectoire. Sans
+# inventaire ni environnement : il rend un objet declare de trois facons,
+# sur localhost
+ansible-playbook $COL/pilot_render_matrix.yml
 
-# rendre le datasource pilote dans les trois couples de la trajectoire
-ansible-playbook playbooks/pilot_render_matrix.yml
-
-# valider un environnement - l'environnement est une entree de lancement,
-# pas un repertoire
+# valider un environnement - l'environnement est une entree de lancement et
+# pas un repertoire, donc il se passe meme pour une validation qui ne touche
+# a rien
 ansible-playbook -i inventories/was $COL/model_validate.yml -e was_environment=RA
 
 # plan traditionnel, a blanc d'abord - toujours

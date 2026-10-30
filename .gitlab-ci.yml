@@ -62,15 +62,25 @@ ansible-lint:
 syntax:
   extends: .static
   stage: lint
+  # THE ENVIRONMENT HAS TO BE PASSED, EVEN HERE. Most of these playbooks take
+  # their host pattern from was_environment, because the environment is a
+  # launch input rather than a directory. Ansible renders `hosts` before it
+  # parses anything else, so a syntax check without that variable fails on
+  # "'was_environment' is undefined" - a message about the playbook being
+  # unparsable, which it is not. The value is arbitrary here: --syntax-check
+  # matches no host and contacts nothing, it only has to render.
+  #
+  # This job was red for exactly that reason, and a red lint stage skips every
+  # job after it - which is why the stub and simulation gates had not run.
   script:
-    - ansible-playbook --syntax-check $COLLECTION/playbooks/model_validate.yml
     - ansible-playbook --syntax-check $COLLECTION/playbooks/pilot_render_matrix.yml
-    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/forge_preflight.yml
-    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_config.yml
+    - ansible-playbook --syntax-check $COLLECTION/playbooks/model_validate.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/forge_preflight.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_config.yml -e was_environment=SYNTAX
     # Each step of the traditional plane is its own playbook so it can be
     # replayed on its own, so each one is syntax-checked on its own too.
-    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster.yml
-    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster_members.yml
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster_members.yml -e was_environment=SYNTAX
 
 # The environment is a launch input, so the loop passes it as one - exactly as
 # the AWX survey does. There is no list of environment codes to iterate: what
