@@ -103,6 +103,10 @@
       when: was_can_cluster | bool
       block:
 
+        - name: Stage the Jython driver on the deployment manager
+          ansible.builtin.include_role:
+            name: wasevo.websphere.traditional.config
+
         - name: The deployment manager profile must exist on this host
           ansible.builtin.stat:
             path: "{{ was_profile_path }}/bin/wsadmin.sh"
@@ -126,10 +130,6 @@
               dying inside a shell call. A check run needs it too: reading the
               cell is how a dry run tells the truth.
           when: not (cluster_wsadmin.stat.exists | default(false))
-
-        - name: Stage the Jython driver on the deployment manager
-          ansible.builtin.include_role:
-            name: wasevo.websphere.traditional.config
 
         - name: The cluster
           wasevo.websphere.was_cluster:

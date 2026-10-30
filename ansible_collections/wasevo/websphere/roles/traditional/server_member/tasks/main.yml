@@ -62,30 +62,6 @@
           {{ groups.keys() | reject('in', ['all', 'ungrouped']) | list | join(', ') }}.
         success_msg: "{{ (groups[was_nodeagent_group] | default([])) | length }} federated node(s) declared"
 
-    # Checked here rather than left to the module, which would say "wsadmin
-    # not found" - true, but it does not say which job was skipped.
-    - name: The deployment manager profile must exist on this host
-      ansible.builtin.stat:
-        path: "{{ was_profile_path }}/bin/wsadmin.sh"
-      register: member_wsadmin
-      check_mode: false
-
-    # Holds in a check run too, unlike the profile roles' refusals. Theirs
-    # describe a future - the product is not installed YET. This one does not:
-    # the dry run reads the live cell to report the real gap, and there is
-    # nothing to read it with.
-    - name: Refuse clearly when it does not
-      ansible.builtin.fail:
-        msg: >-
-          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
-          {{ inventory_hostname }}. This role runs against the deployment
-          manager profile, which is created by the profile job
-          (lab_create_profiles.yml, or the profile_dmgr role). This job can be
-          launched on its own, so it says what is missing instead of dying
-          inside a shell call. A check run needs it too: reading the cell is
-          how a dry run tells the truth.
-      when: not (member_wsadmin.stat.exists | default(false))
-
     # ------------------------------------------------------------------
     # What each node published, and what it means here
     # ------------------------------------------------------------------
@@ -199,6 +175,30 @@
     - name: Stage the Jython driver on the deployment manager
       ansible.builtin.include_role:
         name: wasevo.websphere.traditional.config
+
+    # Checked here rather than left to the module, which would say "wsadmin
+    # not found" - true, but it does not say which job was skipped.
+    - name: The deployment manager profile must exist on this host
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+      register: member_wsadmin
+      check_mode: false
+
+    # Holds in a check run too, unlike the profile roles' refusals. Theirs
+    # describe a future - the product is not installed YET. This one does not:
+    # the dry run reads the live cell to report the real gap, and there is
+    # nothing to read it with.
+    - name: Refuse clearly when it does not
+      ansible.builtin.fail:
+        msg: >-
+          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+          {{ inventory_hostname }}. This role runs against the deployment
+          manager profile, which is created by the profile job
+          (lab_create_profiles.yml, or the profile_dmgr role). This job can be
+          launched on its own, so it says what is missing instead of dying
+          inside a shell call. A check run needs it too: reading the cell is
+          how a dry run tells the truth.
+      when: not (member_wsadmin.stat.exists | default(false))
 
     # ------------------------------------------------------------------
     # The call. One wsadmin session for every member.
