@@ -92,6 +92,39 @@ MACHINE_CRED_ID="$(id_of credentials "$MACHINE_CRED")"
 [ -n "$MACHINE_CRED_ID" ] || die "no credential named \"$MACHINE_CRED\""
 ok "workflow $WF_ID, project $PROJECT_ID, inventory $INV_ID, machine credential $MACHINE_CRED_ID"
 
+# ---------------------------------------------------------------------------
+# Sync the project first
+# ---------------------------------------------------------------------------
+# AWX validates `playbook` against the files of the project's LAST SUCCESSFUL
+# UPDATE, not against the repository. A template naming a playbook that was
+# pushed after that update is refused with "Playbook not found for project." -
+# which reads like a path typo and is not one.
+#
+# So the project is updated here and waited on. This is also what a workflow
+# node would do at launch, but the refusal above happens while this script
+# builds the templates, long before any launch.
+say "Project"
+UPDATE_ID="$(api POST "/projects/$PROJECT_ID/update/" \
+             | py 'import sys,json;print(json.load(sys.stdin).get("id",""))')"
+if [ -z "$UPDATE_ID" ]; then
+    note "the project could not be updated from here; using the files it has"
+else
+    for _ in $(seq 1 60); do
+        status="$(api GET "/project_updates/$UPDATE_ID/" \
+                  | py 'import sys,json;print(json.load(sys.stdin).get("status",""))')"
+        case "$status" in
+            successful) ok "project updated to the current commit"; break ;;
+            failed|error|canceled)
+                die "the project update ended as $status - check the project's SCM settings" ;;
+            *) sleep 2 ;;
+        esac
+    done
+    [ "$status" = "successful" ] || die "the project update did not finish in 120s (status $status)"
+    api GET "/projects/$PROJECT_ID/" | py 'import sys,json
+d = json.load(sys.stdin)
+print("   --    revision %s" % (d.get("scm_revision") or "?")[:12])'
+fi
+
 # The Execution Environment the existing templates use. Taken from the
 # workflow's own templates rather than hardcoded, so this script does not
 # decide the EE - whoever set up AWX did.
