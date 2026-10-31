@@ -1,0 +1,33 @@
+---
+# Shared libraries, rendered from the shared model.
+#
+# REPLAYABLE ON ITS OWN. A jar added to a library directory is picked up by one
+# replay of this role - no cluster, no datasource, no application touched.
+
+# Declared in the shared model, layer 1, which the Liberty back-end renders
+# into <library> as well. Two forms, and both back-ends render both:
+#
+#   shared_libraries:
+#     - name: appCommonLibrary          # a directory and a pattern
+#       dir: /app/binaries/shared
+#       includes: "*.jar"
+#     - name: reportingLibrary          # or an explicit list, in order
+#       jars:
+#         - /app/binaries/reporting/jasper.jar
+#
+# The pattern is expanded on the deployment manager, because WAS traditional
+# has no wildcard in a library class path. So the directory has to hold the
+# same jars there as on every node that runs a member - which a shared mount
+# or the deployment of the application binaries normally guarantees.
+#
+# Optional, traditional only: `scope:`, `native_path:`, `isolated: true` for a
+# class loader of its own shared by the applications that use the library.
+shared_libraries: []
+
+# Where a library lives when it does not say: the cluster, so every member sees
+# it. Short forms as for the datasources - `cell`, or a server dict.
+library_scope:
+  type: cluster
+
+# present creates and updates; absent removes exactly the libraries declared.
+library_state: present

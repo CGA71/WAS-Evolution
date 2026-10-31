@@ -14,6 +14,7 @@
 #   traditional_cluster_members.yml  the application servers in it
 #   traditional_j2c.yml              the J2C authentication aliases
 #   traditional_jdbc.yml             the JDBC providers and datasources
+#   traditional_shared_libraries.yml the shared libraries
 #
 # So there is exactly one definition of each step, and this file cannot drift
 # from the step it used to carry inline - which is what happened to the legacy
@@ -45,3 +46,6 @@
 
 - name: The JDBC providers and datasources
   import_playbook: traditional_jdbc.yml
+
+- name: The shared libraries
+  import_playbook: traditional_shared_libraries.yml

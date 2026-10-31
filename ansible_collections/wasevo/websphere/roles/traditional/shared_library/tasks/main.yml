@@ -1,0 +1,151 @@
+---
+# Shared libraries, on the deployment manager.
+#
+# The shared model says `dir` + `includes`, which Liberty reads as a fileset.
+# WAS traditional needs the explicit jars, so they are listed here with the
+# find module, on the deployment manager, and handed over in a stable order.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names the job that produces what is missing.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [library, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [library, always]
+
+- name: Nothing declared, nothing to do
+  ansible.builtin.debug:
+    msg: >-
+      shared_libraries is empty for this run. Libraries are declared in the
+      shared model or the inventory - see
+      roles/traditional/shared_library/defaults/main.yml for the shape.
+  when: shared_libraries | length == 0
+  tags: [library]
+
+- name: Reconcile the shared libraries
+  when: shared_libraries | length > 0
+  tags: [library]
+  block:
+
+    # ------------------------------------------------------------------
+    # The jars each pattern matches, read where wsadmin will run
+    # ------------------------------------------------------------------
+    # A read, so it runs in a check run too: the plan has to say which jars a
+    # real run would set, and it cannot without looking.
+    - name: List the jars each library pattern matches
+      ansible.builtin.find:
+        paths: "{{ item.dir }}"
+        patterns: "{{ item.includes | default('*.jar') }}"
+        file_type: file
+      loop: "{{ shared_libraries | rejectattr('jars', 'defined') | selectattr('dir', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}: {{ item.dir }}/{{ item.includes | default('*.jar') }}"
+      register: library_found
+      check_mode: false
+
+    - name: Render the declarations for WAS traditional
+      ansible.builtin.set_fact:
+        library_render: >-
+          {{ shared_libraries | wasevo.websphere.library_groups(
+               _expanded, library_scope, was_cluster_name, was_cell_name) }}
+      vars:
+        _expanded: >-
+          {%- set out = {} -%}
+          {%- for result in library_found.results | default([]) -%}
+            {%- set _ = out.update({result.item.name: result.files | map(attribute='path') | list}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # Every error at once - an empty directory, a declaration with neither
+    # form, a scope that cannot be.
+    - name: Every library must render for WAS traditional
+      ansible.builtin.assert:
+        that:
+          - library_render.errors | length == 0
+        fail_msg: >-
+          {{ library_render.errors | length }} shared library declaration
+          problem(s): {{ library_render.errors | join(' | ') }}
+        success_msg: >-
+          {{ library_render.groups | map(attribute='libraries') | flatten | length }}
+          librar(ies) in {{ library_render.groups | length }} scope(s)
+
+    - name: A cluster scope needs a cluster
+      ansible.builtin.assert:
+        that:
+          - was_can_cluster | bool
+            or (library_render.groups | map(attribute='scope') | selectattr('type', 'equalto', 'cluster') | list | length == 0)
+        fail_msg: >-
+          was_topology is "{{ was_topology }}", which has no cluster, and at
+          least one library would be created at cluster scope - the default.
+          On a standalone server set library_scope to the server.
+        success_msg: "every scope can exist in this topology"
+
+    - name: Administrative credentials must be supplied to reach the cell
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Reaching a cell with administrative security enabled needs
+          was_admin_user and was_admin_password - the deployment manager's
+          administrator, not a local account. Supply them from an AWX
+          credential or a vault.
+        success_msg: "administrative credentials supplied"
+
+    # ------------------------------------------------------------------
+    # The driver, then the profile it runs in
+    # ------------------------------------------------------------------
+    - name: Stage the Jython driver on the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    - name: The deployment manager profile must exist on this host
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+      register: library_wsadmin
+      check_mode: false
+
+    - name: Refuse clearly when it does not
+      ansible.builtin.fail:
+        msg: >-
+          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+          {{ inventory_hostname }}. Shared libraries live in the master
+          configuration repository, which is the deployment manager profile -
+          created by the profile job. A check run needs it too: reading the
+          cell is how a dry run tells the truth.
+      when: not (library_wsadmin.stat.exists | default(false))
+
+    # ------------------------------------------------------------------
+    # One wsadmin session per scope
+    # ------------------------------------------------------------------
+    - name: Reconcile the libraries of each scope
+      wasevo.websphere.was_shared_library:
+        scope: "{{ item.scope }}"
+        libraries: "{{ item.libraries }}"
+        state: "{{ library_state }}"
+        profile_path: "{{ was_profile_path }}"
+        admin_user: "{{ was_admin_user }}"
+        admin_password: "{{ was_admin_password }}"
+        jython_dir: "{{ was_jython_dir }}"
+      loop: "{{ library_render.groups }}"
+      loop_control:
+        label: >-
+          {{ item.scope.type }} {{ item.scope[item.scope.type] | default('') }}:
+          {{ item.libraries | map(attribute='name') | join(', ') }}
+      register: library_result
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {% for r in library_result.results %}{{ r.item.scope.type }}
+          {{ r.item.scope[r.item.scope.type] | default('') }}:
+          {% for lib in r.libraries | default([]) -%}
+            {{ lib.name }} ({{ lib.class_path | length }} jar(s)){{ ', ' if not loop.last }}
+          {%- endfor %}
+          changed {{ r.changed }}{{ ' || ' if not loop.last }}{% endfor %}

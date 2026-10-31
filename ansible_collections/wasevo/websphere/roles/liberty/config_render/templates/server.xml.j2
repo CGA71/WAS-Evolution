@@ -45,9 +45,18 @@
   </application>
 {% endfor %}
 
+{# A library is a directory and a pattern, or an explicit list of jars - the
+   same two forms the traditional back-end renders, so one declaration means
+   the same class path on both. #}
 {% for lib in shared_libraries | default([]) %}
   <library id="{{ lib.name }}">
+{% if lib.jars is defined %}
+{% for jar in lib.jars %}
+    <file name="{{ jar }}" />
+{% endfor %}
+{% else %}
     <fileset dir="{{ lib.dir }}" includes="{{ lib.includes | default('*.jar') }}" />
+{% endif %}
   </library>
 {% endfor %}
 

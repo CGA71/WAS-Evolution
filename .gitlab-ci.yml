@@ -83,6 +83,7 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cluster_members.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_j2c.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_jdbc.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_shared_libraries.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/guard_target.yml -e was_environment=SYNTAX
 
 # The environment is a launch input, so the loop passes it as one - exactly as
@@ -261,6 +262,16 @@ sim:configure:
   stage: simulate
   needs: [sim:preflight]
   script:
+    # The jars of the simulation's pattern library. A real estate puts them
+    # there when it deploys its application binaries; the shared library role
+    # only reads the directory, on the deployment manager, so they have to be
+    # in place before it runs. Empty files: the fake cell never opens a jar.
+    - |
+      set -e
+      echo "=============== stage the jars the pattern library matches ==============="
+      kubectl -n $NS_DMGR exec was-dmgr-01 -- sh -c \
+        'mkdir -p /app/sim-shared && : > /app/sim-shared/commons-a.jar && : > /app/sim-shared/commons-b.jar \
+         && : > /app/sim-shared/README.txt && ls -1 /app/sim-shared'
     - |
       echo "=============== dry run first ==============="
       ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
@@ -285,6 +296,16 @@ sim:configure:
         exit 1
       fi
       echo "second run reported changed=0 on every host"
+    - |
+      set -e
+      echo "=============== the pattern library holds exactly what *.jar matched ==============="
+      # Two jars and a README were staged. Two jars, not three files: the
+      # pattern is honoured, not the directory taken whole.
+      grep -q "simCommonLibrary (2 jar(s))" run1.log \
+        || { echo "simCommonLibrary did not resolve to exactly the 2 staged jars"; exit 1; }
+      grep -q "simReportingLibrary (2 jar(s))" run1.log \
+        || { echo "simReportingLibrary did not keep its 2 explicit jars"; exit 1; }
+      echo "the pattern matched the 2 jars and left the README; the explicit list was taken as written"
   artifacts:
     when: always
     paths: [run1.log, run2.log]

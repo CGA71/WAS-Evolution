@@ -1017,6 +1017,7 @@ names another scope when it needs one.
 |---|---|---|
 | 8 | `traditional_j2c.yml` | J2C authentication aliases |
 | 9 | `traditional_jdbc.yml` | JDBC providers and datasources |
+| 10 | `traditional_shared_libraries.yml` | shared libraries |
 
 ### J2C authentication aliases
 
@@ -1138,6 +1139,46 @@ gone.
 Toolbox one, and the data store helper class names. They are recorded in the
 vendor table, which says so; the template check above is what turns a wrong
 one into a sentence on the first lab run.
+
+### Shared libraries
+
+Declared in the shared model in one of two forms, and **both back-ends render
+both**:
+
+```yaml
+shared_libraries:
+  - name: appCommonLibrary        # a directory and a pattern
+    dir: /app/binaries/shared
+    includes: "*.jar"
+  - name: reportingLibrary        # or an explicit list, in order
+    jars: [/app/binaries/reporting/engine.jar, /app/binaries/reporting/fonts.jar]
+```
+
+**A pattern means the same thing on both sides.** Liberty reads `dir` +
+`includes` as a fileset and rescans it at start. WAS traditional has **no
+wildcard** in a library class path, so writing the directory alone would be a
+different library on each back-end - a difference nobody chose. The role
+expands the pattern on the deployment manager with the `find` module - a read,
+so a check run does it too - and hands over the exact jars, sorted, because
+`find` returns files in filesystem order and a class path that reshuffles
+between runs would read as a change every time. A jar dropped into the
+directory then shows up as a difference on the next run, which is how Liberty
+behaves too, one restart later.
+
+A pattern that matches nothing is **refused**: a library with an empty class
+path provides nothing, and the applications using it would fail on their first
+class load. The directory must hold the same jars on the deployment manager as
+on every node that runs a member - a shared mount, or the deployment of the
+application binaries, normally guarantees it.
+
+The class path is a list attribute, so it is unset and rewritten, as for a JDBC
+classpath. Associating a library with an application or a server class loader
+is **not** done here: it belongs to the application deployment, which comes
+last.
+
+The simulation exercises both forms. `sim:configure` stages two jars **and a
+README** in the pattern library's directory and asserts the library holds
+exactly the two jars - the pattern honoured, not the directory taken whole.
 
 ## 20. AWX
 
@@ -2250,6 +2291,7 @@ elle en a besoin.
 |---|---|---|
 | 8 | `traditional_j2c.yml` | alias d'authentification J2C |
 | 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources |
+| 10 | `traditional_shared_libraries.yml` | bibliothèques partagées |
 
 ### Alias d'authentification J2C
 
@@ -2377,6 +2419,50 @@ que rien ne pointe jamais vers un driver disparu.
 que celui d'IBM i Toolbox, et les noms de classes helper. Ils sont consignés
 dans la table des vendors, qui le dit ; c'est la vérification des modèles
 ci-dessus qui transforme une entrée fausse en phrase au premier run du lab.
+
+### Bibliothèques partagées
+
+Déclarées dans le modèle partagé sous l'une de deux formes, et **les deux
+back-ends rendent les deux** :
+
+```yaml
+shared_libraries:
+  - name: appCommonLibrary        # un répertoire et un motif
+    dir: /app/binaries/shared
+    includes: "*.jar"
+  - name: reportingLibrary        # ou une liste explicite, dans l'ordre
+    jars: [/app/binaries/reporting/engine.jar, /app/binaries/reporting/fonts.jar]
+```
+
+**Un motif veut dire la même chose des deux côtés.** Liberty lit `dir` +
+`includes` comme un fileset et le relit au démarrage. WAS traditionnel n'a
+**aucun joker** dans le class path d'une bibliothèque : écrire le seul
+répertoire donnerait une bibliothèque différente sur chaque back-end - une
+différence que personne n'a choisie. Le rôle développe le motif sur le
+gestionnaire de déploiement avec le module `find` - une lecture, donc un check
+run le fait aussi - et transmet la liste exacte des jars, triée, parce que
+`find` rend les fichiers dans l'ordre du système de fichiers et qu'un class
+path qui se réordonne d'un run à l'autre se lirait comme un changement à
+chaque fois. Un jar déposé dans le répertoire apparaît alors comme un écart au
+run suivant, ce qui est aussi le comportement de Liberty, un redémarrage plus
+tard.
+
+Un motif qui ne trouve rien est **refusé** : une bibliothèque au class path
+vide ne fournit rien, et les applications qui l'utilisent échoueraient à leur
+premier chargement de classe. Le répertoire doit contenir les mêmes jars sur le
+gestionnaire de déploiement que sur chaque nœud qui porte un membre - un
+montage partagé, ou le déploiement des binaires applicatifs, le garantit
+normalement.
+
+Le class path est un attribut liste : il est vidé puis réécrit, comme le
+classpath JDBC. Associer une bibliothèque à une application ou au class loader
+d'un serveur n'est **pas** fait ici : cela relève du déploiement d'application,
+qui vient en dernier.
+
+La simulation exerce les deux formes. `sim:configure` dépose deux jars **et un
+README** dans le répertoire de la bibliothèque à motif, et vérifie qu'elle
+contient exactement les deux jars - le motif respecté, et non le répertoire
+pris en bloc.
 
 ## 20. AWX
 

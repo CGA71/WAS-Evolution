@@ -69,3 +69,20 @@ datasources:
       server: ClusterEXT_was-node-01Node_01
     properties:
       URL: "jdbc:oracle:thin:@//oracle.sim.internal:1521/REPORT"
+
+# --------------------------------------------------------------------------
+# Shared libraries
+# --------------------------------------------------------------------------
+# The two forms of the shared model, one each. The pattern is expanded on the
+# deployment manager pod, where sim:configure stages two jars first - the step
+# a real estate performs when it deploys its application binaries. The
+# explicit list needs no file at all: it is taken as written.
+shared_libraries:
+  - name: simCommonLibrary
+    dir: /app/sim-shared
+    includes: "*.jar"
+
+  - name: simReportingLibrary
+    jars:
+      - /app/sim-reporting/engine.jar
+      - /app/sim-reporting/fonts.jar
