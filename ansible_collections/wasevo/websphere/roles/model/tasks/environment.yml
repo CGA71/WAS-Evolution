@@ -22,6 +22,7 @@
     - naming.yml
     - jvm_flags.yml
     - jdk_matrix.yml
+    - jdbc_vendors.yml
   tags: [model, always]
 
 # ---------------------------------------------------------------------------

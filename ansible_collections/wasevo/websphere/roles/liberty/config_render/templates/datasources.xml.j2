@@ -10,6 +10,9 @@
 -->
 <server>
 
+{# The vendor is an intent, translated by roles/model/vars/jdbc_vendors.yml
+   into the Liberty properties element. It used to be pasted straight in, which
+   produced <properties.db2> - not a Liberty element at all. #}
 {% for ds in datasources %}
   <jdbcDriver id="{{ ds.name }}-driver" libraryRef="{{ ds.name }}-lib" />
 
@@ -26,7 +29,7 @@
               transactional="{{ ds.transactional | default('true') }}"
               statementCacheSize="{{ ds.statement_cache_size | default(10) }}">
 
-    <properties{{ '.' ~ ds.vendor if ds.vendor is defined else '' }}
+    <properties.{{ jdbc_vendors[ds.vendor].liberty.properties }}
 {% for key, value in ds.properties.items() %}
                 {{ key }}="{{ value }}"
 {% endfor %}

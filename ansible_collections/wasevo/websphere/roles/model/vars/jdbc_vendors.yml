@@ -1,0 +1,67 @@
+---
+# JDBC vendor translation table.
+#
+# A datasource in the shared model declares an abstract `vendor` - an intent,
+# like the JVM settings in jvm_flags.yml - and each back-end renders it:
+#
+#   liberty      the suffix of the <properties.*> element in server.xml
+#   traditional  what AdminTask.createJDBCProvider and createDatasource need
+#
+# WHY A TABLE AND NOT A VALUE. The model used to carry `vendor: db2`, and the
+# Liberty template wrote it straight into <properties.db2>, which is not a
+# Liberty element at all - for a jt400.jar driver the element is
+# <properties.db2.i.toolbox>. The model was speaking one back-end's vocabulary,
+# badly. Here the model names the database and the driver family once, and
+# neither back-end's vocabulary leaks into it.
+#
+# WHAT IS VERIFIED AND WHAT IS NOT. The Liberty element names are the
+# documented ones. On the traditional side, "DB2 UDB for iSeries (Toolbox)" is
+# the provider type IBM documents for the IBM i Toolbox driver; the other
+# provider types and the data store helper classes are the WAS template names
+# as recorded here, NOT yet checked against a real cell. The JDBC handler asks
+# the cell for its provider templates before creating one and refuses, listing
+# what the cell offers, when a provider type here matches none - so a wrong
+# entry fails on its first real run with a readable message, and is corrected
+# in this one place. A datasource may also name its helper explicitly.
+
+jdbc_vendors:
+
+  db2_i_toolbox:
+    description: DB2 for i (AS/400) through the IBM Toolbox for Java - jt400.jar
+    liberty:
+      properties: db2.i.toolbox
+    traditional:
+      database_type: DB2
+      provider_type: DB2 UDB for iSeries (Toolbox)
+      implementation_type: Connection pool data source
+      helper: com.ibm.websphere.rsadapter.DB2AS400DataStoreHelper
+
+  db2_jcc:
+    description: DB2 for Linux, UNIX, Windows or z/OS through the IBM JCC driver - db2jcc4.jar
+    liberty:
+      properties: db2.jcc
+    traditional:
+      database_type: DB2
+      provider_type: DB2 Using IBM JCC Driver
+      implementation_type: Connection pool data source
+      helper: com.ibm.websphere.rsadapter.DB2UniversalDataStoreHelper
+
+  oracle:
+    description: Oracle through the Oracle thin driver - ojdbc8.jar
+    liberty:
+      properties: oracle
+    traditional:
+      database_type: Oracle
+      provider_type: Oracle JDBC Driver
+      implementation_type: Connection pool data source
+      helper: com.ibm.websphere.rsadapter.Oracle11gDataStoreHelper
+
+  sqlserver:
+    description: Microsoft SQL Server through the Microsoft driver - mssql-jdbc.jar
+    liberty:
+      properties: microsoft.sqlserver
+    traditional:
+      database_type: SQL Server
+      provider_type: Microsoft SQL Server JDBC Driver
+      implementation_type: Connection pool data source
+      helper: com.ibm.websphere.rsadapter.MicrosoftSQLServerDataStoreHelper
