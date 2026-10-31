@@ -1629,7 +1629,10 @@ kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64
 ```
 
 Everything in AWX is declared by `ci/awx/apply-cell-workflow.sh`, run from
-the node.
+the node. The script never grants rights on the cluster: that is the
+operator's act, `kubectl apply -f ci/k3s/30-awx-cell-platform.yml`. Without
+it the workflow is declared all the same, and the next run of the script adds
+the Kubernetes credential to jobs 1, 2 and 9.
 
 ### What AWX holds is declared, not clicked
 
@@ -3362,7 +3365,10 @@ kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64
 ```
 
 Tout ce qu'AWX contient est déclaré par `ci/awx/apply-cell-workflow.sh`, lancé
-depuis le nœud.
+depuis le nœud. Le script n'accorde jamais de droits sur le cluster : c'est
+l'acte de l'opérateur, `kubectl apply -f ci/k3s/30-awx-cell-platform.yml`.
+Sans lui le workflow est déclaré quand même, et le passage suivant du script
+ajoute le credential Kubernetes aux jobs 1, 2 et 9.
 
 ### Ce que contient AWX est déclaré, pas cliqué
 
