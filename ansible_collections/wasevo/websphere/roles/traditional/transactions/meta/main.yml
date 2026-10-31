@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: traditional_transactions
+  author: neo
+  description: >-
+    JTA/JTS transaction service timeouts, recovery log location and peer recovery, on every server of the target. Replayable on its own.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model and traditional.config are included where they are
+# used, so this role stays runnable on its own.
+dependencies: []

@@ -71,6 +71,20 @@ Wave 0, the foundation. Nothing in production changes.
   the roles catalogued under API families, one entry point per family that
   has roles. A family imports its roles' playbooks and defines none of them;
   `traditional_config.yml` keeps the dependency order across families.
+- `was_server_settings`, with `handlers/server_settings.py`: the settings
+  every application server carries - transaction service, EJB container,
+  cache and timers, JPA service, JVM custom properties - and the cluster-wide
+  ones, on every server of a target read from the cell. Checks every
+  attribute name against `AdminConfig.attributes` before writing; replaces
+  `{node}` and `{server}` per server; returns the servers to restart and
+  restarts none. Refuses local persistent timers on several members and a
+  datasource the cell does not have.
+- `roles/traditional/{transactions,ejb_container,cdi,jpa}`: four intents on
+  that one module, each replayable on its own. Refused by the model: a
+  lifetime above the maximum, peer recovery without a shared log root, a JPA
+  provider of the wrong level, a JTA default on a non-transactional
+  datasource, a custom scheduler with a timer datasource.
+- `playbooks/family_3_enterprise.yml`; JPA joins `family_2_persistence.yml`.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.

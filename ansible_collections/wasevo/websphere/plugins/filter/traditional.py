@@ -402,12 +402,325 @@ def jms_groups(jms, default_scope, cluster_name, cell_name, default_provider="si
     return {"groups": groups, "errors": errors}
 
 
+# ---------------------------------------------------------------------------
+# Server settings: transactions, EJB container, CDI, JPA
+# ---------------------------------------------------------------------------
+#
+# Each function turns one intent of the shared model into the arguments of
+# was_server_settings - components and their attributes, JVM properties,
+# cluster attributes - and lists everything WAS would accept and should not.
+# Returns {"settings": {...}, "errors": [...]}.
+
+def _seconds(errors, name, value):
+    seconds = to_seconds(value)
+    if seconds is None:
+        errors.append("%s: %r is not a duration - 30, 30s, 5m or 1h" % (name, value))
+    return seconds
+
+
+def _count(errors, name, value, minimum=0):
+    try:
+        number = int(str(value))
+    except ValueError:
+        errors.append("%s: %r is not a whole number" % (name, value))
+        return None
+    if number < minimum:
+        errors.append("%s: %d is below %d" % (name, number, minimum))
+        return None
+    return number
+
+
+# intent key -> TransactionService attribute. WAS spells the propagated
+# timeout "propogated"; the intent key does not.
+TRANSACTION_TIMEOUTS = (
+    ("total_timeout", "totalTranLifetimeTimeout"),
+    ("client_inactivity_timeout", "clientInactivityTimeout"),
+    ("maximum_timeout", "maximumTransactionTimeout"),
+    ("propagated_timeout", "propogatedOrBMTTranLifetimeTimeout"),
+)
+TRANSACTION_KEYS = tuple(k for k, _ in TRANSACTION_TIMEOUTS) + (
+    "heuristic_retry_limit", "heuristic_retry_wait", "log_root", "peer_recovery")
+
+
+def transaction_settings(tx, cell_name, clustered):
+    """The transaction service of every server, and peer recovery.
+
+    log_root is the shared directory every member's recovery log goes under,
+    one directory per server - <log_root>/<cell>/<node>/<server> - so that a
+    member can recover another's in-flight transactions. Peer recovery with
+    the logs left under each profile is refused: WAS accepts it, and the
+    recovery fails exactly when it is needed, because the surviving member
+    cannot read the failed member's disk.
+    """
+    tx = tx or {}
+    errors = []
+    attrs = {}
+    for key in sorted(tx):
+        if key not in TRANSACTION_KEYS:
+            errors.append("transactions: %s is not one of %s" % (key, ", ".join(TRANSACTION_KEYS)))
+
+    seconds = {}
+    for key, attribute in TRANSACTION_TIMEOUTS:
+        if key in tx:
+            value = _seconds(errors, "transactions." + key, tx[key])
+            if value is not None:
+                seconds[key] = value
+                attrs[attribute] = str(value)
+    # WAS caps a lifetime timeout at the maximum without a word: the declared
+    # value would never be the one in force.
+    maximum = seconds.get("maximum_timeout")
+    if maximum:
+        for key in ("total_timeout", "propagated_timeout"):
+            if seconds.get(key) is not None and (seconds[key] == 0 or seconds[key] > maximum):
+                errors.append(
+                    "transactions.%s is %s, above maximum_timeout %ds: WAS would "
+                    "silently cap it at the maximum" % (key, seconds[key] or "0 (no limit)", maximum))
+    for key, attribute in (("heuristic_retry_limit", "heuristicRetryLimit"),
+                           ("heuristic_retry_wait", "heuristicRetryWait")):
+        if key in tx:
+            value = _count(errors, "transactions." + key, tx[key])
+            if value is not None:
+                attrs[attribute] = str(value)
+
+    root = tx.get("log_root")
+    if root:
+        if not str(root).startswith("/"):
+            errors.append("transactions.log_root %r is not an absolute path" % root)
+        else:
+            attrs["transactionLogDirectory"] = "%s/%s/{node}/{server}" % (str(root).rstrip("/"), cell_name)
+
+    cluster_attributes = {}
+    peer = tx.get("peer_recovery")
+    if peer is not None:
+        if peer and not clustered:
+            errors.append("transactions.peer_recovery needs a cluster: a standalone "
+                          "server has no peer to recover it")
+        if peer and not root:
+            errors.append("transactions.peer_recovery without log_root: each member's "
+                          "recovery log would stay under its own profile, where no "
+                          "other member can read it, and recovery would fail when it "
+                          "is needed")
+        if clustered:
+            cluster_attributes["enableHA"] = "true" if peer else "false"
+
+    settings = {}
+    if attrs:
+        settings["components"] = {"TransactionService": attrs}
+    if cluster_attributes:
+        settings["cluster_attributes"] = cluster_attributes
+    return {"settings": settings, "errors": errors}
+
+
+EJB_KEYS = ("passivation_directory", "inactive_pool_cleanup_interval", "cache_size",
+            "cache_cleanup_interval", "timers")
+EJB_TIMER_KEYS = ("datasource_jndi", "datasource_alias", "table_prefix", "poll_interval",
+                  "threads", "scheduler_jndi")
+
+
+def _milliseconds(errors, name, value):
+    """An interval WAS keeps in milliseconds: a bare number is milliseconds,
+    a number with a unit is converted."""
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    seconds = _seconds(errors, name, value)
+    return None if seconds is None else seconds * 1000
+
+
+def ejb_container_settings(ejb):
+    """The EJB container, its cache and its timer service, on every server.
+
+    Two refusals here, a third in the handler, which knows how many members
+    the cluster really holds: persistent timers on several members with no
+    shared datasource.
+    """
+    ejb = ejb or {}
+    errors = []
+    container, cache, timer = {}, {}, {}
+    requires = []
+    for key in sorted(ejb):
+        if key not in EJB_KEYS:
+            errors.append("ejb_container: %s is not one of %s" % (key, ", ".join(EJB_KEYS)))
+
+    if ejb.get("passivation_directory"):
+        container["passivationDirectory"] = str(ejb["passivation_directory"])
+    if "inactive_pool_cleanup_interval" in ejb:
+        value = _milliseconds(errors, "ejb_container.inactive_pool_cleanup_interval",
+                              ejb["inactive_pool_cleanup_interval"])
+        if value is not None:
+            container["inactivePoolCleanupInterval"] = str(value)
+    if "cache_size" in ejb:
+        value = _count(errors, "ejb_container.cache_size", ejb["cache_size"], minimum=1)
+        if value is not None:
+            cache["cacheSize"] = str(value)
+    if "cache_cleanup_interval" in ejb:
+        value = _milliseconds(errors, "ejb_container.cache_cleanup_interval",
+                              ejb["cache_cleanup_interval"])
+        if value is not None:
+            cache["cleanupInterval"] = str(value)
+
+    timers = ejb.get("timers")
+    if timers is not None:
+        for key in sorted(timers):
+            if key not in EJB_TIMER_KEYS:
+                errors.append("ejb_container.timers: %s is not one of %s"
+                              % (key, ", ".join(EJB_TIMER_KEYS)))
+        # A custom scheduler brings its own database: IBM documents the
+        # datasource and the table prefix as ignored then.
+        if timers.get("scheduler_jndi") and (timers.get("datasource_jndi") or timers.get("table_prefix")):
+            errors.append("ejb_container.timers: scheduler_jndi with datasource_jndi or "
+                          "table_prefix - a custom scheduler uses its own database, and "
+                          "WAS would ignore them")
+        for key, attribute in (("datasource_jndi", "datasourceJNDIName"),
+                               ("datasource_alias", "datasourceAlias"),
+                               ("table_prefix", "tablePrefix"),
+                               ("scheduler_jndi", "schedulerJNDIName")):
+            if timers.get(key):
+                timer[attribute] = str(timers[key])
+        if "poll_interval" in timers:
+            value = _seconds(errors, "ejb_container.timers.poll_interval", timers["poll_interval"])
+            if value is not None:
+                timer["pollInterval"] = str(value)
+        if "threads" in timers:
+            value = _count(errors, "ejb_container.timers.threads", timers["threads"], minimum=1)
+            if value is not None:
+                timer["numAlarmThreads"] = str(value)
+        if timers.get("datasource_jndi"):
+            requires.append(str(timers["datasource_jndi"]))
+
+    components = {}
+    if container:
+        components["EJBContainer"] = container
+    if cache:
+        components["EJBCache"] = cache
+    # The timer service is sent even empty when declared, so the handler can
+    # refuse local timers on a cluster.
+    if timers is not None:
+        components["EJBTimer"] = timer
+    settings = {}
+    if components:
+        settings["components"] = components
+    if requires:
+        settings["requires_datasources"] = requires
+    return {"settings": settings, "errors": errors}
+
+
+CDI_PROPERTIES = (
+    # intent key -> JVM custom property. false: an archive with no beans.xml is
+    # not scanned for beans - the startup cost of CDI on WAS 9 for an
+    # application that does not use it. An application's manifest
+    # (Enable-Implicit-Bean-Archive) overrides it.
+    ("implicit_bean_archives", "com.ibm.ws.cdi.enableImplicitBeanArchives"),
+)
+
+
+def cdi_settings(cdi):
+    """CDI, which WAS traditional configures through JVM custom properties."""
+    cdi = cdi or {}
+    errors = []
+    properties = {}
+    known = [k for k, _ in CDI_PROPERTIES]
+    for key in sorted(cdi):
+        if key not in known:
+            errors.append("cdi: %s is not one of %s" % (key, ", ".join(known)))
+    for key, prop in CDI_PROPERTIES:
+        if key in cdi:
+            value = cdi[key]
+            if not isinstance(value, bool) and str(value).lower() not in ("true", "false"):
+                errors.append("cdi.%s: %r is not true or false" % (key, value))
+                continue
+            properties[prop] = str(value).lower()
+    settings = {"jvm_properties": properties} if properties else {}
+    return {"settings": settings, "errors": errors}
+
+
+# provider shorthand -> (class, the JPA level it implements on WAS 9)
+JPA_PROVIDERS = {
+    "eclipselink": ("org.eclipse.persistence.jpa.PersistenceProvider", "2.1"),
+    "wsjpa": ("com.ibm.websphere.persistence.PersistenceProviderImpl", "2.0"),
+    "openjpa": ("org.apache.openjpa.persistence.PersistenceProviderImpl", "2.0"),
+}
+JPA_KEYS = ("spec_level", "provider", "jta_datasource", "non_jta_datasource")
+
+
+def jpa_settings(jpa, datasources):
+    """The JPA defaults of every server, and the JPA level of the target.
+
+    datasources is the model's datasource list, so a JTA default naming a
+    non-transactional datasource - or the reverse - is refused here: WAS binds
+    it, and the persistence unit then writes outside the transaction, or
+    enlists what was meant to stay out of it.
+    """
+    jpa = jpa or {}
+    errors = []
+    warnings = []
+    for key in sorted(jpa):
+        if key not in JPA_KEYS:
+            errors.append("jpa: %s is not one of %s" % (key, ", ".join(JPA_KEYS)))
+
+    level = jpa.get("spec_level")
+    if level is not None:
+        level = str(level)
+        if level not in ("2.0", "2.1"):
+            errors.append("jpa.spec_level %r is not 2.0 or 2.1" % level)
+
+    attrs = {}
+    provider = jpa.get("provider")
+    if provider:
+        if provider in JPA_PROVIDERS:
+            klass, implements = JPA_PROVIDERS[provider]
+            if level and level != implements:
+                errors.append("jpa.provider %s implements JPA %s, and spec_level is %s: "
+                              "the server would start, and every persistence unit fail"
+                              % (provider, implements, level))
+        else:
+            klass = str(provider)
+            warnings.append("jpa.provider %s is a third-party class: it must implement "
+                            "the JPA level of the target" % klass)
+        attrs["defaultPersistenceProvider"] = klass
+
+    by_jndi = dict((d.get("jndi_name"), d) for d in datasources or [] if d.get("jndi_name"))
+    requires = []
+    for key, attribute, transactional in (
+            ("jta_datasource", "defaultJtaDataSourceJndiName", True),
+            ("non_jta_datasource", "defaultNonJtaDataSourceJndiName", False)):
+        jndi = jpa.get(key)
+        if not jndi:
+            continue
+        attrs[attribute] = str(jndi)
+        requires.append(str(jndi))
+        declared = by_jndi.get(jndi)
+        if declared is not None:
+            is_tx = str(declared.get("transactional", "true")).lower() != "false"
+            if is_tx != transactional:
+                errors.append(
+                    "jpa.%s is %s, declared %s: a %s default must be a %s datasource"
+                    % (key, jndi, "transactional" if is_tx else "non-transactional",
+                       "JTA" if transactional else "non-JTA",
+                       "transactional" if transactional else "non-transactional"))
+    if jpa.get("jta_datasource") and jpa.get("jta_datasource") == jpa.get("non_jta_datasource"):
+        errors.append("jpa: one datasource cannot be both the JTA and the non-JTA default")
+
+    settings = {}
+    if attrs:
+        settings["components"] = {"JavaPersistenceAPIService": attrs}
+    if level and level in ("2.0", "2.1"):
+        settings["jpa_spec_level"] = level
+    if requires:
+        settings["requires_datasources"] = requires
+    return {"settings": settings, "errors": errors, "warnings": warnings}
+
+
 class FilterModule(object):
     def filters(self):
         return {
+            "cdi_settings": cdi_settings,
+            "ejb_container_settings": ejb_container_settings,
             "jdbc_groups": jdbc_groups,
             "jms_groups": jms_groups,
+            "jpa_settings": jpa_settings,
             "library_groups": library_groups,
             "sibus_specs": sibus_specs,
             "to_seconds": to_seconds,
+            "transaction_settings": transaction_settings,
         }

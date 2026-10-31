@@ -158,3 +158,32 @@ jms:
       provider: mq
       destination_jndi: jms/sim/payments
       max_concurrency: 5
+
+# --------------------------------------------------------------------------
+# Server settings - families 3 and 2
+# --------------------------------------------------------------------------
+# On every member of the cluster, read from the cell. Peer recovery with each
+# member's recovery log under a shared root; persistent EJB timers in a shared
+# database, so a timer does not fire once per member; implicit bean archives
+# off; JPA 2.1 on EclipseLink, its JTA default the orders datasource and its
+# non-JTA default the reporting one, which is declared non-transactional.
+transactions:
+  total_timeout: 2m
+  maximum_timeout: 5m
+  log_root: /shared/tranlog
+  peer_recovery: true
+
+ejb_container:
+  cache_size: 3000
+  timers:
+    datasource_jndi: jdbc/sim/orders
+    poll_interval: 5m
+
+cdi:
+  implicit_bean_archives: false
+
+jpa:
+  spec_level: "2.1"
+  provider: eclipselink
+  jta_datasource: jdbc/sim/orders
+  non_jta_datasource: jdbc/sim/reporting

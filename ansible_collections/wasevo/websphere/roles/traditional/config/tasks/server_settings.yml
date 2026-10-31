@@ -1,0 +1,108 @@
+---
+# Apply server settings - one wsadmin session, every server of the target.
+#
+# Shared by the roles whose whole work is setting attributes on what every
+# application server already carries: transactions, ejb_container, cdi, jpa.
+# Each translates its intent with a filter of plugins/filter/traditional.py
+# and hands the result here, so the four apply it the same way:
+#
+#   - ansible.builtin.include_role:
+#       name: wasevo.websphere.traditional.config
+#       tasks_from: server_settings.yml
+#     vars:
+#       settings_label: transactions
+#       settings_render: "{{ transactions | wasevo.websphere.transaction_settings(...) }}"
+#       settings_target: "{{ transactions_target }}"
+#
+# settings_render is {"settings": {...}, "errors": [...], "warnings": [...]}.
+# settings_target is {} for the run's cluster, or {node, server} for one
+# server - which a standalone topology must name, since no convention names
+# its server.
+
+- name: Every setting must be one WAS applies as declared - {{ settings_label }}
+  ansible.builtin.assert:
+    that:
+      - settings_render.errors | length == 0
+    fail_msg: >-
+      {{ settings_render.errors | length }} {{ settings_label }} problem(s):
+      {{ settings_render.errors | join(' | ') }}
+    success_msg: "{{ settings_label }}: the declaration translates"
+
+- name: What deserves a look but does not stop the run
+  ansible.builtin.debug:
+    msg: "{{ settings_render.warnings }}"
+  when: settings_render.warnings | default([]) | length > 0
+
+- name: The servers these settings apply to
+  ansible.builtin.set_fact:
+    _settings_target: >-
+      {{ settings_target if (settings_target | default({}) | length > 0)
+         else ({'cluster': was_cluster_name} if (was_can_cluster | bool) else {}) }}
+
+- name: A topology without a cluster must name its server
+  ansible.builtin.assert:
+    that:
+      - _settings_target.cluster is defined
+        or (_settings_target.node is defined and _settings_target.server is defined)
+    fail_msg: >-
+      was_topology is "{{ was_topology }}", which has no cluster, and
+      {{ settings_label }}_target names no server. Set it to
+      {node: <node>, server: <server>} - nothing derives a standalone
+      server's name.
+    success_msg: >-
+      {{ 'every member of cluster ' ~ _settings_target.cluster
+         if _settings_target.cluster is defined
+         else 'server ' ~ _settings_target.server ~ ' on ' ~ _settings_target.node }}
+
+- name: Administrative credentials must be supplied to reach the cell
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | default('') | length > 0
+      - was_admin_password | default('') | length > 0
+    fail_msg: >-
+      Reaching a cell with administrative security enabled needs
+      was_admin_user and was_admin_password - the deployment manager's
+      administrator, not a local account. Supply them from an AWX credential
+      or a vault.
+    success_msg: "administrative credentials supplied"
+
+- name: Stage the Jython driver on the deployment manager
+  ansible.builtin.include_tasks: main.yml
+
+- name: The deployment manager profile must exist on this host
+  ansible.builtin.stat:
+    path: "{{ was_profile_path }}/bin/wsadmin.sh"
+  register: _settings_wsadmin
+  check_mode: false
+
+- name: Refuse clearly when it does not
+  ansible.builtin.fail:
+    msg: >-
+      No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+      {{ inventory_hostname }}. Server settings live in the master
+      configuration repository, which is the deployment manager profile -
+      created by the profile job. A check run needs it too: reading the cell
+      is how a dry run tells the truth.
+  when: not (_settings_wsadmin.stat.exists | default(false))
+
+- name: Apply the settings - {{ settings_label }}
+  wasevo.websphere.was_server_settings:
+    target: "{{ _settings_target }}"
+    components: "{{ settings_render.settings.components | default({}) }}"
+    jvm_properties: "{{ settings_render.settings.jvm_properties | default({}) }}"
+    cluster_attributes: "{{ settings_render.settings.cluster_attributes | default({}) }}"
+    jpa_spec_level: "{{ settings_render.settings.jpa_spec_level | default(omit) }}"
+    requires_datasources: "{{ settings_render.settings.requires_datasources | default([]) }}"
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: _settings_result
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ settings_label }}: {{ (_settings_result.settings.servers | default({})) | length }}
+      server(s), changed {{ _settings_result.changed }}{{
+      '; restart needed: ' ~ (_settings_result.restart_required | join(', '))
+      if _settings_result.restart_required | default([]) | length > 0 else '' }}

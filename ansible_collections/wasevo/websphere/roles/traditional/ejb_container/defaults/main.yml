@@ -1,0 +1,30 @@
+---
+# The EJB container, its cache and its timer service. Family 3, enterprise
+# components.
+#
+# REPLAYABLE ON ITS OWN. The cache resized, the timers moved to a shared
+# database - one replay of this role; the module lists the servers to restart.
+#
+#   ejb_container:
+#     passivation_directory: /app/ejb/passivation
+#     inactive_pool_cleanup_interval: 30s   # WAS keeps milliseconds; a bare number is ms
+#     cache_size: 2053
+#     cache_cleanup_interval: 3s
+#     timers:                               # the persistent EJB timer service
+#       datasource_jndi: jdbc/ejbTimers     # a shared database, from the JDBC job
+#       table_prefix: EJBTIMER_
+#       poll_interval: 5m
+#       threads: 1
+#       # scheduler_jndi: sched/timers      # or a custom scheduler, instead
+#
+# TIMERS IN A CLUSTER. Left at the default, each server keeps its persistent
+# timers in its own embedded database: a timer an application creates at
+# startup is created once per member and fires once per member. Declaring
+# `timers` for a cluster of several members without a shared datasource or a
+# custom scheduler is refused. Not declaring `timers` leaves the timer service
+# as it is.
+ejb_container: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+ejb_container_target: {}
