@@ -55,6 +55,10 @@ GENERIC_TYPES = (
     "SIBMessagingEngine",
     "SIBQueue",
     "SIBTopicSpace",
+    "SIBJMSConnectionFactory",
+    "SIBJMSQueue",
+    "SIBJMSTopic",
+    "SIBJMSActivationSpec",
 )
 
 # The reliability levels WAS accepts on a bus destination. Anything else is a
@@ -984,6 +988,130 @@ class FakeAdminTask(object):
         for config_type in types:
             ids += self._children(bus_id, config_type)
         return "\n".join(sorted(ids))
+
+    # -- JMS on the default messaging provider ----------------------------
+    #
+    # One mechanism for the four kinds. Attributes are stored under their WAS
+    # keys and shown the way the real show* verbs flatten a JMS resource:
+    # "{name=X, jndiName=jms/x, busName=B}".
+
+    _JMS_ENUMS = {
+        "type": ("queue", "topic"),
+        "deliveryMode": ("Application", "NonPersistent", "Persistent"),
+        "destinationType": ("javax.jms.Queue", "javax.jms.Topic"),
+    }
+
+    def _jms_scope_ids(self, scope_id):
+        return [i for i, o in self.config.state["objects"].items()
+                if o["parent"] == scope_id and o["type"].startswith("SIBJMS")]
+
+    def _jms_create(self, config_type, scope_id, args):
+        attrs = {}
+        index = 0
+        while index < len(args):
+            flag = args[index]
+            if not flag.startswith("-") or index + 1 >= len(args):
+                raise ValueError("unreadable JMS arguments %r" % (args,))
+            attrs[flag[1:]] = args[index + 1]
+            index += 2
+        for key, allowed in self._JMS_ENUMS.items():
+            if key in attrs and attrs[key] not in allowed:
+                raise ValueError("%s %r is not one of %s" % (key, attrs[key], ", ".join(allowed)))
+        for other in self._jms_scope_ids(scope_id):
+            o = self.config.state["objects"][other]["attrs"]
+            if self.config.state["objects"][other]["type"] == config_type and o["name"] == attrs["name"]:
+                raise RuntimeError("%s %r already exists in that scope - the handler should "
+                                   "have planned an update" % (config_type, attrs["name"]))
+            if o.get("jndiName") == attrs.get("jndiName"):
+                raise RuntimeError("JNDI name %r is already bound to %r - the handler should "
+                                   "have refused it" % (attrs.get("jndiName"), o["name"]))
+        # A SIB JMS queue on a bus destination that is not a queue is a
+        # mistake WAS saves and the application meets at its first send.
+        if config_type == "SIBJMSQueue" and attrs.get("busName"):
+            bus_id = self._bus(attrs["busName"])
+            dest = self._destination(bus_id, attrs.get("queueName"))
+            if dest is None or self.config.state["objects"][dest]["type"] != "SIBQueue":
+                raise RuntimeError("JMS queue %r points at %r, not a queue of bus %r - the handler "
+                                   "should have refused it" % (attrs["name"], attrs.get("queueName"), attrs["busName"]))
+        return self.config._create_object(config_type, attrs["name"], attrs, scope_id)
+
+    def _jms_list(self, config_type, scope_id):
+        return "\n".join(sorted(
+            i for i in self._jms_scope_ids(scope_id)
+            if self.config.state["objects"][i]["type"] == config_type
+        ))
+
+    def _jms_show(self, config_id):
+        attrs = self.config.state["objects"][config_id]["attrs"]
+        keys = ["name"] + sorted(k for k in attrs if k != "name")
+        return "{%s}" % ", ".join("%s=%s" % (k, attrs[k]) for k in keys)
+
+    def _jms_modify(self, config_id, args):
+        attrs = self.config.state["objects"][config_id]["attrs"]
+        for index in range(0, len(args), 2):
+            attrs[args[index][1:]] = args[index + 1]
+        self.config.state["saved"] = False
+        _store(self.config.state)
+
+    def createSIBJMSConnectionFactory(self, scope_id, args):
+        return self._jms_create("SIBJMSConnectionFactory", scope_id, args)
+
+    def listSIBJMSConnectionFactories(self, scope_id):
+        return self._jms_list("SIBJMSConnectionFactory", scope_id)
+
+    def showSIBJMSConnectionFactory(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifySIBJMSConnectionFactory(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteSIBJMSConnectionFactory(self, config_id):
+        self.config.remove(config_id)
+
+    def createSIBJMSQueue(self, scope_id, args):
+        return self._jms_create("SIBJMSQueue", scope_id, args)
+
+    def listSIBJMSQueues(self, scope_id):
+        return self._jms_list("SIBJMSQueue", scope_id)
+
+    def showSIBJMSQueue(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifySIBJMSQueue(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteSIBJMSQueue(self, config_id):
+        self.config.remove(config_id)
+
+    def createSIBJMSTopic(self, scope_id, args):
+        return self._jms_create("SIBJMSTopic", scope_id, args)
+
+    def listSIBJMSTopics(self, scope_id):
+        return self._jms_list("SIBJMSTopic", scope_id)
+
+    def showSIBJMSTopic(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifySIBJMSTopic(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteSIBJMSTopic(self, config_id):
+        self.config.remove(config_id)
+
+    def createSIBJMSActivationSpec(self, scope_id, args):
+        return self._jms_create("SIBJMSActivationSpec", scope_id, args)
+
+    def listSIBJMSActivationSpecs(self, scope_id):
+        return self._jms_list("SIBJMSActivationSpec", scope_id)
+
+    def showSIBJMSActivationSpec(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifySIBJMSActivationSpec(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteSIBJMSActivationSpec(self, config_id):
+        self.config.remove(config_id)
 
     def modifyServerPort(self, args):
         # modifyServerPort(<server>, '-nodeName n -endPointName e -host * -port p')
