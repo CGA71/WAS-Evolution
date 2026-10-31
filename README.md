@@ -458,7 +458,11 @@ with both ways out named.
 
 `sim:isolation` asserts the boundary rather than describing it: the CI identity
 must **not** be able to exec into `kube-system`, `ci` or `default`, and both
-NetworkPolicies must be in place. The ServiceAccount is bound by namespaced
+NetworkPolicies must be in place. Reading those two policies is a right the
+Roles grant explicitly, and the only one that is read-only: without it the
+assertion failed on `Forbidden`, which looks exactly like a missing policy and
+is not. No write verb on them, because the boundary is applied by an
+administrator and the pipeline's business is to check it. The ServiceAccount is bound by namespaced
 Roles, never a ClusterRole, so a leaked CI token reaches exactly two throwaway
 namespaces.
 
@@ -1529,7 +1533,12 @@ compteur de deux est refusé en nommant les deux sorties.
 
 `sim:isolation` vérifie la frontière plutôt que de la décrire : l'identité CI ne
 doit **pas** pouvoir faire d'exec dans `kube-system`, `ci` ou `default`, et les
-deux NetworkPolicies doivent être en place. Le ServiceAccount est lié par des
+deux NetworkPolicies doivent être en place. Lire ces deux politiques est un
+droit que les Roles accordent explicitement, et le seul qui soit en lecture
+seule : sans lui, l'assertion échouait sur `Forbidden`, ce qui ressemble
+exactement à une politique absente et n'en est pas une. Aucun verbe d'écriture
+dessus : la frontière est posée par un administrateur, et la chaîne a pour
+affaire de la vérifier. Le ServiceAccount est lié par des
 Roles namespacés, jamais par un ClusterRole, donc un token CI fuité n'atteint
 exactement que deux namespaces jetables.
 
