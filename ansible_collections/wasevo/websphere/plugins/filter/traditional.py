@@ -711,16 +711,602 @@ def jpa_settings(jpa, datasources):
     return {"settings": settings, "errors": errors, "warnings": warnings}
 
 
+def _flag(errors, name, value):
+    """A boolean as WAS shows it, "true" or "false"; None when it is neither."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value).strip().lower()
+    if text in ("true", "false"):
+        return text
+    errors.append("%s: %r is not true or false" % (name, value))
+    return None
+
+
+def _unknown(errors, prefix, declared, known):
+    for key in sorted(declared):
+        if key not in known:
+            errors.append("%s: %s is not one of %s" % (prefix, key, ", ".join(known)))
+
+
+def _absolute(errors, name, value):
+    text = str(value).rstrip("/")
+    if not text.startswith("/"):
+        errors.append("%s %r is not an absolute path" % (name, value))
+        return None
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Dynamic cache - family 5
+# ---------------------------------------------------------------------------
+
+DYNACACHE_KEYS = ("enabled", "cache_size", "default_priority", "disk_offload",
+                  "disk_offload_root", "flush_to_disk_on_stop", "servlet_caching")
+
+
+def dynacache_settings(dc):
+    """The dynamic cache service of every server, and servlet caching.
+
+    disk_offload_root is a root: each server offloads to
+    <root>/{node}/{server}. Members sharing one offload directory would
+    overwrite each other's cache files - and WAS accepts the shared path.
+    """
+    dc = dc or {}
+    errors = []
+    warnings = []
+    _unknown(errors, "dynamic_cache", dc, DYNACACHE_KEYS)
+    cache = {}
+    enabled = None
+    if "enabled" in dc:
+        enabled = _flag(errors, "dynamic_cache.enabled", dc["enabled"])
+        if enabled:
+            cache["enable"] = enabled
+    if "cache_size" in dc:
+        size = _count(errors, "dynamic_cache.cache_size", dc["cache_size"], 1)
+        if size is not None:
+            cache["cacheSize"] = str(size)
+    if "default_priority" in dc:
+        priority = _count(errors, "dynamic_cache.default_priority", dc["default_priority"], 1)
+        if priority is not None:
+            if priority > 255:
+                errors.append("dynamic_cache.default_priority %d is above 255" % priority)
+            else:
+                cache["defaultPriority"] = str(priority)
+    offload = None
+    if "disk_offload" in dc:
+        offload = _flag(errors, "dynamic_cache.disk_offload", dc["disk_offload"])
+        if offload:
+            cache["enableDiskOffload"] = offload
+    for key in ("disk_offload_root", "flush_to_disk_on_stop"):
+        if key in dc and offload != "true":
+            errors.append("dynamic_cache.%s without disk_offload: true - WAS would keep "
+                          "it and never use it" % key)
+    if dc.get("disk_offload_root") and offload == "true":
+        root = _absolute(errors, "dynamic_cache.disk_offload_root", dc["disk_offload_root"])
+        if root:
+            cache["diskOffloadLocation"] = "%s/{node}/{server}" % root
+    if "flush_to_disk_on_stop" in dc and offload == "true":
+        flush = _flag(errors, "dynamic_cache.flush_to_disk_on_stop", dc["flush_to_disk_on_stop"])
+        if flush:
+            cache["flushToDiskOnStop"] = flush
+    if enabled == "false" and len(cache) > 1:
+        errors.append("dynamic_cache: settings declared with enabled: false - the service "
+                      "would not start, and none of them would apply")
+
+    components = {}
+    if cache:
+        components["DynamicCache"] = cache
+    if "servlet_caching" in dc:
+        servlet = _flag(errors, "dynamic_cache.servlet_caching", dc["servlet_caching"])
+        if servlet == "true" and enabled == "false":
+            errors.append("dynamic_cache.servlet_caching needs the dynamic cache service, "
+                          "and enabled is false")
+        if servlet == "true":
+            warnings.append("dynamic_cache.servlet_caching caches nothing until an "
+                            "application ships a cachespec.xml")
+        if servlet:
+            components["WebContainer"] = {"enableServletCaching": servlet}
+    settings = {"components": components} if components else {}
+    return {"settings": settings, "errors": errors, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Logging and trace - family 5
+# ---------------------------------------------------------------------------
+
+LOGGING_MODES = ("basic", "hpel")
+LOGGING_COMMON = ("mode", "trace_spec")
+LOGGING_HPEL = ("repository_root", "log_max_size", "log_max_age", "trace_max_size", "text_log")
+LOGGING_BASIC = ("trace_file_size", "trace_backups")
+TRACE_LEVELS = ("all", "finest", "finer", "fine", "detail", "config", "info", "audit",
+                "warning", "severe", "fatal", "off")
+_TRACE_PART = re.compile(r"^[A-Za-z0-9_.$*\-/]+=(%s)$" % "|".join(TRACE_LEVELS))
+_TRACE_LEGACY = re.compile(r"^[A-Za-z0-9_.$*\-/]+=[a-z]+=(enabled|disabled)$")
+
+
+def _trace_spec(errors, warnings, spec):
+    spec = str(spec).strip()
+    for part in spec.split(":"):
+        if not (_TRACE_PART.match(part) or _TRACE_LEGACY.match(part)):
+            errors.append("logging.trace_spec: %r is not <component>=<level>, the level "
+                          "one of %s" % (part, ", ".join(TRACE_LEVELS)))
+        elif part.startswith("*=") and part.split("=")[1] in ("all", "finest", "finer", "fine"):
+            warnings.append("logging.trace_spec %s traces every component of every "
+                            "server of the target, from its next start" % part)
+    return spec
+
+
+def _hours(errors, name, value):
+    text = str(value).strip()
+    if text.isdigit():
+        hours = int(text)
+    else:
+        seconds = _seconds(errors, name, value)
+        if seconds is None:
+            return None
+        if seconds % 3600:
+            errors.append("%s: %r is not a whole number of hours" % (name, value))
+            return None
+        hours = seconds // 3600
+    if hours < 1:
+        errors.append("%s: %r is under an hour" % (name, value))
+        return None
+    return hours
+
+
+def logging_settings(lg):
+    """The log and trace mode of every server, and its settings.
+
+    hpel switches the High Performance Extensible Logging service on and the
+    basic RAS logging service off - IBM's procedure, both flags in one change,
+    applied at the next start. A setting of the other mode is refused rather
+    than written: WAS keeps it, and it never applies.
+    """
+    lg = lg or {}
+    errors = []
+    warnings = []
+    if not lg:
+        return {"settings": {}, "errors": errors, "warnings": warnings}
+    _unknown(errors, "logging", lg, LOGGING_COMMON + LOGGING_HPEL + LOGGING_BASIC)
+    mode = lg.get("mode")
+    if mode not in LOGGING_MODES:
+        errors.append("logging.mode is %r: declare basic or hpel - the trace "
+                      "specification lives in a different place in each" % (mode,))
+        return {"settings": {}, "errors": errors, "warnings": warnings}
+    other = LOGGING_BASIC if mode == "hpel" else LOGGING_HPEL
+    for key in sorted(lg):
+        if key in other:
+            errors.append("logging.%s belongs to the other mode, and mode is %s: WAS "
+                          "would keep it and never use it" % (key, mode))
+
+    components = {}
+    spec = _trace_spec(errors, warnings, lg["trace_spec"]) if lg.get("trace_spec") else None
+    if mode == "hpel":
+        components["HighPerformanceExtensibleLogging"] = {"enable": "true"}
+        components["RASLoggingService"] = {"enable": "false"}
+        if spec:
+            components["HighPerformanceExtensibleLogging"]["startupTraceSpec"] = spec
+        log, trace = {}, {}
+        if lg.get("repository_root"):
+            root = _absolute(errors, "logging.repository_root", lg["repository_root"])
+            if root:
+                log["dataDirectory"] = trace["dataDirectory"] = "%s/{node}/{server}" % root
+        if "log_max_size" in lg:
+            size = _count(errors, "logging.log_max_size", lg["log_max_size"], 1)
+            if size is not None:
+                log.update(purgeBySizeEnabled="true", purgeMaxSize=str(size))
+        if "log_max_age" in lg:
+            hours = _hours(errors, "logging.log_max_age", lg["log_max_age"])
+            if hours is not None:
+                log.update(purgeByTimeEnabled="true", purgeMinTime=str(hours))
+        if "trace_max_size" in lg:
+            size = _count(errors, "logging.trace_max_size", lg["trace_max_size"], 1)
+            if size is not None:
+                trace.update(purgeBySizeEnabled="true", purgeMaxSize=str(size))
+        if log:
+            components["HPELLog"] = log
+        if trace:
+            components["HPELTrace"] = trace
+        if "text_log" in lg:
+            text = _flag(errors, "logging.text_log", lg["text_log"])
+            if text:
+                components["HPELTextLog"] = {"enabled": text}
+    else:
+        components["HighPerformanceExtensibleLogging"] = {"enable": "false"}
+        components["RASLoggingService"] = {"enable": "true"}
+        if spec:
+            components["TraceService"] = {"startupTraceSpecification": spec}
+        trace_log = {}
+        if "trace_file_size" in lg:
+            size = _count(errors, "logging.trace_file_size", lg["trace_file_size"], 1)
+            if size is not None:
+                trace_log["rolloverSize"] = str(size)
+        if "trace_backups" in lg:
+            backups = _count(errors, "logging.trace_backups", lg["trace_backups"], 1)
+            if backups is not None:
+                trace_log["maxNumberOfBackupFiles"] = str(backups)
+        if trace_log:
+            components["TraceLog"] = trace_log
+    return {"settings": {"components": components}, "errors": errors, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# PMI - family 6
+# ---------------------------------------------------------------------------
+
+PMI_KEYS = ("enabled", "statistic_set", "synchronized_update")
+PMI_SETS = ("none", "basic", "extended", "all")
+
+
+def pmi_settings(pmi):
+    """The Performance Monitoring Infrastructure of every server."""
+    pmi = pmi or {}
+    errors = []
+    warnings = []
+    _unknown(errors, "pmi", pmi, PMI_KEYS)
+    attrs = {}
+    enabled = None
+    if "enabled" in pmi:
+        enabled = _flag(errors, "pmi.enabled", pmi["enabled"])
+        if enabled:
+            attrs["enable"] = enabled
+    if "statistic_set" in pmi:
+        chosen = str(pmi["statistic_set"]).lower()
+        if chosen == "custom":
+            errors.append("pmi.statistic_set custom needs a counter-by-counter "
+                          "specification this role does not carry - choose one of %s"
+                          % ", ".join(PMI_SETS))
+        elif chosen not in PMI_SETS:
+            errors.append("pmi.statistic_set %r is not one of %s"
+                          % (pmi["statistic_set"], ", ".join(PMI_SETS)))
+        else:
+            if enabled == "false":
+                errors.append("pmi.statistic_set with enabled: false - no statistic "
+                              "would be collected")
+            if chosen == "all":
+                warnings.append("pmi.statistic_set all collects every counter on every "
+                                "server, at a measurable cost: keep it for a diagnosis")
+            attrs["statisticSet"] = chosen
+    if "synchronized_update" in pmi:
+        sync = _flag(errors, "pmi.synchronized_update", pmi["synchronized_update"])
+        if sync == "true":
+            warnings.append("pmi.synchronized_update serialises every counter update")
+        if sync:
+            attrs["synchronizedUpdate"] = sync
+    settings = {"components": {"PMIService": attrs}} if attrs else {}
+    return {"settings": settings, "errors": errors, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Security - family 5
+# ---------------------------------------------------------------------------
+
+REGISTRY_TYPES = {
+    "federated": "WIMUserRegistry",
+    "ldap": "LDAPUserRegistry",
+    "localos": "LocalOSUserRegistry",
+    "custom": "CustomUserRegistry",
+}
+SECURITY_KEYS = ("admin_security", "app_security", "java2_security", "registry")
+REGISTRY_KEYS = ("type", "primary_admin_id", "realm", "ldap", "custom")
+LDAP_KEYS = ("server_type", "hosts", "base_dn", "bind_dn", "bind_password_env", "ssl",
+             "ssl_config", "search_timeout", "reuse_connection", "allow_plaintext")
+LDAP_SERVER_TYPES = ("IBM_DIRECTORY_SERVER", "ACTIVE_DIRECTORY", "IPLANET", "NETSCAPE", "NDS",
+                     "DOMINO502", "SECUREWAY", "CUSTOM")
+DEFAULT_REALM = "defaultWIMFileBasedRealm"
+
+
+def _ldap_hosts(errors, hosts, ssl):
+    out = []
+    for entry in hosts or []:
+        if isinstance(entry, dict):
+            host, port = entry.get("host"), entry.get("port", 636 if ssl else 389)
+        else:
+            host, _, port = str(entry).partition(":")
+            port = port or (636 if ssl else 389)
+        if not host:
+            errors.append("security.registry.ldap.hosts: %r is not host or host:port" % (entry,))
+            continue
+        number = _count(errors, "security.registry.ldap.hosts %s port" % host, port, 1)
+        if number is not None:
+            out.append({"host": str(host), "port": str(number)})
+    return out
+
+
+def security_settings(sec):
+    """Global security and the active user registry.
+
+    One of the four registry types WAS offers - federated repositories, a
+    standalone LDAP, the local operating system, a custom registry - is
+    configured and made the active one. What WAS accepts here and should not
+    locks people out or lets them in: refused before any session.
+    """
+    sec = sec or {}
+    errors = []
+    warnings = []
+    _unknown(errors, "security", sec, SECURITY_KEYS)
+    settings = {}
+
+    if _flag(errors, "security.admin_security", sec.get("admin_security", True)) == "false":
+        errors.append("security.admin_security false: WAS accepts it, and every "
+                      "administrative request is then served unauthenticated. This "
+                      "role does not turn administrative security off")
+    settings["admin_security"] = "true"
+    for key in ("app_security", "java2_security"):
+        if key in sec:
+            value = _flag(errors, "security." + key, sec[key])
+            if value:
+                settings[key] = value
+    if settings.get("java2_security") == "true":
+        warnings.append("security.java2_security: an application that does not declare "
+                        "the permissions it uses fails at run time, not at deployment")
+
+    registry = sec.get("registry") or {}
+    _unknown(errors, "security.registry", registry, REGISTRY_KEYS)
+    kind = registry.get("type")
+    if kind not in REGISTRY_TYPES:
+        errors.append("security.registry.type is %r: one of %s"
+                      % (kind, ", ".join(sorted(REGISTRY_TYPES))))
+        return {"settings": settings, "errors": errors, "warnings": warnings}
+    for other in ("ldap", "custom"):
+        if other in registry and other != kind:
+            errors.append("security.registry.%s is declared and the type is %s: it would "
+                          "be ignored" % (other, kind))
+    admin_id = registry.get("primary_admin_id")
+    if not admin_id:
+        errors.append("security.registry.primary_admin_id is missing: a registry made "
+                      "active without an administrator that exists in it locks every "
+                      "administrator out at the next start")
+    out = {"type": REGISTRY_TYPES[kind], "attributes": {"primaryAdminId": str(admin_id or "")}}
+
+    if kind == "federated":
+        out["attributes"]["realm"] = str(registry.get("realm") or DEFAULT_REALM)
+    elif "realm" in registry:
+        errors.append("security.registry.realm is the federated repositories' realm "
+                      "name; a %s registry names its realm itself" % kind)
+
+    if kind == "ldap":
+        ldap = registry.get("ldap") or {}
+        _unknown(errors, "security.registry.ldap", ldap, LDAP_KEYS)
+        ssl = _flag(errors, "security.registry.ldap.ssl", ldap.get("ssl", False))
+        server_type = str(ldap.get("server_type", "")).upper()
+        if server_type not in LDAP_SERVER_TYPES:
+            errors.append("security.registry.ldap.server_type %r is not one of %s"
+                          % (ldap.get("server_type"), ", ".join(LDAP_SERVER_TYPES)))
+        if not ldap.get("base_dn"):
+            errors.append("security.registry.ldap.base_dn is missing: every search "
+                          "would start at the root of the directory")
+        hosts = _ldap_hosts(errors, ldap.get("hosts"), ssl == "true")
+        if not hosts:
+            errors.append("security.registry.ldap.hosts is empty")
+        if ssl != "true" and not ldap.get("allow_plaintext"):
+            errors.append("security.registry.ldap.ssl is false: the bind password and "
+                          "every user's password would cross the network in clear. Set "
+                          "ssl: true, or allow_plaintext: true to say it is deliberate")
+        if ldap.get("bind_dn") and not ldap.get("bind_password_env"):
+            errors.append("security.registry.ldap.bind_dn without bind_password_env: "
+                          "the bind password comes from a credential, by the name of "
+                          "the variable that carries it")
+        attrs = out["attributes"]
+        attrs.update(type=server_type, baseDN=str(ldap.get("base_dn", "")),
+                     bindDN=str(ldap.get("bind_dn", "")), sslEnabled=ssl or "false")
+        if ldap.get("ssl_config"):
+            attrs["sslConfig"] = str(ldap["ssl_config"])
+        if "search_timeout" in ldap:
+            seconds = _seconds(errors, "security.registry.ldap.search_timeout", ldap["search_timeout"])
+            if seconds is not None:
+                attrs["searchTimeout"] = str(seconds)
+        if "reuse_connection" in ldap:
+            reuse = _flag(errors, "security.registry.ldap.reuse_connection", ldap["reuse_connection"])
+            if reuse:
+                attrs["reuseConnection"] = reuse
+        out["hosts"] = hosts
+        if ldap.get("bind_password_env"):
+            settings["bind_password_env"] = str(ldap["bind_password_env"])
+
+    if kind == "custom":
+        custom = registry.get("custom") or {}
+        _unknown(errors, "security.registry.custom", custom, ("class", "properties"))
+        if not custom.get("class"):
+            errors.append("security.registry.custom.class is missing")
+        out["attributes"]["customRegistryClassName"] = str(custom.get("class", ""))
+        out["properties"] = dict((str(k), str(v)) for k, v in (custom.get("properties") or {}).items())
+        warnings.append("security.registry custom: the class must be on the class path "
+                        "of the deployment manager and of every node")
+
+    settings["registry"] = out
+    return {"settings": settings, "errors": errors, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# SSL - family 5
+# ---------------------------------------------------------------------------
+
+# What IBM's createSSLConfig reference lists, less what negotiates below TLS
+# 1.2. A comma-separated list is accepted from 9.0.5.11, of TLS versions only.
+SSL_PROTOCOLS = ("TLSv1.2", "TLSv1.3", "TLSv1.2,TLSv1.3")
+SSL_REFUSED = ("SSL", "SSLv2", "SSLv3", "SSL_TLS", "SSL_TLSv2", "TLS", "TLSv1", "TLSv1.1")
+SSL_LEVELS = ("HIGH", "MEDIUM")
+SSL_CLIENT_AUTH = ("none", "supported", "required")
+SSL_CONFIG_KEYS = ("alias", "scope", "keystore", "truststore", "protocol",
+                   "security_level", "client_auth", "state")
+SIGNER_KEYS = ("alias", "host", "port", "truststore", "scope", "state")
+# Created with the profile, and what every endpoint without its own falls back to.
+SSL_DEFAULT_CONFIGS = ("CellDefaultSSLSettings", "NodeDefaultSSLSettings", "XDADefaultSSLSettings")
+
+
+def _ssl_scope(errors, name, scope):
+    if scope in (None, "cell"):
+        return {"type": "cell"}
+    if isinstance(scope, dict) and scope.get("node"):
+        return {"type": "node", "node": str(scope["node"])}
+    errors.append("%s.scope %r is cell or {node: <name>}" % (name, scope))
+    return None
+
+
+def ssl_settings(ssl):
+    """SSL configurations, and the signers their trust stores need."""
+    ssl = ssl or {}
+    errors = []
+    warnings = []
+    _unknown(errors, "ssl", ssl, ("configs", "signers"))
+    configs = []
+    seen = []
+    for index, item in enumerate(ssl.get("configs") or []):
+        _unknown(errors, "ssl.configs[%d]" % index, item, SSL_CONFIG_KEYS)
+        alias = item.get("alias")
+        if not alias:
+            errors.append("ssl.configs[%d] has no alias" % index)
+            continue
+        name = "ssl config %s" % alias
+        scope = _ssl_scope(errors, name, item.get("scope"))
+        key = (alias, json.dumps(scope, sort_keys=True))
+        if key in seen:
+            errors.append("%s is declared twice at one scope" % name)
+        seen.append(key)
+        if item.get("state", "present") == "absent":
+            if alias in SSL_DEFAULT_CONFIGS:
+                errors.append("%s is a default the profile created, which every "
+                              "endpoint without its own configuration uses: it is "
+                              "modified, never deleted" % name)
+            configs.append({"alias": alias, "scope": scope, "state": "absent"})
+            continue
+        protocol = str(item.get("protocol", "TLSv1.2"))
+        if protocol in SSL_REFUSED:
+            errors.append("%s: protocol %s accepts a version of SSL or TLS below 1.2, "
+                          "which WAS negotiates if the peer asks for it" % (name, protocol))
+        elif protocol not in SSL_PROTOCOLS:
+            errors.append("%s: protocol %r is not one of %s" % (name, protocol, " | ".join(SSL_PROTOCOLS)))
+        level = str(item.get("security_level", "HIGH")).upper()
+        if level == "LOW":
+            errors.append("%s: security_level LOW enables export-grade and null ciphers" % name)
+        elif level == "CUSTOM":
+            errors.append("%s: security_level CUSTOM needs a cipher list this role does "
+                          "not carry - HIGH or MEDIUM" % name)
+        elif level not in SSL_LEVELS:
+            errors.append("%s: security_level %r is not HIGH or MEDIUM" % (name, level))
+        auth = str(item.get("client_auth", "none")).lower()
+        if auth not in SSL_CLIENT_AUTH:
+            errors.append("%s: client_auth %r is not one of %s" % (name, auth, ", ".join(SSL_CLIENT_AUTH)))
+        if not item.get("keystore") or not item.get("truststore"):
+            errors.append("%s needs a keystore and a truststore" % name)
+        configs.append({
+            "alias": alias, "scope": scope, "state": "present",
+            "keystore": str(item.get("keystore", "")), "truststore": str(item.get("truststore", "")),
+            "protocol": protocol, "security_level": level,
+            "client_auth": "true" if auth == "required" else "false",
+            "client_auth_supported": "true" if auth in ("supported", "required") else "false",
+        })
+
+    signers = []
+    for index, item in enumerate(ssl.get("signers") or []):
+        _unknown(errors, "ssl.signers[%d]" % index, item, SIGNER_KEYS)
+        if not item.get("alias"):
+            errors.append("ssl.signers[%d] has no alias" % index)
+            continue
+        name = "signer %s" % item["alias"]
+        scope = _ssl_scope(errors, name, item.get("scope"))
+        state = item.get("state", "present")
+        default_store = "CellDefaultTrustStore" if (scope or {}).get("type") == "cell" \
+            else "NodeDefaultTrustStore"
+        signer = {"alias": str(item["alias"]), "scope": scope, "state": state,
+                  "truststore": str(item.get("truststore") or default_store)}
+        if state == "present":
+            if not item.get("host") or not item.get("port"):
+                errors.append("%s needs the host and port it is retrieved from" % name)
+            else:
+                port = _count(errors, name + ".port", item["port"], 1)
+                signer.update(host=str(item["host"]), port=str(port))
+        signers.append(signer)
+    return {"settings": {"configs": configs, "signers": signers},
+            "errors": errors, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Web services policy sets - family 1
+# ---------------------------------------------------------------------------
+
+POLICY_SET_KEYS = ("name", "from_default", "copy_of", "description", "policies", "state")
+
+
+def _policy_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def policy_set_settings(policy_sets):
+    """Policy sets: imported from the product's defaults, or copied from one
+    and adjusted. Attaching them is the application deployment's business."""
+    errors = []
+    warnings = []
+    out = []
+    declared = []
+    items = list(policy_sets or [])
+    for index, item in enumerate(items):
+        name = item.get("name")
+        if not name:
+            errors.append("policy_sets[%d] has no name" % index)
+            continue
+        label = "policy set %s" % name
+        _unknown(errors, label, item, POLICY_SET_KEYS)
+        if name in declared:
+            errors.append("%s is declared twice" % label)
+        declared.append(name)
+        if item.get("state", "present") == "absent":
+            out.append({"name": name, "state": "absent"})
+            continue
+        source = item.get("from_default")
+        copy_of = item.get("copy_of")
+        if bool(source) == bool(copy_of):
+            errors.append("%s: one of from_default (import a product default as it is) "
+                          "or copy_of (copy a set, then adjust the copy)" % label)
+        if source and source != name:
+            errors.append("%s: from_default imports %s under its own name - to rename "
+                          "or adjust it, import it, then declare a copy_of it" % (label, source))
+        policies = item.get("policies") or {}
+        if source and policies:
+            errors.append("%s: policies on an imported default. Adjust a copy - a "
+                          "default is what the next import puts back" % label)
+        if copy_of:
+            deleted = [o["name"] for o in out if o["state"] == "absent"]
+            later = [i.get("name") for i in items[index + 1:]]
+            if copy_of in deleted:
+                errors.append("%s copies %s, which this declaration deletes" % (label, copy_of))
+            elif copy_of in later:
+                errors.append("%s copies %s, declared after it: declare the source first"
+                              % (label, copy_of))
+        rendered = {}
+        for policy_type in sorted(policies):
+            rendered[policy_type] = dict((str(k), _policy_value(v))
+                                         for k, v in (policies[policy_type] or {}).items())
+        entry = {"name": name, "state": "present", "policies": rendered}
+        if source:
+            entry["from_default"] = str(source)
+        if copy_of:
+            entry["copy_of"] = str(copy_of)
+        if "description" in item:
+            entry["description"] = str(item["description"])
+        out.append(entry)
+    return {"settings": {"policy_sets": out}, "errors": errors, "warnings": warnings}
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "cdi_settings": cdi_settings,
+            "dynacache_settings": dynacache_settings,
             "ejb_container_settings": ejb_container_settings,
             "jdbc_groups": jdbc_groups,
             "jms_groups": jms_groups,
             "jpa_settings": jpa_settings,
             "library_groups": library_groups,
+            "logging_settings": logging_settings,
+            "pmi_settings": pmi_settings,
+            "policy_set_settings": policy_set_settings,
+            "security_settings": security_settings,
             "sibus_specs": sibus_specs,
+            "ssl_settings": ssl_settings,
             "to_seconds": to_seconds,
             "transaction_settings": transaction_settings,
         }

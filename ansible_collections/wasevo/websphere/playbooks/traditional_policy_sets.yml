@@ -1,0 +1,26 @@
+---
+# Web services policy sets, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Family 1, web services and REST.
+# The sets only: attaching one to an application's services is part of that
+# application's deployment, the last step.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: Web services policy sets, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: Web services policy sets
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.policy_sets

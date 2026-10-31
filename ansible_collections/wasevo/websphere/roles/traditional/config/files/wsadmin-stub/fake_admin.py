@@ -71,6 +71,26 @@ GENERIC_TYPES = (
     "JavaPersistenceAPIService",
     "JavaVirtualMachine",
     "Property",
+    "DynamicCache",
+    "WebContainer",
+    "RASLoggingService",
+    "TraceService",
+    "TraceLog",
+    "HighPerformanceExtensibleLogging",
+    "HPELLog",
+    "HPELTrace",
+    "HPELTextLog",
+    "PMIService",
+    "Security",
+    "WIMUserRegistry",
+    "LDAPUserRegistry",
+    "LocalOSUserRegistry",
+    "CustomUserRegistry",
+    "EndPoint",
+    "ManagementScope",
+    "KeyStore",
+    "SSLConfig",
+    "SecureSocketLayer",
 )
 
 # The objects every application server carries from its creation, with the
@@ -124,8 +144,78 @@ SERVER_COMPONENTS = {
         "preferLocal": "true",
         "enableHA": "false",
     },
+    # Family 5 and 6: the services every server carries, as server.xml
+    # spells them. The HPEL names, startupTraceSpec among them, come from
+    # server.xml rather than IBM's scripting reference - the handler checks
+    # them against the real AdminConfig.attributes before writing.
+    "DynamicCache": {
+        "enable": "true",
+        "cacheSize": "2000",
+        "defaultPriority": "1",
+        "enableDiskOffload": "false",
+        "diskOffloadLocation": "",
+        "flushToDiskOnStop": "false",
+    },
+    "WebContainer": {
+        "enableServletCaching": "false",
+        "defaultVirtualHostName": "default_host",
+    },
+    "RASLoggingService": {
+        "enable": "true",
+        "messageFilterLevel": "NONE",
+    },
+    "TraceService": {
+        "enable": "true",
+        "startupTraceSpecification": "*=info",
+        "traceOutputType": "SPECIFIED_FILE",
+        "traceFormat": "BASIC",
+    },
+    "TraceLog": {
+        "fileName": "${SERVER_LOG_ROOT}/trace.log",
+        "rolloverSize": "20",
+        "maxNumberOfBackupFiles": "1",
+    },
+    "HighPerformanceExtensibleLogging": {
+        "enable": "false",
+        "startupTraceSpec": "*=info",
+    },
+    "HPELLog": {
+        "dataDirectory": "${SERVER_LOG_ROOT}",
+        "purgeBySizeEnabled": "true",
+        "purgeMaxSize": "50",
+        "purgeByTimeEnabled": "false",
+        "purgeMinTime": "168",
+        "outOfSpaceAction": "PurgeOld",
+        "bufferingEnabled": "true",
+    },
+    "HPELTrace": {
+        "dataDirectory": "${SERVER_LOG_ROOT}",
+        "purgeBySizeEnabled": "true",
+        "purgeMaxSize": "50",
+        "purgeByTimeEnabled": "false",
+        "purgeMinTime": "168",
+        "outOfSpaceAction": "PurgeOld",
+        "bufferingEnabled": "true",
+        "memoryBufferSize": "4",
+        "storageType": "DIRECTORY",
+    },
+    "HPELTextLog": {
+        "enabled": "true",
+        "dataDirectory": "${SERVER_LOG_ROOT}",
+        "purgeBySizeEnabled": "true",
+        "purgeMaxSize": "50",
+        "outputFormat": "BASIC",
+        "includeTrace": "false",
+    },
+    "PMIService": {
+        "enable": "true",
+        "statisticSet": "basic",
+        "synchronizedUpdate": "false",
+        "initialSpecLevel": "",
+    },
 }
 # Parents, as server.xml nests them.
+# Listed parents first: _materialise_server creates them in this order.
 COMPONENT_PARENTS = {
     "ApplicationServer": "server",
     "JavaVirtualMachine": "server",
@@ -133,6 +223,81 @@ COMPONENT_PARENTS = {
     "EJBContainer": "ApplicationServer",
     "EJBCache": "EJBContainer",
     "EJBTimer": "EJBContainer",
+    "DynamicCache": "ApplicationServer",
+    "WebContainer": "ApplicationServer",
+    "RASLoggingService": "server",
+    "TraceService": "server",
+    "TraceLog": "TraceService",
+    "HighPerformanceExtensibleLogging": "server",
+    "HPELLog": "HighPerformanceExtensibleLogging",
+    "HPELTrace": "HighPerformanceExtensibleLogging",
+    "HPELTextLog": "HighPerformanceExtensibleLogging",
+    "PMIService": "server",
+}
+COMPONENT_ORDER = (
+    "ApplicationServer", "JavaVirtualMachine", "TransactionService", "EJBContainer",
+    "EJBCache", "EJBTimer", "DynamicCache", "WebContainer", "RASLoggingService",
+    "TraceService", "TraceLog", "HighPerformanceExtensibleLogging", "HPELLog",
+    "HPELTrace", "HPELTextLog", "PMIService",
+)
+
+# security.xml of a new deployment manager profile created with administrative
+# security on: federated repositories active, the other three registries
+# configured empty. The fake's cell is TestCell, which AdminControl.getCell
+# answers.
+FAKE_CELL = "TestCell"
+SECURITY_DEFAULTS = {
+    "Security": {
+        "enabled": "true",
+        "appEnabled": "false",
+        "enforceJava2Security": "false",
+        "dynamicallyUpdateSSLConfig": "true",
+    },
+    "WIMUserRegistry": {"primaryAdminId": "wasadmin", "realm": "defaultWIMFileBasedRealm"},
+    "LDAPUserRegistry": {
+        "primaryAdminId": "", "type": "IBM_DIRECTORY_SERVER", "baseDN": "", "bindDN": "",
+        "sslEnabled": "false", "sslConfig": "", "searchTimeout": "120",
+        "reuseConnection": "true", "realm": "",
+    },
+    "LocalOSUserRegistry": {"primaryAdminId": "", "realm": ""},
+    "CustomUserRegistry": {
+        "primaryAdminId": "", "realm": "",
+        "customRegistryClassName": "com.ibm.websphere.security.FileRegistrySample",
+    },
+}
+REGISTRY_TYPES = ("WIMUserRegistry", "LDAPUserRegistry", "LocalOSUserRegistry", "CustomUserRegistry")
+SECURITY_TYPES = ("Security",) + REGISTRY_TYPES + ("ManagementScope", "KeyStore", "SSLConfig",
+                                                   "SecureSocketLayer", "EndPoint")
+# What createSSLConfig accepts; the role refuses most of these, WAS does not.
+# SSL_TLSv2 is what a profile's default configuration may hold; the rest is
+# IBM's createSSLConfig list, with the TLS-only pair 9.0.5.11 accepts.
+SSL_PROTOCOLS = ("SSL_TLS", "SSL", "SSLv2", "SSLv3", "TLS", "TLSv1", "TLSv1.1", "TLSv1.2",
+                 "TLSv1.3", "TLSv1.2,TLSv1.3", "SSL_TLSv2")
+SSL_LEVELS = ("HIGH", "MEDIUM", "LOW", "CUSTOM")
+SSL_DEFAULT_CONFIGS = ("CellDefaultSSLSettings", "NodeDefaultSSLSettings")
+
+# The default policy sets the product offers for import, with the policy
+# types each holds. The attribute names are the fake's own: the handler
+# compares only what a declaration names.
+DEFAULT_POLICY_SETS = {
+    "WSHTTPS default": {
+        "description": "HTTPS transport security",
+        "types": {"WSHTTPS": {"enabled": "true", "outRequestSSLenabled": "true",
+                              "inRequestSSLenabled": "true"}},
+    },
+    "WSAddressing default": {
+        "description": "WS-Addressing",
+        "types": {"WSAddressing": {"enabled": "true", "usingAddressing": "true"}},
+    },
+    "Username WSSecurity default": {
+        "description": "Username token and message protection",
+        "types": {"WSSecurity": {"enabled": "true"}, "WSAddressing": {"enabled": "true"}},
+    },
+    "WSReliableMessaging default": {
+        "description": "WS-ReliableMessaging 1.1",
+        "types": {"WSReliableMessaging": {"enabled": "true", "specLevel": "RM1_1"},
+                  "WSAddressing": {"enabled": "true"}},
+    },
 }
 JPA_SPEC_LEVELS = ("2.0", "2.1")
 
@@ -179,6 +344,16 @@ ATTRIBUTE_DEFAULTS = {
     "EJBTimer": SERVER_COMPONENTS["EJBTimer"],
     "JavaPersistenceAPIService": SERVER_COMPONENTS["JavaPersistenceAPIService"],
     "JavaVirtualMachine": {"systemProperties": ""},
+    "DynamicCache": SERVER_COMPONENTS["DynamicCache"],
+    "WebContainer": SERVER_COMPONENTS["WebContainer"],
+    "RASLoggingService": SERVER_COMPONENTS["RASLoggingService"],
+    "TraceService": SERVER_COMPONENTS["TraceService"],
+    "TraceLog": SERVER_COMPONENTS["TraceLog"],
+    "HighPerformanceExtensibleLogging": SERVER_COMPONENTS["HighPerformanceExtensibleLogging"],
+    "HPELLog": SERVER_COMPONENTS["HPELLog"],
+    "HPELTrace": SERVER_COMPONENTS["HPELTrace"],
+    "HPELTextLog": SERVER_COMPONENTS["HPELTextLog"],
+    "PMIService": SERVER_COMPONENTS["PMIService"],
     "Library": {
         "classPath": "",
         "nativePath": "",
@@ -218,6 +393,10 @@ EMPTY = {
     # JPA specification level per cluster or server config id; 2.1 when unset,
     # the default of a new WAS 9 profile.
     "jpa_levels": {},
+    # Policy sets imported or copied into the cell: name -> {description,
+    # default, types}, and the applications each is attached to.
+    "policy_sets": {},
+    "policy_attachments": {},
     "next_id": 1,
     "next_port": FIRST_GENERATED_PORT,
     "saved": True,
@@ -319,6 +498,10 @@ class FakeAdminConfig(object):
     def list(self, config_type, scope=None):
         if config_type == "ServerCluster":
             return "\n".join(sorted(self.state["clusters"].keys()))
+        if config_type == "ServerIndex":
+            return "\n".join(sorted(self.state["indexes"].keys()))
+        if config_type in SECURITY_TYPES:
+            self._materialise_security()
         if config_type in GENERIC_TYPES:
             if scope is not None:
                 self._materialise_server(scope)
@@ -354,15 +537,62 @@ class FakeAdminConfig(object):
         """
         if self._member_server(scope) is None:
             return
-        if any(o["parent"] == scope and o["type"] == "ApplicationServer"
-               for o in self.state["objects"].values()):
-            return
-        app = self._create_object("ApplicationServer", "ApplicationServer", {}, scope)
-        self._create_object("JavaVirtualMachine", "JavaVirtualMachine", {"systemProperties": []}, scope)
-        self._create_object("TransactionService", "TransactionService", {}, app)
-        ejb = self._create_object("EJBContainer", "EJBContainer", {}, app)
-        self._create_object("EJBCache", "EJBCache", {}, ejb)
-        self._create_object("EJBTimer", "EJBTimer", {}, ejb)
+        # Each missing one, so a state written before a component existed in
+        # this fake gains it too.
+        held = {}
+        for config_id, obj in self.state["objects"].items():
+            if obj["type"] in COMPONENT_PARENTS and self._within(config_id, scope):
+                held[obj["type"]] = config_id
+        for config_type in COMPONENT_ORDER:
+            if config_type in held:
+                continue
+            parent_type = COMPONENT_PARENTS[config_type]
+            parent = scope if parent_type == "server" else held[parent_type]
+            attrs = {"systemProperties": []} if config_type == "JavaVirtualMachine" else {}
+            held[config_type] = self._create_object(config_type, config_type, attrs, parent)
+
+    def _materialise_security(self):
+        """security.xml as a new profile has it, and a key store pair and a
+        default SSL configuration for the cell and for every node."""
+        objs = self.state["objects"]
+        if not [o for o in objs.values() if o["type"] == "Security"]:
+            registries = {}
+            for config_type in REGISTRY_TYPES:
+                attrs = dict(SECURITY_DEFAULTS[config_type])
+                if config_type == "LDAPUserRegistry":
+                    attrs["hosts"] = []
+                if config_type == "CustomUserRegistry":
+                    attrs["properties"] = []
+                registries[config_type] = self._create_object(config_type, config_type, attrs)
+            attrs = dict(SECURITY_DEFAULTS["Security"])
+            attrs["activeUserRegistry"] = registries["WIMUserRegistry"]
+            self._create_object("Security", "Security", attrs)
+        scopes = [("(cell):%s" % FAKE_CELL, "Cell")]
+        for index in self.state["indexes"].values():
+            scopes.append(("(cell):%s:(node):%s" % (FAKE_CELL, index["node"]), "Node"))
+        for scope_name, prefix in scopes:
+            if self._find("ManagementScope", scopeName=scope_name):
+                continue
+            scope = self._create_object("ManagementScope", "ManagementScope",
+                                        {"scopeName": scope_name, "scopeType": prefix.lower()})
+            key = self._create_object("KeyStore", prefix + "DefaultKeyStore",
+                                      {"name": prefix + "DefaultKeyStore", "managementScope": scope,
+                                       "_signers": []})
+            trust = self._create_object("KeyStore", prefix + "DefaultTrustStore",
+                                        {"name": prefix + "DefaultTrustStore",
+                                         "managementScope": scope, "_signers": []})
+            self._ssl_config(prefix + "DefaultSSLSettings", scope, key, trust,
+                             "SSL_TLSv2", "HIGH", "false", "false")
+
+    def _ssl_config(self, alias, scope, key, trust, protocol, level, auth, supported):
+        setting = self._create_object("SecureSocketLayer", "SecureSocketLayer", {
+            "sslProtocol": protocol, "securityLevel": level, "clientAuthentication": auth,
+            "clientAuthenticationSupported": supported, "keyStore": key, "trustStore": trust,
+            "jsseProvider": "IBMJSSE2"})
+        config = self._create_object("SSLConfig", alias, {
+            "alias": alias, "type": "JSSE", "managementScope": scope, "setting": setting})
+        self.state["objects"][setting]["parent"] = config
+        return config
 
     def _drop_server_objects(self, node, server):
         scope = scope_id("Server", "%s/%s" % (node, server))
@@ -439,7 +669,7 @@ class FakeAdminConfig(object):
         self.state["saved"] = False
         _store(self.state)
 
-    def create(self, config_type, parent, attributes):
+    def create(self, config_type, parent, attributes, parent_attribute=None):
         """AdminConfig.create for generic objects.
 
         A J2EEResourceProperty is also appended to its property set's list,
@@ -457,9 +687,21 @@ class FakeAdminConfig(object):
         if config_type == "J2EEResourceProperty":
             self.state["objects"][parent]["attrs"].setdefault("resourceProperties", []).append(config_id)
             _store(self.state)
+        if config_type == "EndPoint":
+            if self.state["objects"][parent]["type"] != "LDAPUserRegistry" or parent_attribute != "hosts":
+                raise ValueError("this fake creates an EndPoint in an LDAP registry's hosts only")
+            self.state["objects"][parent]["attrs"].setdefault("hosts", []).append(config_id)
+            _store(self.state)
+        if config_type == "Property" and self.state["objects"][parent]["type"] == "CustomUserRegistry":
+            if parent_attribute != "properties":
+                raise ValueError("a custom registry's Property goes in its properties")
+            self.state["objects"][parent]["attrs"].setdefault("properties", []).append(config_id)
+            _store(self.state)
+            return config_id
         if config_type == "Property":
             if self.state["objects"][parent]["type"] != "JavaVirtualMachine":
-                raise ValueError("this fake creates a Property under a JavaVirtualMachine only")
+                raise ValueError("this fake creates a Property under a JavaVirtualMachine "
+                                 "or a custom registry only")
             props = self.state["objects"][parent]["attrs"].setdefault("systemProperties", [])
             if any(self.state["objects"][p]["attrs"]["name"] == attrs.get("name") for p in props):
                 raise RuntimeError("JVM property %r already exists - the handler should have "
@@ -523,6 +765,9 @@ class FakeAdminConfig(object):
     def _show_index(self, index, attribute, config_id):
         if attribute == "serverEntries":
             return "[%s]" % " ".join(index.get("entry_ids", []))
+        if attribute == "hostName":
+            # One host per node: the fake's cell spans several machines.
+            return index.get("hostName", "%s.sim" % index["node"].lower())
         return self._attribute(index, attribute, config_id)
 
     def _show_entry(self, entry, attribute, config_id):
@@ -603,6 +848,11 @@ class FakeAdminConfig(object):
         for child in children:
             self.remove(child)
         del self.state["objects"][config_id]
+        # Out of any list that held it, as the repository unlinks it.
+        for obj in self.state["objects"].values():
+            for value in obj["attrs"].values():
+                if isinstance(value, list) and config_id in value:
+                    value.remove(config_id)
         self.state["saved"] = False
         _store(self.state)
 
@@ -1395,6 +1645,298 @@ class FakeAdminTask(object):
         _store(self.config.state)
         return "CWWJP8813I: The JPA specification level is changed to %s." % level
 
+    # -- security: the four registries and the active one ------------------
+
+    def _registry(self, config_type):
+        self.config._materialise_security()
+        return self.config._find(config_type)
+
+    def _configure_registry(self, config_type, args, mapping):
+        registry = self._registry(config_type)
+        attrs = self.config.state["objects"][registry]["attrs"]
+        for flag, attribute in mapping:
+            value = self._named(args, flag, None)
+            if value is not None:
+                attrs[attribute] = value
+        if self._named(args, "-verifyRegistry", "false") == "true" and not attrs["primaryAdminId"]:
+            raise RuntimeError("CWSIA0001E: the primary administrative user is not in the registry")
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return registry
+
+    def configureAdminWIMUserRegistry(self, args):
+        self._configure_registry("WIMUserRegistry", args,
+                                 (("-realmName", "realm"), ("-primaryAdminId", "primaryAdminId")))
+        return "true"
+
+    def configureAdminLocalOSUserRegistry(self, args):
+        self._configure_registry("LocalOSUserRegistry", args, (("-primaryAdminId", "primaryAdminId"),))
+        return "true"
+
+    def configureAdminCustomUserRegistry(self, args):
+        self._configure_registry("CustomUserRegistry", args, (
+            ("-customRegClass", "customRegistryClassName"), ("-primaryAdminId", "primaryAdminId")))
+        return "true"
+
+    def configureAdminLDAPUserRegistry(self, args):
+        registry = self._configure_registry("LDAPUserRegistry", args, (
+            ("-primaryAdminId", "primaryAdminId"), ("-ldapServerType", "type"),
+            ("-baseDN", "baseDN"), ("-bindDN", "bindDN"), ("-sslEnabled", "sslEnabled"),
+            ("-sslConfig", "sslConfig"), ("-searchTimeout", "searchTimeout"),
+            ("-reuseConnection", "reuseConnection")))
+        attrs = self.config.state["objects"][registry]["attrs"]
+        password = self._named(args, "-bindPassword", None)
+        if password is not None:
+            # Kept where only the tests look, as a J2C alias password is, and
+            # counted, so "written once" can be asserted.
+            attrs["_bind_password"] = password
+            attrs["_password_writes"] = attrs.get("_password_writes", 0) + 1
+        # The verb sets the first host; the failover hosts are the handler's.
+        for endpoint in list(attrs.get("hosts", [])):
+            self.config.remove(endpoint)
+        attrs = self.config.state["objects"][registry]["attrs"]
+        endpoint = self.config._create_object("EndPoint", "EndPoint", {
+            "host": self._named(args, "-ldapHost"), "port": self._named(args, "-ldapPort")}, registry)
+        attrs.setdefault("hosts", []).append(endpoint)
+        _store(self.config.state)
+        return "true"
+
+    def setAdminActiveSecuritySettings(self, args):
+        self.config._materialise_security()
+        security = self.config._find("Security")
+        attrs = self.config.state["objects"][security]["attrs"]
+        for flag, attribute in (("-enableGlobalSecurity", "enabled"),
+                                ("-appSecurityEnabled", "appEnabled"),
+                                ("-enforceJava2Security", "enforceJava2Security")):
+            value = self._named(args, flag, None)
+            if value is not None:
+                if value not in ("true", "false"):
+                    raise ValueError("%s takes true or false, got %r" % (flag, value))
+                attrs[attribute] = value
+        active = self._named(args, "-activeUserRegistry", None)
+        if active is not None:
+            if active not in REGISTRY_TYPES:
+                raise ValueError("-activeUserRegistry %r is not one of %s" % (active, ", ".join(REGISTRY_TYPES)))
+            registry = self._registry(active)
+            if not self.config.state["objects"][registry]["attrs"].get("primaryAdminId"):
+                raise RuntimeError("%s has no primary administrative user: activating it "
+                                   "would lock every administrator out" % active)
+            attrs["activeUserRegistry"] = registry
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    # -- SSL: configurations and signers ---------------------------------
+
+    def _scope(self, scope_name):
+        self.config._materialise_security()
+        scope = self.config._find("ManagementScope", scopeName=scope_name)
+        if scope is None:
+            raise RuntimeError("CWPKI0001E: no management scope %s" % scope_name)
+        return scope
+
+    def _keystore(self, name, scope_name):
+        scope = self._scope(scope_name)
+        store = self.config._find("KeyStore", name=name, managementScope=scope)
+        if store is None:
+            raise RuntimeError("CWPKI0002E: no key store %s at %s" % (name, scope_name))
+        return store
+
+    def _ssl_find(self, args):
+        scope = self._scope(self._named(args, "-scopeName"))
+        return self.config._find("SSLConfig", alias=self._named(args, "-alias"), managementScope=scope)
+
+    def _ssl_values(self, args, setting):
+        for flag, attribute, allowed in (
+                ("-sslProtocol", "sslProtocol", SSL_PROTOCOLS),
+                ("-securityLevel", "securityLevel", SSL_LEVELS),
+                ("-clientAuthentication", "clientAuthentication", ("true", "false")),
+                ("-clientAuthenticationSupported", "clientAuthenticationSupported", ("true", "false"))):
+            value = self._named(args, flag, None)
+            if value is None:
+                continue
+            if value not in allowed:
+                raise ValueError("%s %r is not one of %s" % (flag, value, ", ".join(allowed)))
+            setting[attribute] = value
+        for flag, attribute in (("-keyStoreName", "keyStore"), ("-trustStoreName", "trustStore")):
+            name = self._named(args, flag, None)
+            if name is not None:
+                scope_flag = flag.replace("Name", "ScopeName")
+                setting[attribute] = self._keystore(name, self._named(args, scope_flag))
+
+    def createSSLConfig(self, args):
+        if self._ssl_find(args):
+            raise RuntimeError("SSL configuration %s exists at %s - the handler should "
+                               "have modified it" % (self._named(args, "-alias"), self._named(args, "-scopeName")))
+        values = {}
+        self._ssl_values(args, values)
+        for required in ("sslProtocol", "securityLevel", "keyStore", "trustStore"):
+            if required not in values:
+                raise ValueError("createSSLConfig without the argument that sets %s" % required)
+        return self.config._ssl_config(
+            self._named(args, "-alias"), self._scope(self._named(args, "-scopeName")),
+            values["keyStore"], values["trustStore"], values["sslProtocol"], values["securityLevel"],
+            values.get("clientAuthentication", "false"), values.get("clientAuthenticationSupported", "false"))
+
+    def modifySSLConfig(self, args):
+        config = self._ssl_find(args)
+        if config is None:
+            raise RuntimeError("no SSL configuration %s at %s" % (self._named(args, "-alias"), self._named(args, "-scopeName")))
+        setting = self.config.state["objects"][config]["attrs"]["setting"]
+        self._ssl_values(args, self.config.state["objects"][setting]["attrs"])
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    def deleteSSLConfig(self, args):
+        config = self._ssl_find(args)
+        if config is None:
+            raise RuntimeError("no SSL configuration %s" % self._named(args, "-alias"))
+        if self._named(args, "-alias") in SSL_DEFAULT_CONFIGS:
+            raise RuntimeError("CWPKI0003E: %s is in use" % self._named(args, "-alias"))
+        self.config.remove(config)
+        return "true"
+
+    def _signer_store(self, args):
+        store = self._keystore(self._named(args, "-keyStoreName"), self._named(args, "-keyStoreScope"))
+        return self.config.state["objects"][store]["attrs"].setdefault("_signers", [])
+
+    def listSignerCertificates(self, args):
+        return "\n".join("[ [alias %s] [version 3] [size 2048] [issuedTo CN=%s] ]" % (a, a)
+                         for a in self._signer_store(args))
+
+    def retrieveSignerFromPort(self, args):
+        signers = self._signer_store(args)
+        alias = self._named(args, "-certificateAlias")
+        self._named(args, "-host")
+        self._named(args, "-port")
+        if alias in signers:
+            raise RuntimeError("CWPKI0004E: alias %s already exists in the key store" % alias)
+        signers.append(alias)
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    def deleteSignerCertificate(self, args):
+        signers = self._signer_store(args)
+        alias = self._named(args, "-certificateAlias")
+        if alias not in signers:
+            raise RuntimeError("CWPKI0005E: no signer %s" % alias)
+        signers.remove(alias)
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    # -- web services policy sets ----------------------------------------
+
+    def _policy_set(self, args, flag="-policySet"):
+        name = self._named(args, flag)
+        found = self.config.state["policy_sets"].get(name)
+        if found is None:
+            # The real verb fails with a ScriptingException, not a ValueError.
+            raise RuntimeError("CWPST0001E: policy set %s does not exist" % name)
+        return name, found
+
+    def _changed(self):
+        self.config.state["saved"] = False
+        _store(self.config.state)
+
+    def getPolicySet(self, args):
+        name, found = self._policy_set(args)
+        return "{default=%s, description=%s, name=%s, type=application}" % (
+            found["default"], found["description"], name)
+
+    def listPolicyTypes(self, args):
+        return "\n".join(sorted(self._policy_set(args)[1]["types"]))
+
+    def getPolicyType(self, args):
+        found = self._policy_set(args)[1]
+        policy_type = self._named(args, "-policyType")
+        if policy_type not in found["types"]:
+            raise RuntimeError("CWPST0002E: policy type %s is not in the policy set" % policy_type)
+        keys = self._named(args, "-attributes").strip("[]").split()
+        values = found["types"][policy_type]
+        return "{%s}" % ", ".join("%s=%s" % (k, values[k]) for k in keys if k in values)
+
+    @staticmethod
+    def _pairs(text):
+        import re
+        return [(m.group(1), m.group(3) if m.group(3) is not None else m.group(2))
+                for m in re.finditer(r'\[([^\s\[\]]+) ("([^"]*)"|[^\]\[]*)\]', text)]
+
+    def _not_default(self, name, found):
+        if found["default"] == "true":
+            raise RuntimeError("policy set %s is a product default; WAS would let it be "
+                               "edited until the next import puts the original back. "
+                               "The handler should have refused" % name)
+
+    def setPolicyType(self, args):
+        name, found = self._policy_set(args)
+        self._not_default(name, found)
+        policy_type = self._named(args, "-policyType")
+        if policy_type not in found["types"]:
+            raise RuntimeError("CWPST0002E: policy type %s is not in the policy set" % policy_type)
+        for key, value in self._pairs(self._named(args, "-attributes")):
+            found["types"][policy_type][key] = value
+        self._changed()
+        return "true"
+
+    def addPolicyType(self, args):
+        name, found = self._policy_set(args)
+        self._not_default(name, found)
+        policy_type = self._named(args, "-policyType")
+        if policy_type in found["types"]:
+            raise RuntimeError("policy type %s is already in %s" % (policy_type, name))
+        found["types"][policy_type] = {"enabled": self._named(args, "-enabled", "true")}
+        self._changed()
+        return "true"
+
+    def updatePolicySet(self, args):
+        name, found = self._policy_set(args)
+        for key, value in self._pairs(self._named(args, "-attributes")):
+            if key != "description":
+                raise ValueError("updatePolicySet: this fake updates the description only")
+            found["description"] = value
+        self._changed()
+        return "true"
+
+    def importPolicySet(self, args):
+        name = self._named(args, "-defaultPolicySet")
+        if name not in DEFAULT_POLICY_SETS:
+            raise RuntimeError("CWPST0003E: %s is not a default policy set. Defaults: %s"
+                               % (name, ", ".join(sorted(DEFAULT_POLICY_SETS))))
+        if name in self.config.state["policy_sets"]:
+            raise RuntimeError("policy set %s is already in the cell" % name)
+        source = DEFAULT_POLICY_SETS[name]
+        self.config.state["policy_sets"][name] = {
+            "description": source["description"], "default": "true",
+            "types": json.loads(json.dumps(source["types"]))}
+        self._changed()
+        return name
+
+    def copyPolicySet(self, args):
+        source_name, source = self._policy_set(args, "-sourcePolicySet")
+        name = self._named(args, "-newPolicySet")
+        if name in self.config.state["policy_sets"]:
+            raise RuntimeError("policy set %s is already in the cell" % name)
+        self.config.state["policy_sets"][name] = {
+            "description": self._named(args, "-newDescription", ""), "default": "false",
+            "types": json.loads(json.dumps(source["types"]))}
+        self._changed()
+        return name
+
+    def listAttachmentsForPolicySet(self, args):
+        name = self._policy_set(args)[0]
+        return "\n".join(self.config.state["policy_attachments"].get(name, []))
+
+    def deletePolicySet(self, args):
+        name = self._policy_set(args)[0]
+        if self.config.state["policy_attachments"].get(name):
+            raise RuntimeError("policy set %s is attached" % name)
+        del self.config.state["policy_sets"][name]
+        self._changed()
+        return "true"
+
     def modifyServerPort(self, args):
         # modifyServerPort(<server>, '-nodeName n -endPointName e -host * -port p')
         # The handler passes it as one flat list, server name first.
@@ -1414,6 +1956,9 @@ class FakeAdminControl(object):
 
     def completeObjectName(self, query):
         return ""
+
+    def getCell(self):
+        return FAKE_CELL
 
     def queryNames(self, query):
         if "NodeSync" in query:

@@ -85,6 +85,29 @@ Wave 0, the foundation. Nothing in production changes.
   provider of the wrong level, a JTA default on a non-transactional
   datasource, a custom scheduler with a timer datasource.
 - `playbooks/family_3_enterprise.yml`; JPA joins `family_2_persistence.yml`.
+- `was_security`, with `handlers/security.py`: global security and the
+  active user registry - federated repositories, standalone LDAP, local OS
+  or custom - with IBM's `configureAdmin<type>UserRegistry` and
+  `setAdminActiveSecuritySettings`, read back from `security.xml`. The LDAP
+  bind password is never returned; `on_create` or `always`. Refuses the
+  local OS registry on a cell spanning several hosts.
+- `was_ssl_config`, with `handlers/ssl_config.py`: SSL configurations at the
+  cell and node scopes, and signer certificates retrieved from a port.
+  Refuses a key store the scope does not have.
+- `was_policy_set`, with `handlers/policy_set.py`: product default policy
+  sets imported, copies adjusted, sets deleted - refused while attached.
+- `was_server_settings` gains the dynamic cache, the web container's servlet
+  caching, logging and trace in both modes (basic and HPEL) and PMI.
+- `roles/traditional/{ssl,security,policy_sets,dynamic_cache,logging,pmi}`,
+  each replayable on its own; `roles/traditional/config/tasks/cell_preflight.yml`
+  shared by the three cell-wide ones. Refused by the model: administrative
+  security off, a registry without its administrator, an LDAP without TLS,
+  a protocol below TLS 1.2, security level LOW or CUSTOM, deleting a
+  profile's default SSL configuration, adjusting an imported default policy
+  set, a disk offload or logging setting WAS would keep and never use, a
+  malformed trace specification, PMI custom.
+- `playbooks/family_1_web_services.yml`, `playbooks/family_6_management.yml`;
+  `family_5_extended.yml` gains SSL, security, the dynamic cache and logging.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.

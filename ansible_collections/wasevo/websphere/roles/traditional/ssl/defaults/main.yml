@@ -1,0 +1,42 @@
+---
+# SSL configurations and the signer certificates their trust stores need.
+# Family 5, proprietary and extended APIs.
+#
+# REPLAYABLE ON ITS OWN. Tightening the cell to TLS 1.2, or trusting a new
+# directory's issuer, is one replay of this role.
+#
+#   ssl:
+#     configs:
+#       - alias: CellDefaultSSLSettings    # the profile's: modified, never deleted
+#         scope: cell                      # cell, or {node: <node>}
+#         keystore: CellDefaultKeyStore
+#         truststore: CellDefaultTrustStore
+#         protocol: TLSv1.2                # TLSv1.2 | TLSv1.3 | "TLSv1.2,TLSv1.3"
+#         security_level: HIGH             # HIGH | MEDIUM
+#         client_auth: none                # none | supported | required
+#       - alias: PartnerSSL
+#         scope: {node: was-node-01Node}
+#         keystore: NodeDefaultKeyStore
+#         truststore: NodeDefaultTrustStore
+#         protocol: TLSv1.3
+#         client_auth: required
+#     signers:
+#       - alias: corp-ldap-ca              # compared by alias
+#         host: ad1.example.com
+#         port: 636
+#         scope: cell
+#         truststore: CellDefaultTrustStore   # the scope's default trust store if omitted
+#
+# Each item takes state: absent to remove it - except the profile's default
+# configurations, which every endpoint without its own uses.
+#
+# WHAT WAS ACCEPTS AND SHOULD NOT, refused before any session: a protocol that
+# negotiates below TLS 1.2 (SSL_TLS, SSL_TLSv2, TLS, TLSv1, TLSv1.1, any SSL); security
+# level LOW (export-grade and null ciphers); CUSTOM, which needs a cipher list
+# this role does not carry. Refused by the cell: a key store the scope does not
+# have - key stores come with the profile or a certificate procedure.
+#
+# A SIGNER is retrieved from the peer's port, so the deployment manager must
+# reach it. A peer whose issuer changed is a signer declared absent, then
+# present: the alias alone does not tell a new certificate from the old one.
+ssl: {}

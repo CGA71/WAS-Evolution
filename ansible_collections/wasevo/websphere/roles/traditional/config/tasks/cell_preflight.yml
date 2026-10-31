@@ -1,0 +1,60 @@
+---
+# Before a cell-wide change - security, SSL, policy sets - one wsadmin session.
+#
+# Shared by the roles whose objects belong to the cell rather than to a
+# server. Each translates its intent with a filter of
+# plugins/filter/traditional.py, then includes this, then calls its module:
+#
+#   - ansible.builtin.include_role:
+#       name: wasevo.websphere.traditional.config
+#       tasks_from: cell_preflight.yml
+#     vars:
+#       cell_label: security
+#       cell_render: "{{ security_render }}"
+#
+# cell_render is {"settings": {...}, "errors": [...], "warnings": [...]}.
+
+- name: Every setting must be one WAS applies as declared - {{ cell_label }}
+  ansible.builtin.assert:
+    that:
+      - cell_render.errors | length == 0
+    fail_msg: >-
+      {{ cell_render.errors | length }} {{ cell_label }} problem(s):
+      {{ cell_render.errors | join(' | ') }}
+    success_msg: "{{ cell_label }}: the declaration translates"
+
+- name: What deserves a look but does not stop the run
+  ansible.builtin.debug:
+    msg: "{{ cell_render.warnings }}"
+  when: cell_render.warnings | default([]) | length > 0
+
+- name: Administrative credentials must be supplied to reach the cell
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | default('') | length > 0
+      - was_admin_password | default('') | length > 0
+    fail_msg: >-
+      Reaching a cell with administrative security enabled needs
+      was_admin_user and was_admin_password - the deployment manager's
+      administrator, not a local account. Supply them from an AWX credential
+      or a vault.
+    success_msg: "administrative credentials supplied"
+
+- name: Stage the Jython driver on the deployment manager
+  ansible.builtin.include_tasks: main.yml
+
+- name: The deployment manager profile must exist on this host
+  ansible.builtin.stat:
+    path: "{{ was_profile_path }}/bin/wsadmin.sh"
+  register: _cell_wsadmin
+  check_mode: false
+
+- name: Refuse clearly when it does not
+  ansible.builtin.fail:
+    msg: >-
+      No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+      {{ inventory_hostname }}. The {{ cell_label }} configuration lives in
+      the cell's master repository, which is the deployment manager profile -
+      created by the profile job. A check run needs it too: reading the cell
+      is how a dry run tells the truth.
+  when: not (_cell_wsadmin.stat.exists | default(false))

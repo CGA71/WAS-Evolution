@@ -1,0 +1,26 @@
+---
+# The dynamic cache service and servlet caching of every server, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e was_topology=nd -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Family 5, proprietary and extended APIs.
+# These settings apply at server start: the result lists the servers to
+# restart, and nothing here restarts them.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: The dynamic cache service and servlet caching of every server, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The dynamic cache service and servlet caching of every server
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.dynamic_cache

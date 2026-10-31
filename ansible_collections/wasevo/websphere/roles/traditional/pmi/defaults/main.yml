@@ -1,0 +1,21 @@
+---
+# PMI - the Performance Monitoring Infrastructure, the counters the Tivoli
+# Performance Viewer, the PerfServlet and every monitoring agent read.
+# Family 6, JMX and management.
+#
+# REPLAYABLE ON ITS OWN. One replay, one wsadmin session; the module lists the
+# servers to restart.
+#
+#   pmi:
+#     enabled: true                  # PMIService.enable
+#     statistic_set: extended        # none | basic | extended | all
+#     synchronized_update: false     # exact counters, at a cost
+#
+# custom is refused: it needs a counter-by-counter specification this role
+# does not carry. all is accepted with a warning - every counter, on every
+# server, at a measurable cost: a diagnosis, not a standing setting.
+pmi: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+pmi_target: {}

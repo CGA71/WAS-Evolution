@@ -1,0 +1,26 @@
+---
+# SSL configurations and signer certificates, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Family 5, proprietary and extended APIs.
+# Before the security job: an LDAP over TLS is trusted through a signer this
+# job retrieves.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: SSL configurations and signer certificates, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: SSL configurations and signer certificates
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.ssl

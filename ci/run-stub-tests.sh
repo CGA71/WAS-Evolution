@@ -496,6 +496,107 @@ payload settings_absent <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# --------------------------------------------------------------------------
+# Families 5 and 6 on the server: dynamic cache, logging, PMI
+# --------------------------------------------------------------------------
+payload dynacache <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"DynamicCache":{"enable":"true","cacheSize":"3000","enableDiskOffload":"true","diskOffloadLocation":"/dc/{node}/{server}"},"WebContainer":{"enableServletCaching":"true"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# HPEL on, basic logging off - both flags in one change, as IBM's procedure.
+payload hpel <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"HighPerformanceExtensibleLogging":{"enable":"true","startupTraceSpec":"*=info:com.stub.*=fine"},"RASLoggingService":{"enable":"false"},"HPELLog":{"dataDirectory":"/logs/{node}/{server}","purgeBySizeEnabled":"true","purgeMaxSize":"500"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload pmi <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"PMIService":{"enable":"true","statisticSet":"extended"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# --------------------------------------------------------------------------
+# Security: the four registries
+# --------------------------------------------------------------------------
+# The bind password is a marker, searched for in every answer below.
+payload sec_federated <<'JSON'
+{"resource":"security","state":"present",
+ "params":{"admin_security":"true","app_security":"true","registry":{"type":"WIMUserRegistry","attributes":{"primaryAdminId":"wasadmin","realm":"defaultWIMFileBasedRealm"}}},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload sec_ldap <<'JSON'
+{"resource":"security","state":"present",
+ "params":{"admin_security":"true","app_security":"true","password_policy":"on_create","bind_password":"MARKER-ldap-1","verify_registry":true,"registry":{"type":"LDAPUserRegistry","attributes":{"primaryAdminId":"wasadm","type":"ACTIVE_DIRECTORY","baseDN":"dc=stub","bindDN":"cn=bind,dc=stub","sslEnabled":"true"},"hosts":[{"host":"ad1.stub","port":"636"},{"host":"ad2.stub","port":"636"}]}},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload sec_ldap_rotate <<'JSON'
+{"resource":"security","state":"present",
+ "params":{"admin_security":"true","app_security":"true","password_policy":"always","bind_password":"MARKER-ldap-1","verify_registry":true,"registry":{"type":"LDAPUserRegistry","attributes":{"primaryAdminId":"wasadm","type":"ACTIVE_DIRECTORY","baseDN":"dc=stub","bindDN":"cn=bind,dc=stub","sslEnabled":"true"},"hosts":[{"host":"ad1.stub","port":"636"},{"host":"ad2.stub","port":"636"}]}},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# The local OS registry on a cell whose nodes run on several hosts.
+payload sec_localos <<'JSON'
+{"resource":"security","state":"present",
+ "params":{"admin_security":"true","registry":{"type":"LocalOSUserRegistry","attributes":{"primaryAdminId":"root"}}},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload sec_custom <<'JSON'
+{"resource":"security","state":"present",
+ "params":{"admin_security":"true","registry":{"type":"CustomUserRegistry","attributes":{"primaryAdminId":"admin","customRegistryClassName":"com.stub.Registry"},"properties":{"usersFile":"/etc/stub/users","groupsFile":"/etc/stub/groups"}}},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload sec_absent <<'JSON'
+{"resource":"security","state":"absent",
+ "params":{"registry":{"type":"WIMUserRegistry","attributes":{"primaryAdminId":"wasadmin"}}},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# --------------------------------------------------------------------------
+# SSL: a cell default tightened, a node configuration, a signer
+# --------------------------------------------------------------------------
+payload ssl <<'JSON'
+{"resource":"ssl_config","state":"present",
+ "params":{"configs":[{"alias":"CellDefaultSSLSettings","scope":{"type":"cell"},"state":"present","keystore":"CellDefaultKeyStore","truststore":"CellDefaultTrustStore","protocol":"TLSv1.2","security_level":"HIGH","client_auth":"false","client_auth_supported":"false"},{"alias":"ExtranetSSL","scope":{"type":"node","node":"STUBNode01"},"state":"present","keystore":"NodeDefaultKeyStore","truststore":"NodeDefaultTrustStore","protocol":"TLSv1.2","security_level":"HIGH","client_auth":"false","client_auth_supported":"true"}],"signers":[{"alias":"adca","scope":{"type":"cell"},"state":"present","truststore":"CellDefaultTrustStore","host":"ad1.stub","port":"636"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ssl_missing_store <<'JSON'
+{"resource":"ssl_config","state":"present",
+ "params":{"configs":[{"alias":"Orphan","scope":{"type":"cell"},"state":"present","keystore":"NoSuchKeyStore","truststore":"CellDefaultTrustStore","protocol":"TLSv1.2","security_level":"HIGH","client_auth":"false","client_auth_supported":"false"}],"signers":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ssl_absent <<'JSON'
+{"resource":"ssl_config","state":"present",
+ "params":{"configs":[{"alias":"ExtranetSSL","scope":{"type":"node","node":"STUBNode01"},"state":"absent"}],"signers":[{"alias":"adca","scope":{"type":"cell"},"state":"absent","truststore":"CellDefaultTrustStore"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# --------------------------------------------------------------------------
+# Web services policy sets: a default imported, a copy adjusted
+# --------------------------------------------------------------------------
+payload ps <<'JSON'
+{"resource":"policy_set","state":"present",
+ "params":{"policy_sets":[{"name":"WSHTTPS default","state":"present","from_default":"WSHTTPS default","policies":{}},{"name":"Corp HTTPS","state":"present","copy_of":"WSHTTPS default","description":"corporate HTTPS","policies":{"WSHTTPS":{"inRequestSSLenabled":"false"},"WSAddressing":{"enabled":"true"}}}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ps_change <<'JSON'
+{"resource":"policy_set","state":"present",
+ "params":{"policy_sets":[{"name":"WSHTTPS default","state":"present","from_default":"WSHTTPS default","policies":{}},{"name":"Corp HTTPS","state":"present","copy_of":"WSHTTPS default","description":"corporate HTTPS","policies":{"WSHTTPS":{"inRequestSSLenabled":"true"},"WSAddressing":{"enabled":"true"}}}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ps_copy_missing <<'JSON'
+{"resource":"policy_set","state":"present",
+ "params":{"policy_sets":[{"name":"Orphan copy","state":"present","copy_of":"No such set","policies":{}}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ps_absent <<'JSON'
+{"resource":"policy_set","state":"present",
+ "params":{"policy_sets":[{"name":"Corp HTTPS","state":"absent"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload sib_absent <<'JSON'
 {"resource":"sibus","state":"absent",
  "params":{"bus":"StubBus","members":[],"destinations":[]},
@@ -802,6 +903,87 @@ expect_refusal "state absent" \
     settings_absent "no state absent"
 
 echo
+echo "=== dynamic cache, logging and PMI, on every member ==="
+expect "dynamic cache, disk offload, servlet cache" dynacache          true
+expect "replay (idempotency)"                     dynacache            false
+expect_value "each member offloads to its own directory" \
+    "$(server_values DynamicCache diskOffloadLocation | tr ',' '\n' | sort -u | wc -l | tr -d ' ')" "3"
+expect "HPEL on, basic logging off"               hpel                 true
+expect "replay (idempotency)"                     hpel                 false
+expect_value "HPEL on the three members"          "$(server_values HighPerformanceExtensibleLogging enable)" "true,true,true"
+expect_value "basic logging off on the three"     "$(server_values RASLoggingService enable)" "false,false,false"
+expect "PMI extended"                             pmi                  true
+expect "replay (idempotency)"                     pmi                  false
+
+echo
+echo "=== security: the four registries ==="
+# The active registry and the LDAP state, read from the fake cell.
+security_state() {
+    "$PY" -c '
+import json, os
+objs = json.load(open(os.environ["WAS_SIM_STATE"]))["objects"]
+sec = [o for o in objs.values() if o["type"] == "Security"][0]["attrs"]
+ldap = [o for o in objs.values() if o["type"] == "LDAPUserRegistry"][0]["attrs"]
+print("%s|%s|%d|%s" % (objs[sec["activeUserRegistry"]]["type"], sec["appEnabled"],
+                       len(ldap.get("hosts", [])), ldap.get("_password_writes", 0)))
+'
+}
+expect "federated, application security on"       sec_federated        true
+expect "replay (idempotency)"                     sec_federated        false
+expect "LDAP over TLS, two hosts, made active"    sec_ldap             true
+expect "replay, password on_create: left alone"   sec_ldap             false
+expect_value "LDAP active, two hosts, password once" "$(security_state)" "LDAPUserRegistry|true|2|1"
+expect "password always: rotated"                 sec_ldap_rotate      true
+expect_value "and written once more"              "$(security_state)" "LDAPUserRegistry|true|2|2"
+leak=""
+for pl in sec_ldap sec_ldap_rotate; do
+    if grep -q "MARKER-ldap" "$WORK/$pl.raw"; then leak="$leak $pl"; fi
+done
+expect_value "no bind password in any driver answer" "${leak:-none}" "none"
+expect_refusal "the local OS registry across several hosts" \
+    sec_localos "own operating system"
+expect "custom registry with its properties"      sec_custom           true
+expect "replay (idempotency)"                     sec_custom           false
+expect_refusal "state absent" \
+    sec_absent "no state absent"
+
+echo
+echo "=== SSL: configurations and signers ==="
+expect "cell default to TLS 1.2, node config, signer" ssl              true
+expect "replay (idempotency)"                     ssl                  false
+expect_refusal "a key store the cell does not have" \
+    ssl_missing_store "no key store NoSuchKeyStore"
+expect "node config and signer removed"           ssl_absent           true
+expect "replay delete"                            ssl_absent           false
+
+echo
+echo "=== web services policy sets ==="
+expect "a default imported, a copy adjusted"      ps                   true
+expect "replay (idempotency)"                     ps                   false
+expect "one attribute of the copy changed"        ps_change            true
+expect "replay (idempotency)"                     ps_change            false
+expect_refusal "a copy of a set nobody imports" \
+    ps_copy_missing "does not hold"
+"$PY" -c '
+import json, os
+path = os.environ["WAS_SIM_STATE"]
+state = json.load(open(path))
+state["policy_attachments"]["Corp HTTPS"] = ["OrdersApp"]
+json.dump(state, open(path, "w"))
+'
+expect_refusal "deleting a set an application uses" \
+    ps_absent "attached to OrdersApp"
+"$PY" -c '
+import json, os
+path = os.environ["WAS_SIM_STATE"]
+state = json.load(open(path))
+state["policy_attachments"] = {}
+json.dump(state, open(path, "w"))
+'
+expect "delete the copy"                          ps_absent            true
+expect "replay delete"                            ps_absent            false
+
+echo
 echo "=== JDBC, removed ==="
 expect "delete the datasource"                  ds_absent            true
 expect "replay the delete"                      ds_absent            false
@@ -952,6 +1134,26 @@ print("|".join([str(len(a["errors"])), b["settings"]["components"]["TransactionS
                 e["settings"]["jvm_properties"]["com.ibm.ws.cdi.enableImplicitBeanArchives"]]))
 ' "$COLLECTION/plugins/filter")"
 expect_value "server settings rules" "$settings" "2|/shared/tx/C/{node}/{server}|true|2|1|3000|false"
+
+# Families 5, 6 and 1: the rules each intent refuses before any session.
+family5="$("$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+a = T.dynacache_settings({"disk_offload": True, "disk_offload_root": "/dc"})
+b = T.logging_settings({"mode": "basic", "log_max_size": 5})
+c = T.pmi_settings({"statistic_set": "custom"})
+d = T.security_settings({"registry": {"type": "ldap", "primary_admin_id": "a",
+                         "ldap": {"server_type": "ACTIVE_DIRECTORY", "hosts": ["h"], "base_dn": "dc=x"}}})
+e = T.ssl_settings({"configs": [{"alias": "A", "keystore": "k", "truststore": "t", "protocol": "SSL_TLS"},
+                                {"alias": "CellDefaultSSLSettings", "state": "absent"}]})
+f = T.policy_set_settings([{"name": "WSHTTPS default", "from_default": "WSHTTPS default",
+                            "policies": {"WSHTTPS": {"x": 1}}}])
+print("|".join([a["settings"]["components"]["DynamicCache"]["diskOffloadLocation"],
+                str(len(b["errors"])), str(len(c["errors"])), str(len(d["errors"])),
+                d["settings"]["registry"]["hosts"][0]["port"], str(len(e["errors"])), str(len(f["errors"]))]))
+' "$COLLECTION/plugins/filter")"
+expect_value "families 5, 6 and 1 rules" "$family5" "/dc/{node}/{server}|1|1|1|389|2|1"
 # The library rendering's rules, on their own: a pattern that matched nothing
 # is refused, an explicit list is kept in its order, an expansion is sorted -
 # find returns files in filesystem order, and a class path that reshuffles
@@ -1040,7 +1242,7 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Thirty-four effective changes above. The cluster: created, members created,
+# Forty-six effective changes above. The cluster: created, members created,
 # a port pinned, a member drained, a member deleted, the cluster deleted (6).
 # The aliases: created, password rotated, deleted (3). JDBC: provider created,
 # its jar replaced, an alias created, a datasource created, its pool changed,
@@ -1049,15 +1251,18 @@ print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 # limit changed, deleted (3). JMS: created, a factory changed, deleted (3).
 # JMS on IBM MQ: created, a factory moved to CLIENT, deleted (3).
 # Server settings: transactions, EJB, CDI on then back, JPA (5).
+# Dynamic cache, HPEL, PMI (3). Security: federated, LDAP, the password
+# rotated, custom (4). SSL: created, removed (2). Policy sets: created, an
+# attribute changed, the copy deleted (3).
 # Every replay, every check run, the password left alone under on_create, the
 # store drift left alone and every refusal must add none - a node
 # synchronisation on a cell that did not change is a ripple through the estate
 # for nothing.
-if [ "$syncs" = "34" ]; then
-    echo "  ok     34 syncs for 34 effective changes, none for the replays, the"
+if [ "$syncs" = "46" ]; then
+    echo "  ok     46 syncs for 46 effective changes, none for the replays, the"
     echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 34 syncs, state reports $syncs"
+    echo "  FAIL   expected 46 syncs, state reports $syncs"
     fail=1
 fi
 

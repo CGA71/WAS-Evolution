@@ -12,6 +12,8 @@
 #
 #   traditional_cluster.yml          the cluster object                  family 0
 #   traditional_cluster_members.yml  the application servers in it       family 0
+#   traditional_ssl.yml              SSL configurations and signers      family 5
+#   traditional_security.yml         global security, the user registry  family 5
 #   traditional_j2c.yml              the J2C authentication aliases      family 5
 #   traditional_jdbc.yml             the JDBC providers and datasources  family 2
 #   traditional_shared_libraries.yml the shared libraries                family 5
@@ -20,7 +22,11 @@
 #   traditional_transactions.yml     the transaction service             family 3
 #   traditional_ejb_container.yml    the EJB container and timers        family 3
 #   traditional_cdi.yml              CDI                                 family 3
+#   traditional_policy_sets.yml      web services policy sets            family 1
 #   traditional_jpa.yml              the JPA level and defaults          family 2
+#   traditional_dynamic_cache.yml    the dynamic cache                   family 5
+#   traditional_logging.yml          logging, trace and HPEL             family 5
+#   traditional_pmi.yml              PMI                                 family 6
 #
 # DEPENDENCY ORDER, NOT FAMILY ORDER. The roles are catalogued under API
 # families - family_<n>_<name>.yml imports one family's playbooks, README
@@ -55,6 +61,12 @@
 - name: The application servers in it
   import_playbook: traditional_cluster_members.yml
 
+- name: SSL configurations and signer certificates
+  import_playbook: traditional_ssl.yml
+
+- name: Global security and the active user registry
+  import_playbook: traditional_security.yml
+
 - name: The J2C authentication aliases
   import_playbook: traditional_j2c.yml
 
@@ -70,6 +82,9 @@
 - name: The JMS resources
   import_playbook: traditional_jms.yml
 
+- name: Web services policy sets
+  import_playbook: traditional_policy_sets.yml
+
 - name: The transaction service of every server, and peer recovery
   import_playbook: traditional_transactions.yml
 
@@ -81,3 +96,12 @@
 
 - name: The JPA level and defaults
   import_playbook: traditional_jpa.yml
+
+- name: The dynamic cache service and servlet caching of every server
+  import_playbook: traditional_dynamic_cache.yml
+
+- name: The log and trace mode of every server
+  import_playbook: traditional_logging.yml
+
+- name: The Performance Monitoring Infrastructure of every server
+  import_playbook: traditional_pmi.yml

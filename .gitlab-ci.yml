@@ -90,11 +90,19 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_ejb_container.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_cdi.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_jpa.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_ssl.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_security.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_policy_sets.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_dynamic_cache.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_logging.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_pmi.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/guard_target.yml -e was_environment=SYNTAX
     # The API families: catalogues over the steps above, one entry point each.
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_0_foundation.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_2_persistence.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_3_enterprise.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_1_web_services.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_6_management.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_4_messaging.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_5_extended.yml -e was_environment=SYNTAX
 

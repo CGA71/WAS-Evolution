@@ -187,3 +187,56 @@ jpa:
   provider: eclipselink
   jta_datasource: jdbc/sim/orders
   non_jta_datasource: jdbc/sim/reporting
+
+# --------------------------------------------------------------------------
+# Families 5, 6 and 1 - SSL, security, policy sets, cache, logging, PMI
+# --------------------------------------------------------------------------
+# The cell default tightened to TLS 1.2 and the directory's issuer trusted;
+# the profile's federated repositories kept, with application security on;
+# HTTPS imported and a corporate copy that also requires WS-Addressing; the
+# dynamic cache offloading per server; HPEL with a bounded repository; PMI on
+# the extended set.
+ssl:
+  configs:
+    - alias: CellDefaultSSLSettings
+      scope: cell
+      keystore: CellDefaultKeyStore
+      truststore: CellDefaultTrustStore
+      protocol: TLSv1.2
+      security_level: HIGH
+  signers:
+    - alias: sim-ldap-ca
+      host: ldap.sim.local
+      port: 636
+
+security:
+  app_security: true
+  registry:
+    type: federated
+    primary_admin_id: wasadmin
+
+policy_sets:
+  - name: WSHTTPS default
+    from_default: WSHTTPS default
+  - name: Sim HTTPS
+    copy_of: WSHTTPS default
+    description: HTTPS for the simulated partner services
+    policies:
+      WSAddressing: {enabled: true}
+
+dynamic_cache:
+  enabled: true
+  cache_size: 3000
+  disk_offload: true
+  disk_offload_root: /var/was/dynacache
+
+logging:
+  mode: hpel
+  trace_spec: "*=info"
+  repository_root: /var/was/logs
+  log_max_size: 500
+  log_max_age: 72h
+
+pmi:
+  enabled: true
+  statistic_set: extended
