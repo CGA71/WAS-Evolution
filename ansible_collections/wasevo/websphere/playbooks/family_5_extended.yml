@@ -1,0 +1,23 @@
+---
+# Family 5 - proprietary and extended APIs.
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# A FAMILY IS A CATALOGUE, NOT A ROLE. It imports the playbooks of its roles,
+# in the order they need each other, and defines none of them: each role keeps
+# its own playbook and its own AWX job template, and replaying one role after
+# a change is still one wsadmin session. Running this is the same work as
+# running its playbooks in order.
+#
+# Security and authentication - the J2C aliases today; the user registry
+# (federated repositories, standalone LDAP, local OS, custom), SSL and
+# keystores join them - and the shared libraries. Dynamic cache, logging and
+# HPEL join this family too.
+#
+# The whole plane, every family in dependency order, is traditional_config.yml.
+
+- name: The J2C authentication aliases
+  import_playbook: traditional_j2c.yml
+
+- name: The shared libraries
+  import_playbook: traditional_shared_libraries.yml

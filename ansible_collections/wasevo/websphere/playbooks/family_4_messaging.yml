@@ -1,0 +1,22 @@
+---
+# Family 4 - messaging and integration.
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# A FAMILY IS A CATALOGUE, NOT A ROLE. It imports the playbooks of its roles,
+# in the order they need each other, and defines none of them: each role keeps
+# its own playbook and its own AWX job template, and replaying one role after
+# a change is still one wsadmin session. Running this is the same work as
+# running its playbooks in order.
+#
+# The service integration buses, then the JMS resources on them and on IBM
+# MQ. A connection factory or an activation spec may present a J2C alias from
+# family 5.
+#
+# The whole plane, every family in dependency order, is traditional_config.yml.
+
+- name: The service integration buses
+  import_playbook: traditional_sibus.yml
+
+- name: The JMS resources, on the bus and on IBM MQ
+  import_playbook: traditional_jms.yml

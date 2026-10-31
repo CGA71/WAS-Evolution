@@ -67,6 +67,10 @@ Wave 0, the foundation. Nothing in production changes.
   Compares only the fields a resource declares, since WAS fills and shows the
   MQ connection attributes nobody set. Refuses a CLIENT transport with no
   host and no connection name list.
+- `playbooks/family_{0_foundation,2_persistence,4_messaging,5_extended}.yml`:
+  the roles catalogued under API families, one entry point per family that
+  has roles. A family imports its roles' playbooks and defines none of them;
+  `traditional_config.yml` keeps the dependency order across families.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.
