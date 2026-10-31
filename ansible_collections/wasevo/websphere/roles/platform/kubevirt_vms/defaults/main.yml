@@ -1,0 +1,41 @@
+---
+# The machines of a cell, as KubeVirt virtual machines on the k3s cluster.
+#
+# Runs on the CONTROLLER - the AWX job pod - against the Kubernetes API, with
+# the credential AWX injects (K8S_AUTH_HOST, K8S_AUTH_API_KEY). Nothing here
+# runs kubectl, and nothing is applied by hand.
+#
+# WHICH MACHINES. Every host of platform_vm_group that declares
+# platform_vm_name. The inventory is the only place a machine is named; this
+# role composes nothing from an environment or a channel.
+#
+# Per host, in the inventory:
+#
+#   platform_vm_name: was-cell-dmgr     # the VirtualMachine and its DNS name
+#   platform_vm_cores: 2
+#   platform_vm_memory: 4Gi
+#   platform_vm_disk: 30Gi
+#
+# WHY A HEADLESS SERVICE PER MACHINE. WAS processes call each other by host
+# name on many ports - SOAP, bootstrap, ORB, DCS, discovery - some of them
+# allocated at run time. A headless Service gives each machine a stable DNS
+# name that resolves to its pod address, and KubeVirt's masquerade interface
+# forwards every port of that address to the machine: no port list to keep in
+# step with WAS.
+platform_vm_group: was_install
+platform_namespace: ""
+
+# The image every machine boots, imported once per disk by CDI.
+platform_vm_image_url: https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2
+platform_storage_class: local-path
+
+# The account Ansible uses on the machines, and its public key. Empty: read
+# from the SSH agent of the job, which holds the machine credential AWX
+# attached - so the key the machines trust is the one the next jobs use, and
+# it is never written into the repository.
+platform_vm_user: ansible
+platform_ssh_public_key: ""
+
+# How long to wait for an image import, and for a machine to answer SSH.
+platform_import_timeout: 1800
+platform_boot_timeout: 900

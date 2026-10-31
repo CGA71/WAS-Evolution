@@ -1,0 +1,4 @@
+---
+# The federated nodes. Each node's name is <host>Node, from the model; each
+# carries was_cluster_members_per_node members.
+was_service_name: wasnode

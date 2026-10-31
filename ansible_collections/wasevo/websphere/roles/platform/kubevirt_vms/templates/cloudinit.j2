@@ -1,0 +1,48 @@
+#cloud-config
+# {{ _vm.name }} - rendered by roles/platform/kubevirt_vms. The same
+# prerequisites as the install lab VM (ci/k3s/make-lab-vm.sh).
+hostname: {{ _vm.name }}
+fqdn: {{ _vm.fqdn }}
+prefer_fqdn_over_hostname: true
+
+users:
+  - name: {{ platform_vm_user }}
+    groups: [wheel]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+{% for key in _platform_keys %}
+      - {{ key }}
+{% endfor %}
+
+ssh_pwauth: false
+disable_root: true
+
+packages:
+  - python3
+  - unzip
+  - tar
+  - gzip
+  - gettext
+  - psmisc
+  - procps-ng
+  - which
+
+write_files:
+  - path: /etc/security/limits.d/90-was.conf
+    content: |
+      *  soft  nofile  65536
+      *  hard  nofile  65536
+      *  soft  nproc   16384
+      *  hard  nproc   16384
+
+runcmd:
+  # The machine's own name resolves to its own interface. The cluster DNS
+  # answers the pod address, which is not local to the machine behind
+  # KubeVirt's masquerade - a WAS listener bound to that name would fail.
+  # Every other machine resolves the name through the cluster DNS, to the pod
+  # address, which forwards to this interface.
+  - [bash, -c, "ip=$(hostname -I | awk '{print $1}'); sed -i '/ {{ _vm.fqdn }}/d' /etc/hosts; echo \"$ip {{ _vm.fqdn }} {{ _vm.name }}\" >> /etc/hosts"]
+  - [mkdir, -p, /app/binaries, /app/profiles, /app/logs, /app/data, /mnt/binaries, /opt/exploit]
+  - [chown, -R, "{{ platform_vm_user }}:{{ platform_vm_user }}", /app, /mnt/binaries, /opt/exploit]
+  - [bash, -c, "echo ready > /var/log/was-platform-ready"]

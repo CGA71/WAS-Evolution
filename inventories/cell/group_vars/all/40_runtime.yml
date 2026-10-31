@@ -1,0 +1,21 @@
+---
+runtime:
+  product: traditional
+  jdk:
+    version: 8
+    vm: j9
+
+# --------------------------------------------------------------------------
+# Ports
+# --------------------------------------------------------------------------
+# One profile per machine, so no base port: the profiles take the product's
+# defaults (manageprofiles defaultPorts=true) - 9060 and 9043 for the
+# deployment manager's console, 8879 for its SOAP connector. The console job
+# reads the ports the profile really got and publishes those.
+#
+# The SOAP port a node federates against when the deployment manager was built
+# by an earlier job, which did not publish what it read.
+was_dmgr_soap_port: 8879
+
+# One application server per node: the cluster is horizontal, two members.
+was_cluster_members_per_node: 1

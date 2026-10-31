@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: traditional_server_start
+  author: neo
+  description: >-
+    Start the deployment manager, the node agents and the cluster members that are not running;
+    leave the running ones alone. Replayable on its own.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model is included where it is used, so this role stays
+# runnable on its own.
+dependencies: []

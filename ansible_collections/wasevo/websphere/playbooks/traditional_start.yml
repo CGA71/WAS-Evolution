@@ -1,0 +1,26 @@
+---
+# Start what the cell runs and is not running - the deployment manager, then
+# each node agent and the cluster members on its node - and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> -e was_environment=<code> -e was_topology=nd
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. A process with a live pid is left
+# alone, so a replay against a running cell changes nothing. Nothing here
+# stops or restarts a process.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: The deployment manager first
+  hosts: "{{ start_dmgr_hosts | default(was_dmgr_group | default('dmgr')) }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.server_start
+
+- name: Then each node agent and the members of its node
+  hosts: "{{ start_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.server_start

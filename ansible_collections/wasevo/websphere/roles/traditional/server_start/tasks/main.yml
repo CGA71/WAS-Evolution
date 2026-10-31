@@ -1,0 +1,36 @@
+---
+# Start what a cell runs and is not running: the deployment manager on its
+# host, the node agent and the cluster members on each federated node.
+#
+# REPLAYABLE ON ITS OWN, and a replay changes nothing: a process with a live
+# pid is left alone, so running this against a cell that is up is a check,
+# not a restart. It never stops anything.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [start, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [start, always]
+
+- name: The deployment manager
+  ansible.builtin.include_tasks: dmgr.yml
+  when: (was_dmgr_group | default('dmgr')) in group_names
+  tags: [start]
+
+- name: The node agent and the members of this node
+  when: (was_nodeagent_group | default('nodeagents')) in group_names
+  tags: [start]
+  block:
+
+    - name: The members this node carries
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+        tasks_from: cluster_members.yml
+
+    - name: Start them
+      ansible.builtin.include_tasks: node.yml

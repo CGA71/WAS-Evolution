@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  role_name: platform_cell_console
+  author: neo
+  description: >-
+    Expose the deployment manager's administrative console on the k3s node address.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+dependencies: []

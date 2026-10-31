@@ -1,0 +1,51 @@
+---
+# Job 2 of the cell workflow: the Installation Manager and WAS media on every
+# machine, copied from the install lab, which already holds it.
+#
+#   ansible-playbook -i inventories/cell <this>
+#
+# Four plays, because four places act: the source archives and serves, the
+# controller reads the source's address from the cluster, the targets fetch,
+# the source stops serving. A target that already has the repository fetches
+# nothing, so a replay copies nothing.
+
+- name: Serve the media from the install lab
+  hosts: "{{ media_source_group | default('media_source') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Archive and serve
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.cell_media
+        tasks_from: serve.yml
+
+- name: Find the source's address
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Locate
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.cell_media
+        tasks_from: locate.yml
+
+- name: Copy the media to each machine of the cell
+  hosts: "{{ media_target_group | default('was_install') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Fetch
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.cell_media
+        tasks_from: fetch.yml
+
+- name: Stop serving
+  hosts: "{{ media_source_group | default('media_source') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Stop
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.cell_media
+        tasks_from: stop.yml

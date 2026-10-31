@@ -1,0 +1,47 @@
+{#
+  The VirtualMachine of one machine. Rendered from a template and parsed with
+  from_yaml so the cores reach the API as an integer: a templated value in a
+  task's definition arrives as a string, which the API refuses.
+#}
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: {{ _vm.name }}
+  namespace: {{ platform_namespace }}
+  labels:
+    app.kubernetes.io/part-of: was-evolution
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: {{ _vm.name }}
+    spec:
+      hostname: {{ _vm.name }}
+      domain:
+        cpu:
+          cores: {{ _vm.cores | int }}
+        resources:
+          requests:
+            memory: {{ _vm.memory }}
+        devices:
+          disks:
+            - name: rootdisk
+              disk: {bus: virtio}
+            - name: cloudinit
+              disk: {bus: virtio}
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: {{ _vm.name }}-disk
+        - name: cloudinit
+          cloudInitNoCloud:
+            secretRef:
+              name: {{ _vm.name }}-cloudinit
+      terminationGracePeriodSeconds: 120

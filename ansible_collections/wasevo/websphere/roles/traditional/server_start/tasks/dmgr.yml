@@ -1,0 +1,10 @@
+---
+# The deployment manager. Federation needs it listening, and every wsadmin
+# session of the configuration jobs goes through it.
+
+- name: Start the deployment manager
+  ansible.builtin.include_tasks: process.yml
+  vars:
+    start_label: "deployment manager {{ was_dmgr_profile_name }}"
+    start_pid_file: "{{ was_dmgr_profile_path }}/logs/dmgr/dmgr.pid"
+    start_command: "{{ was_dmgr_profile_path }}/bin/startManager.sh"

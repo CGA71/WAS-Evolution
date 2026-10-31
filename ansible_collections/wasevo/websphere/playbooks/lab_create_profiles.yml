@@ -34,9 +34,12 @@
 # Separate play, after the deployment manager: federation needs it running, and
 # the node agent role reads the SOAP port the deployment manager really got
 # rather than the one the inventory predicts.
+# One node at a time: addNode takes a lock in the cell, and two nodes
+# federating into one deployment manager at once contend for it.
 - name: Federated node profiles
   hosts: "{{ profile_node_hosts | default('nodeagents') }}"
   gather_facts: true
+  serial: "{{ profile_node_serial | default(1) }}"
 
   roles:
     - role: wasevo.websphere.traditional.profile_nodeagent

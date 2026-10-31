@@ -250,3 +250,12 @@
           on the target.
         success_msg: "{{ was_dmgr_profile_name }} is a usable deployment manager profile"
       when: not ansible_check_mode
+
+    # A node cannot federate into a deployment manager that is not listening,
+    # and nothing else starts it: the profile is created stopped. Started here,
+    # and left alone when it already runs, so a replay changes nothing.
+    - name: Start the deployment manager, which federation needs
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.server_start
+        tasks_from: dmgr.yml
+      when: not ansible_check_mode

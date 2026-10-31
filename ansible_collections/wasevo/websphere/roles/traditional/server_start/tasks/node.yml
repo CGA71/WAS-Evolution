@@ -1,0 +1,44 @@
+---
+# A federated node: its node agent, then the cluster members it carries.
+#
+# The node agent first: it is what synchronises the node with the deployment
+# manager, and an application server started on a node that has not received
+# its configuration yet does not exist there.
+
+- name: Start the node agent
+  ansible.builtin.include_tasks: process.yml
+  vars:
+    start_label: "node agent of {{ was_node_name }}"
+    start_pid_file: "{{ was_profile_path }}/logs/nodeagent/nodeagent.pid"
+    start_command: "{{ was_profile_path }}/bin/startNode.sh"
+
+- name: The member configuration must have reached this node
+  ansible.builtin.stat:
+    path: "{{ was_profile_path }}/config/cells/{{ was_cell_name }}/nodes/{{ was_node_name }}/servers/{{ item }}/server.xml"
+  loop: "{{ was_cluster_members }}"
+  register: _start_member_config
+  check_mode: false
+  become: true
+
+- name: Refuse to start a member the node does not know yet
+  ansible.builtin.assert:
+    that:
+      - _start_member_config.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      {{ _start_member_config.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
+      has no configuration on {{ was_node_name }}. Either the member job has
+      not run - traditional_cluster_members.yml - or the node has not been
+      synchronised since: its node agent synchronises it within a minute of
+      starting.
+    success_msg: "every member of {{ was_node_name }} is configured on it"
+  when: not ansible_check_mode
+
+- name: Start the cluster members of this node
+  ansible.builtin.include_tasks: process.yml
+  loop: "{{ was_cluster_members }}"
+  loop_control:
+    loop_var: start_member
+  vars:
+    start_label: "application server {{ start_member }}"
+    start_pid_file: "{{ was_profile_path }}/logs/{{ start_member }}/{{ start_member }}.pid"
+    start_command: "{{ was_profile_path }}/bin/startServer.sh {{ start_member }}"

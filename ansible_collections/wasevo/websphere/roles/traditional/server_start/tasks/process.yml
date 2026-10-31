@@ -1,0 +1,41 @@
+---
+# Start one WAS process if it is not running - the deployment manager, a node
+# agent or an application server.
+#
+# Inputs: start_label, start_pid_file, start_command.
+#
+# RUNNING IS A LIVE PID, NOT A FILE. A process that died leaves its .pid file
+# behind; a check on the file alone would call a dead server running and never
+# start it. The pid inside must name a live process.
+
+- name: Is it running - {{ start_label }}
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      if [ -f "{{ start_pid_file }}" ] && kill -0 "$(cat "{{ start_pid_file }}")" 2>/dev/null; then
+        echo running
+      else
+        echo stopped
+      fi
+    executable: /bin/bash
+  register: _start_state
+  changed_when: false
+  check_mode: false
+  become: true
+
+- name: Start it - {{ start_label }}
+  ansible.builtin.command:
+    cmd: "{{ start_command }}"
+  become: true
+  when: _start_state.stdout != 'running'
+  register: _start_run
+  changed_when: true
+  async: 900
+  poll: 10
+
+- name: Report - {{ start_label }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ start_label }}:
+      {{ 'already running, left alone' if _start_state.stdout == 'running'
+         else ('started' if not ansible_check_mode else 'would be started') }}

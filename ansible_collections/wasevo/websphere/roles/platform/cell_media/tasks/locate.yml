@@ -1,0 +1,31 @@
+---
+# On the controller: the source's pod address, from the cluster.
+
+- name: The source machine as the cluster sees it
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ hostvars[_media_source].platform_vm_namespace }}"
+    name: "{{ hostvars[_media_source].platform_vm_name }}"
+  register: _media_vmi
+  vars:
+    _media_source: "{{ groups[media_source_group] | first }}"
+
+- name: Its address must be known
+  ansible.builtin.assert:
+    that:
+      - _media_vmi.resources | length > 0
+      - (_media_vmi.resources | first).status.interfaces | default([]) | length > 0
+    fail_msg: >-
+      The media source has no running VirtualMachineInstance, or no address.
+      It is declared by platform_vm_namespace and platform_vm_name on the
+      host of {{ media_source_group }}.
+    success_msg: "source at {{ (_media_vmi.resources | first).status.interfaces[0].ipAddress }}"
+
+- name: Publish the archive's URL to the targets
+  ansible.builtin.set_fact:
+    media_url: >-
+      http://{{ (_media_vmi.resources | first).status.interfaces[0].ipAddress }}:{{ media_port }}/{{ media_archive }}
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups[media_target_group] }}"

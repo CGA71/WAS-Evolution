@@ -1,0 +1,204 @@
+---
+# The machines of the cell, created on the k3s cluster through its API.
+#
+# Converges: a machine that exists is left as it is - its disk is never
+# reimported, so a replay does not destroy a built cell. Changing a machine's
+# size is a stop and a start of that machine, not of this role.
+
+- name: The namespace must be named by the inventory
+  ansible.builtin.assert:
+    that:
+      - platform_namespace | length > 0
+    fail_msg: >-
+      platform_namespace is empty. It is where the cell's machines live, and
+      it comes from the inventory - nothing derives it.
+    success_msg: "namespace {{ platform_namespace }}"
+
+- name: The machines this inventory declares
+  ansible.builtin.set_fact:
+    _platform_vms: >-
+      {%- set out = [] -%}
+      {%- for host in groups[platform_vm_group] | default([]) -%}
+        {%- set hv = hostvars[host] -%}
+        {%- if hv.platform_vm_name is defined -%}
+          {%- set _ = out.append({
+                'host': host,
+                'name': hv.platform_vm_name,
+                'fqdn': hv.platform_vm_name ~ '.' ~ platform_namespace ~ '.svc.cluster.local',
+                'cores': hv.platform_vm_cores | default(2) | int,
+                'memory': hv.platform_vm_memory | default('4Gi'),
+                'disk': hv.platform_vm_disk | default('30Gi'),
+              }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: At least one machine must be declared
+  ansible.builtin.assert:
+    that:
+      - _platform_vms | length > 0
+    fail_msg: >-
+      No host of the "{{ platform_vm_group }}" group declares platform_vm_name.
+      Each machine of the cell is a host there with its name, cores, memory
+      and disk.
+    success_msg: "{{ _platform_vms | map(attribute='name') | join(', ') }}"
+
+# The key the machines trust is the one the next jobs log in with: the public
+# half of the machine credential AWX loaded into this job's SSH agent.
+- name: Read the public key of the machine credential
+  ansible.builtin.command:
+    cmd: ssh-add -L
+  register: _platform_agent_keys
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: platform_ssh_public_key | length == 0
+
+- name: The keys to install
+  ansible.builtin.set_fact:
+    _platform_keys: >-
+      {{ [platform_ssh_public_key] if platform_ssh_public_key | length > 0
+         else (_platform_agent_keys.stdout_lines | default([])
+               | select('match', '^(ssh-|ecdsa-)') | list) }}
+
+- name: A key must be available, or the machines cannot be reached
+  ansible.builtin.assert:
+    that:
+      - _platform_keys | length > 0
+    fail_msg: >-
+      No SSH public key: the job's SSH agent holds none, and
+      platform_ssh_public_key is empty. Attach the machine credential to this
+      job template - its key is the one the machines will trust.
+    success_msg: "{{ _platform_keys | length }} key(s) to install"
+
+- name: The namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ platform_namespace }}"
+        labels:
+          app.kubernetes.io/part-of: was-evolution
+          was-evolution/purpose: cell
+
+- name: The cloud-init of each machine
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ _vm.name }}-cloudinit"
+        namespace: "{{ platform_namespace }}"
+      type: Opaque
+      stringData:
+        userdata: "{{ lookup('ansible.builtin.template', 'cloudinit.j2') }}"
+  loop: "{{ _platform_vms }}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _vm.name }}"
+
+# Created once. A DataVolume that exists is not touched: its spec cannot change
+# after the import, and reimporting would erase the machine.
+- name: Is each disk already there
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    namespace: "{{ platform_namespace }}"
+    name: "{{ _vm.name }}-disk"
+  loop: "{{ _platform_vms }}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _vm.name }}"
+  register: _platform_disks
+
+- name: The disk of each new machine, imported from the image
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cdi.kubevirt.io/v1beta1
+      kind: DataVolume
+      metadata:
+        name: "{{ _disk._vm.name }}-disk"
+        namespace: "{{ platform_namespace }}"
+        annotations:
+          cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+      spec:
+        source:
+          http:
+            url: "{{ platform_vm_image_url }}"
+        pvc:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: "{{ _disk._vm.disk }}"
+          storageClassName: "{{ platform_storage_class }}"
+  loop: "{{ _platform_disks.results }}"
+  loop_control:
+    loop_var: _disk
+    label: "{{ _disk._vm.name }}"
+  when: _disk.resources | length == 0
+
+- name: The machines
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('ansible.builtin.template', 'vm.yml.j2') | from_yaml }}"
+  loop: "{{ _platform_vms }}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _vm.name }}"
+
+- name: A stable name for each machine, every port forwarded
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ _vm.name }}"
+        namespace: "{{ platform_namespace }}"
+      spec:
+        clusterIP: None
+        publishNotReadyAddresses: true
+        selector:
+          kubevirt.io/domain: "{{ _vm.name }}"
+        ports:
+          - {name: ssh, port: 22, targetPort: 22, protocol: TCP}
+  loop: "{{ _platform_vms }}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _vm.name }}"
+
+- name: Wait for each disk image to be imported
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    namespace: "{{ platform_namespace }}"
+    name: "{{ _vm.name }}-disk"
+  register: _platform_dv
+  until: (_platform_dv.resources | first | default({})).status.phase | default('') == 'Succeeded'
+  retries: "{{ (platform_import_timeout | int) // 15 }}"
+  delay: 15
+  loop: "{{ _platform_vms }}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _vm.name }}"
+  when: not ansible_check_mode
+
+- name: Wait for each machine to answer SSH on its name
+  ansible.builtin.wait_for:
+    host: "{{ _vm.fqdn }}"
+    port: 22
+    search_regex: OpenSSH
+    timeout: "{{ platform_boot_timeout | int }}"
+  loop: "{{ _platform_vms }}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _vm.fqdn }}"
+  when: not ansible_check_mode
+
+- name: Report
+  ansible.builtin.debug:
+    msg: "{{ _platform_vms | map(attribute='fqdn') | list }}"

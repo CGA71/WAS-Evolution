@@ -1,0 +1,27 @@
+---
+# Stage the Installation Manager and WAS media on the machines of a cell.
+#
+# WHY FROM THE INSTALL LAB. The WAS for Developers repository comes from IBM
+# behind an IBMid, through an interactive prompt (ci/k3s/lab-mirror-was.sh).
+# The install lab VM already holds it. Fetching it again per machine would
+# need the IBMid again; copying it from the lab needs nothing but the network.
+#
+# HOW. The source machine archives the two media directories once, and serves
+# that archive over HTTP for the time of the copy - a transient systemd unit
+# that also stops itself after media_serve_max_seconds. Each target streams it
+# into its media directory, and only if the repository is not there yet.
+#
+# The source is the host of media_source_group. Its address is its pod
+# address, read from the cluster: the Service in front of the lab VM forwards
+# only SSH and the console, and that is not this role's to change.
+media_source_group: media_source
+media_target_group: was_install
+
+# Relative to was_install_binaries_base_dir on both ends.
+media_dirs:
+  - IBM/install_im
+  - IBM/install_was90
+media_archive: cell-media.tar
+media_port: 8765
+media_serve_max_seconds: 7200
+media_unit: was-cell-media

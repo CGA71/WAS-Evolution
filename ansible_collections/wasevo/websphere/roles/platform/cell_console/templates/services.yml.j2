@@ -1,0 +1,37 @@
+{#
+  The two Services that publish the console. Rendered and parsed with
+  from_yaml so every port reaches the API as an integer.
+#}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: {{ console_service }}
+    namespace: {{ platform_namespace }}
+    labels:
+      app.kubernetes.io/part-of: was-evolution
+  spec:
+    type: NodePort
+    selector:
+      kubevirt.io/domain: {{ _console_vm }}
+    ports:
+      - name: console-http
+        protocol: TCP
+        port: {{ _console_http | int }}
+        targetPort: {{ _console_http | int }}
+        nodePort: {{ console_node_port | int }}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: {{ console_service }}-secure
+    namespace: {{ platform_namespace }}
+    labels:
+      app.kubernetes.io/part-of: was-evolution
+  spec:
+    type: LoadBalancer
+    selector:
+      kubevirt.io/domain: {{ _console_vm }}
+    ports:
+      - name: console-https
+        protocol: TCP
+        port: {{ _console_https | int }}
+        targetPort: {{ _console_https | int }}

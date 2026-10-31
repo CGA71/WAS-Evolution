@@ -14,8 +14,15 @@ nodeName={{ was_node_name }}
 hostName={{ profile_node_hostname }}
 {% if profile_node_ports | length > 0 %}
 portsFile={{ profile_response_dir }}/ports.{{ was_node_name }}
-{% else %}
+{% elif was_base_port | default('') | string | length > 0 %}
 startingPort={{ was_base_port }}
+{% else %}
+{#
+  No port map and no base port: the product's own defaults - 9060 and 9043
+  for a deployment manager's console, 8879 for its SOAP connector. What a
+  machine that carries one profile of each kind wants.
+#}
+defaultPorts=true
 {% endif %}
 {% if profile_federate_later | bool %}
 federateLater=true

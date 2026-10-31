@@ -1,0 +1,46 @@
+---
+# Job 1 of the cell workflow: the machines.
+#
+#   ansible-playbook -i inventories/cell <this>
+#
+# In AWX this is "WAS cell - 1. Machines". It runs in the job pod and creates
+# the cell's KubeVirt virtual machines through the Kubernetes API, with the
+# Kubernetes credential the template carries; then it waits until every machine
+# answers and has finished its first boot.
+#
+# ONE JOB TEMPLATE PER STEP, each replayable: a replay finds the machines and
+# changes nothing.
+
+- name: The virtual machines of the cell, on the cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    # Included, not listed under roles: the syntax check in CI then does not
+    # need kubernetes.core installed to parse this playbook.
+    - name: Create the machines
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.kubevirt_vms
+
+- name: Every machine reachable and through its first boot
+  hosts: "{{ platform_vm_group | default('was_install') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Wait for Ansible to log in
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+      when: not ansible_check_mode
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command:
+        cmd: cloud-init status --wait
+      register: cell_cloud_init
+      changed_when: false
+      failed_when: cell_cloud_init.rc not in [0, 2]
+      when: not ansible_check_mode
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} is up: {{ cell_cloud_init.stdout | default('(check run)') | trim }}"
