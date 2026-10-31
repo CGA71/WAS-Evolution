@@ -166,7 +166,9 @@ def main():
                 description=dict(type="str", default=""),
             ),
         ),
-        password_policy=dict(type="str", default="on_create", choices=["on_create", "always"]),
+        # Not a secret, despite its name - stated, so Ansible does not warn on
+        # every run that it might be one.
+        password_policy=dict(type="str", default="on_create", choices=["on_create", "always"], no_log=False),
         state=dict(type="str", default="present", choices=["present", "absent"]),
     )
 
