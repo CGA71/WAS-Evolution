@@ -388,6 +388,48 @@ payload jms_absent <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# JMS on IBM MQ, at the same scope: the queue manager declared on the factory
+# and the spec, its port and channel left to WAS - which fills them in and
+# shows them, and a replay must not read that as a change.
+payload mq <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"mq","known_destinations":{},
+           "connection_factories":[{"name":"PayCF","jndi_name":"jms/payCF","qmgr":"QM1","type":"QCF"}],
+           "queues":[{"name":"PayQ","jndi_name":"jms/payQ","queue":"PAYMENTS.IN"}],
+           "topics":[{"name":"RatesT","jndi_name":"jms/ratesT","topic_name":"rates/eur"}],
+           "activation_specs":[{"name":"PayAS","jndi_name":"jms/payAS","destination_jndi":"jms/payQ","qmgr":"QM1"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload mq_client <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"mq","known_destinations":{},
+           "connection_factories":[{"name":"PayCF","jndi_name":"jms/payCF","qmgr":"QM1","type":"QCF",
+                                    "transport":"CLIENT","host":"mq.sim","port":1415,"channel":"APP.SVRCONN"}],
+           "queues":[{"name":"PayQ","jndi_name":"jms/payQ","queue":"PAYMENTS.IN"}],
+           "topics":[{"name":"RatesT","jndi_name":"jms/ratesT","topic_name":"rates/eur"}],
+           "activation_specs":[{"name":"PayAS","jndi_name":"jms/payAS","destination_jndi":"jms/payQ","qmgr":"QM1"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# CLIENT with nowhere to go: WAS saves it, the first connection fails.
+payload mq_client_nowhere <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"mq","known_destinations":{},
+           "connection_factories":[{"name":"LostCF","jndi_name":"jms/lostCF","qmgr":"QM1","transport":"CLIENT"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload mq_absent <<'JSON'
+{"resource":"jms","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"mq","known_destinations":{},
+           "connection_factories":[{"name":"PayCF","jndi_name":"jms/payCF"}],
+           "queues":[{"name":"PayQ","jndi_name":"jms/payQ"}],
+           "topics":[{"name":"RatesT","jndi_name":"jms/ratesT"}],
+           "activation_specs":[{"name":"PayAS","jndi_name":"jms/payAS","destination_jndi":"jms/payQ"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload sib_absent <<'JSON'
 {"resource":"sibus","state":"absent",
  "params":{"bus":"StubBus","members":[],"destinations":[]},
@@ -691,6 +733,19 @@ expect "delete the four"                        jms_absent           true
 expect "replay delete"                          jms_absent           false
 
 echo
+echo "=== JMS on IBM MQ ==="
+expect "create factory, queue, topic, spec"     mq                   true
+expect "replay, WAS defaults not declared"      mq                   false
+expect_value "four MQ resources" \
+    "$(cell_value count MQConnectionFactory -)$(cell_value count MQQueue -)$(cell_value count MQTopic -)$(cell_value count J2CActivationSpec -)" "1111"
+expect "factory moved to CLIENT on a host"      mq_client            true
+expect "replay (idempotency)"                   mq_client            false
+expect_refusal "a CLIENT factory with no host" \
+    mq_client_nowhere "neither a host nor a connection_list"
+expect "delete the four"                        mq_absent            true
+expect "replay delete"                          mq_absent            false
+
+echo
 echo "=== the bus, deleted ==="
 expect "delete the bus"                         sib_absent           true
 expect "replay delete"                          sib_absent           false
@@ -729,6 +784,26 @@ print("|".join([str(len(r["errors"])), str(len(r["groups"])),
                 str(all("jms/q" in g["known_destinations"] for g in r["groups"]))]))
 ' "$COLLECTION/plugins/filter")"
 expect_value "JMS grouping rules" "$groups" "1|2|cell,cluster|True"
+# The IBM MQ side of the grouping: the shared connection is merged into the
+# factory and the spec - the resource keeping its own keys - not into a queue;
+# a bus on an MQ resource, and an MQ queue naming no queue, refused.
+mqgroups="$("$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+r = T.jms_groups({
+    "mq_connection": {"qmgr": "QM1", "transport": "CLIENT", "host": "mq", "port": 1414},
+    "connection_factories": [{"name": "CF", "jndi_name": "jms/cf", "provider": "mq", "port": 1415}],
+    "queues": [{"name": "Q", "jndi_name": "jms/q", "provider": "mq", "queue": "Q.IN"},
+               {"name": "NoQ", "jndi_name": "jms/nq", "provider": "mq"},
+               {"name": "Bus", "jndi_name": "jms/bq", "provider": "mq", "queue": "B", "bus": "B"}]},
+    {"type": "cluster"}, "C", "Cell")
+g = r["groups"][0]
+cf = g["connection_factories"][0]
+print("|".join([str(len(r["errors"])), g["provider"], cf["qmgr"], cf["host"], str(cf["port"]),
+                str("qmgr" in g["queues"][0])]))
+' "$COLLECTION/plugins/filter")"
+expect_value "JMS grouping rules, IBM MQ" "$mqgroups" "2|mq|QM1|mq|1415|False"
 # The library rendering's rules, on their own: a pattern that matched nothing
 # is refused, an explicit list is kept in its order, an expansion is sorted -
 # find returns files in filesystem order, and a class path that reshuffles
@@ -816,22 +891,23 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Twenty-six effective changes above. The cluster: created, members created,
+# Twenty-nine effective changes above. The cluster: created, members created,
 # a port pinned, a member drained, a member deleted, the cluster deleted (6).
 # The aliases: created, password rotated, deleted (3). JDBC: provider created,
 # its jar replaced, an alias created, a datasource created, its pool changed,
 # the datasource deleted, the provider deleted, the alias deleted (8).
 # Libraries: created, a jar added, deleted (3). The bus: created, a redelivery
 # limit changed, deleted (3). JMS: created, a factory changed, deleted (3).
+# JMS on IBM MQ: created, a factory moved to CLIENT, deleted (3).
 # Every replay, every check run, the password left alone under on_create, the
 # store drift left alone and every refusal must add none - a node
 # synchronisation on a cell that did not change is a ripple through the estate
 # for nothing.
-if [ "$syncs" = "26" ]; then
-    echo "  ok     26 syncs for 26 effective changes, none for the replays, the"
+if [ "$syncs" = "29" ]; then
+    echo "  ok     29 syncs for 29 effective changes, none for the replays, the"
     echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 26 syncs, state reports $syncs"
+    echo "  FAIL   expected 29 syncs, state reports $syncs"
     fail=1
 fi
 

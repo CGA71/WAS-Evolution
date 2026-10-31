@@ -1019,7 +1019,7 @@ names another scope when it needs one.
 | 9 | `traditional_jdbc.yml` | JDBC providers and datasources |
 | 10 | `traditional_shared_libraries.yml` | shared libraries |
 | 11 | `traditional_sibus.yml` | service integration buses |
-| 12 | `traditional_jms.yml` | JMS resources |
+| 12 | `traditional_jms.yml` | JMS resources, on the bus and on IBM MQ |
 
 ### J2C authentication aliases
 
@@ -1250,7 +1250,7 @@ jms:
 **One handler, one table per provider.** The four kinds are the same idea on
 the default messaging provider and on IBM MQ; what differs is the AdminTask
 verbs and the attributes. `was_jms` carries a table per provider, so IBM MQ,
-the next step, is a table and not a second handler. Resources are grouped by
+below, is a table and not a second handler. Resources are grouped by
 scope and provider, one wsadmin session per group, read back through the
 `show*` verbs - which flatten what a JMS resource keeps in property sets - and
 compared on the fields the declaration names.
@@ -1272,6 +1272,45 @@ accepted; a stub test asserts it is. In a check run the bus and its
 destinations may not exist yet, since the bus step ran in check mode too, and
 the bus checks stand down. Creating, destinations go before what refers to
 them; removing, what listens goes before what it listens on.
+
+### JMS on IBM MQ
+
+The same role, the same playbook, the same four kinds: a resource says
+`provider: mq` and names a queue manager instead of a bus. What every factory
+and activation spec of a run shares - the queue manager and the way to reach
+it - is declared once, and a resource's own key wins:
+
+```yaml
+jms:
+  mq_connection: { qmgr: QM1, transport: CLIENT, host: mq.example, port: 1414, channel: APP.SVRCONN }
+  connection_factories: [{ name: PaymentsCF, jndi_name: jms/paymentsCF, provider: mq, type: QCF }]
+  queues:               [{ name: PaymentsQueue, jndi_name: jms/payments, provider: mq, queue: PAYMENTS.IN }]
+  topics:               [{ name: RatesTopic, jndi_name: jms/rates, provider: mq, topic_name: rates/eur }]
+  activation_specs:     [{ name: PaymentsAS, jndi_name: jms/paymentsAS, provider: mq, destination_jndi: jms/payments }]
+```
+
+In the handler, IBM MQ is a second table, the `WMQAdminCommands` verbs
+(`createWMQConnectionFactory`, `createWMQQueue`, `createWMQTopic`,
+`createWMQActivationSpec`, and their list, show, modify and delete). An
+activation spec's `max_concurrency` is the WMQ `maxPoolSize`, the server
+session pool, whose default is 10 as on the bus.
+
+**Only what a resource declares is compared.** WAS fills the MQ connection
+attributes nobody set - a host, port 1414, a channel - and shows them back.
+Comparing them against an undeclared field would report a change on every
+replay; the fake cell fills them the way WAS does, and a stub test proves a
+replay stays at `changed=false`.
+
+**Refused before anything is written**, beyond what both providers refuse: a
+`CLIENT` transport with neither a `host` nor a `connection_list` - WAS saves
+it, and the first connection fails. In the model, an MQ resource that names a
+bus, an MQ queue with no queue, an MQ topic with no topic string.
+
+**Not proved yet**: the parameter names come from IBM's command reference;
+that the `show*` verbs return them under the same keys is assumed, and the
+first run against a real cell confirms it. The simulation declares an MQ
+queue at cell scope and an activation spec at cluster scope listening on it;
+no queue manager runs there, since configuring a resource connects nothing.
 
 ## 20. AWX
 
@@ -1362,6 +1401,9 @@ one.
 - [What is new in WebSphere Application Server traditional](https://www.ibm.com/docs/en/SSEQTP_9.0.5/was/ae/welc_newinrelease.html)
 - [IBM Java SDKs for WebSphere Liberty](https://www.ibm.com/support/pages/ibm-java-sdks-websphere-liberty)
 - [WebSphere Liberty images on IBM Container Registry](https://github.com/WASdev/ci.docker/blob/main/docs/icr-images.md)
+- [createWMQConnectionFactory command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmscf_create.html)
+- [createWMQQueue command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmswmqq_create.html)
+- [createWMQActivationSpec command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmsas_create.html)
 
 Source-repository findings come from direct inspection of the seven archives in `github.com/CGA71/WAS`.
 
@@ -2386,7 +2428,7 @@ elle en a besoin.
 | 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources |
 | 10 | `traditional_shared_libraries.yml` | bibliothèques partagées |
 | 11 | `traditional_sibus.yml` | bus d'intégration de services |
-| 12 | `traditional_jms.yml` | ressources JMS |
+| 12 | `traditional_jms.yml` | ressources JMS, sur le bus et sur IBM MQ |
 
 ### Alias d'authentification J2C
 
@@ -2633,7 +2675,7 @@ jms:
 **Un handler, une table par fournisseur.** Les quatre sortes sont la même idée
 sur le fournisseur par défaut et sur IBM MQ ; ce qui diffère, ce sont les
 verbes AdminTask et les attributs. `was_jms` porte une table par fournisseur :
-IBM MQ, l'étape suivante, sera une table et non un second handler. Les
+IBM MQ, ci-dessous, est une table et non un second handler. Les
 ressources sont regroupées par portée et par fournisseur, une session wsadmin
 par groupe, relues par les verbes `show*` - qui aplatissent ce qu'une
 ressource JMS range dans des jeux de propriétés - et comparées sur les champs
@@ -2657,6 +2699,47 @@ check run, le bus et ses destinations peuvent ne pas exister encore, puisque
 l'étape du bus a tourné en check elle aussi, et les contrôles du bus se
 retirent. À la création, les destinations passent avant ce qui y fait
 référence ; à la suppression, ce qui écoute passe avant ce qu'il écoute.
+
+### JMS sur IBM MQ
+
+Le même rôle, le même playbook, les quatre mêmes sortes : une ressource dit
+`provider: mq` et nomme un gestionnaire de files au lieu d'un bus. Ce que
+partagent toutes les fabriques et activation specs d'un run - le gestionnaire
+de files et le moyen de le joindre - se déclare une fois, la clé propre d'une
+ressource l'emportant :
+
+```yaml
+jms:
+  mq_connection: { qmgr: QM1, transport: CLIENT, host: mq.example, port: 1414, channel: APP.SVRCONN }
+  connection_factories: [{ name: PaymentsCF, jndi_name: jms/paymentsCF, provider: mq, type: QCF }]
+  queues:               [{ name: PaymentsQueue, jndi_name: jms/payments, provider: mq, queue: PAYMENTS.IN }]
+  topics:               [{ name: RatesTopic, jndi_name: jms/rates, provider: mq, topic_name: rates/eur }]
+  activation_specs:     [{ name: PaymentsAS, jndi_name: jms/paymentsAS, provider: mq, destination_jndi: jms/payments }]
+```
+
+Dans le handler, IBM MQ est une seconde table, les verbes de
+`WMQAdminCommands` (`createWMQConnectionFactory`, `createWMQQueue`,
+`createWMQTopic`, `createWMQActivationSpec`, et leurs list, show, modify et
+delete). Le `max_concurrency` d'une activation spec est le `maxPoolSize` WMQ,
+le pool de sessions serveur, à 10 par défaut comme sur le bus.
+
+**Seul ce que la ressource déclare est comparé.** WAS remplit les attributs de
+connexion MQ que personne n'a posés - un hôte, le port 1414, un canal - et les
+rend à la lecture. Les comparer à un champ non déclaré annoncerait un
+changement à chaque rejeu ; la fausse cellule les remplit comme WAS, et un
+test vérifie qu'un rejeu reste à `changed=false`.
+
+**Refusé avant toute écriture**, en plus de ce que refusent les deux
+fournisseurs : un transport `CLIENT` sans `host` ni `connection_list` - WAS
+l'enregistre, et la première connexion échoue. Dans le modèle, une ressource
+MQ qui nomme un bus, une file MQ sans file, un sujet MQ sans chaîne de sujet.
+
+**Pas encore prouvé** : les noms de paramètres viennent de la référence des
+commandes IBM ; que les verbes `show*` les rendent sous les mêmes clés est une
+hypothèse, que le premier run sur une vraie cellule confirmera. La simulation
+déclare une file MQ à portée cellule et une activation spec à portée cluster
+qui l'écoute ; aucun gestionnaire de files n'y tourne, configurer une
+ressource ne connecte rien.
 
 ## 20. AWX
 
@@ -2749,5 +2832,8 @@ chemin et n'en est pas une.
 - [What is new in WebSphere Application Server traditional](https://www.ibm.com/docs/en/SSEQTP_9.0.5/was/ae/welc_newinrelease.html)
 - [IBM Java SDKs for WebSphere Liberty](https://www.ibm.com/support/pages/ibm-java-sdks-websphere-liberty)
 - [WebSphere Liberty images on IBM Container Registry](https://github.com/WASdev/ci.docker/blob/main/docs/icr-images.md)
+- [createWMQConnectionFactory command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmscf_create.html)
+- [createWMQQueue command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmswmqq_create.html)
+- [createWMQActivationSpec command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmsas_create.html)
 
 Les relevés sur le dépôt source proviennent de l'inspection directe des sept archives de `github.com/CGA71/WAS`.

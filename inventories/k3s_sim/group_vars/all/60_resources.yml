@@ -106,17 +106,37 @@ sibuses:
         reliability: RELIABLE_NONPERSISTENT
 
 # --------------------------------------------------------------------------
-# JMS on the default messaging provider
+# JMS, on both providers
 # --------------------------------------------------------------------------
 # On SimOrdersBus, declared above: a connection factory, a JMS queue on the
 # bus queue, a JMS topic on the topic space, and an activation spec listening
 # on the queue - the shape a message-driven bean needs.
+#
+# On IBM MQ: the queue manager declared once, a factory, a queue at CELL scope
+# and a cluster-scope activation spec listening on it - WAS resolves the JNDI
+# name through the scopes, and the run must accept it. No queue manager runs
+# in the simulation: the resources are configuration, and nothing connects.
 jms:
+  mq_connection:
+    qmgr: SIMQM1
+    transport: CLIENT
+    host: mq.sim.internal
+    port: 1414
+    channel: SIM.APP.SVRCONN
   connection_factories:
     - name: SimOrdersCF
       jndi_name: jms/sim/ordersCF
       bus: SimOrdersBus
+    - name: SimPaymentsCF
+      jndi_name: jms/sim/paymentsCF
+      provider: mq
+      type: QCF
   queues:
+    - name: SimPaymentsQueue
+      jndi_name: jms/sim/payments
+      provider: mq
+      queue: SIM.PAYMENTS.IN
+      scope: cell
     - name: SimOrdersJmsQueue
       jndi_name: jms/sim/orders
       queue: SimOrdersQueue
@@ -132,4 +152,9 @@ jms:
       jndi_name: jms/sim/ordersAS
       destination_jndi: jms/sim/orders
       bus: SimOrdersBus
+      max_concurrency: 5
+    - name: SimPaymentsAS
+      jndi_name: jms/sim/paymentsAS
+      provider: mq
+      destination_jndi: jms/sim/payments
       max_concurrency: 5

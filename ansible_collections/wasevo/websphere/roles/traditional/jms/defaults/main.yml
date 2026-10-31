@@ -22,8 +22,17 @@
 #           bus: OrdersBus, max_concurrency: 10 }
 #
 # Each resource takes `provider:` - sib, the default messaging provider, is the
-# default - and `scope:` to leave the default below. A default messaging
-# resource names its bus, which the bus job creates first.
+# default, mq is IBM MQ - and `scope:` to leave the default below. A default
+# messaging resource names its bus, which the bus job creates first. An IBM MQ
+# resource names a queue manager instead; what its connection factories and
+# activation specs share is declared once:
+#
+#   jms:
+#     mq_connection: { qmgr: QM1, transport: CLIENT, host: mq.example, port: 1414,
+#                      channel: APP.SVRCONN }
+#     queues:
+#       - { name: PaymentsQueue, jndi_name: jms/payments, provider: mq,
+#           queue: PAYMENTS.IN }
 jms: {}
 
 # Where a resource lives when it does not say: the cluster, so every member

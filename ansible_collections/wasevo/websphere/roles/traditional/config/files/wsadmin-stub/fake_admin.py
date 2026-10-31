@@ -59,6 +59,16 @@ GENERIC_TYPES = (
     "SIBJMSQueue",
     "SIBJMSTopic",
     "SIBJMSActivationSpec",
+    "MQConnectionFactory",
+    "MQQueue",
+    "MQTopic",
+    "J2CActivationSpec",
+)
+
+# The JMS types of both providers, which share one JNDI namespace per scope.
+JMS_TYPES = (
+    "SIBJMSConnectionFactory", "SIBJMSQueue", "SIBJMSTopic", "SIBJMSActivationSpec",
+    "MQConnectionFactory", "MQQueue", "MQTopic", "J2CActivationSpec",
 )
 
 # The reliability levels WAS accepts on a bus destination. Anything else is a
@@ -1001,9 +1011,23 @@ class FakeAdminTask(object):
         "destinationType": ("javax.jms.Queue", "javax.jms.Topic"),
     }
 
+    # The values the WMQAdminCommands accept - case-sensitive, as in WAS.
+    _WMQ_ENUMS = {
+        "type": ("CF", "QCF", "TCF"),
+        "wmqTransportType": ("BINDINGS", "BINDINGS_THEN_CLIENT", "CLIENT"),
+        "persistence": ("APP", "QDEF", "PERS", "NON", "HIGH"),
+        "destinationType": ("javax.jms.Queue", "javax.jms.Topic"),
+    }
+    _WMQ_REQUIRED = {
+        "MQConnectionFactory": ("name", "jndiName"),
+        "MQQueue": ("name", "jndiName", "queueName"),
+        "MQTopic": ("name", "jndiName", "topicName"),
+        "J2CActivationSpec": ("name", "jndiName", "destinationJndiName", "destinationType"),
+    }
+
     def _jms_scope_ids(self, scope_id):
         return [i for i, o in self.config.state["objects"].items()
-                if o["parent"] == scope_id and o["type"].startswith("SIBJMS")]
+                if o["parent"] == scope_id and o["type"] in JMS_TYPES]
 
     def _jms_create(self, config_type, scope_id, args):
         attrs = {}
@@ -1014,9 +1038,30 @@ class FakeAdminTask(object):
                 raise ValueError("unreadable JMS arguments %r" % (args,))
             attrs[flag[1:]] = args[index + 1]
             index += 2
-        for key, allowed in self._JMS_ENUMS.items():
+        wmq = not config_type.startswith("SIBJMS")
+        for key, allowed in (wmq and self._WMQ_ENUMS or self._JMS_ENUMS).items():
             if key in attrs and attrs[key] not in allowed:
                 raise ValueError("%s %r is not one of %s" % (key, attrs[key], ", ".join(allowed)))
+        if wmq:
+            for key in self._WMQ_REQUIRED[config_type]:
+                if not attrs.get(key):
+                    raise ValueError("%s needs -%s" % (config_type, key))
+            if attrs.get("busName"):
+                raise ValueError("an IBM MQ resource takes no -busName")
+            # A CLIENT connection with nowhere to go: WAS saves it, the first
+            # connection fails. The handler refuses it first.
+            if (attrs.get("wmqTransportType") == "CLIENT" and not attrs.get("qmgrHostname")
+                    and not attrs.get("connectionNameList")):
+                raise RuntimeError("%s %r is CLIENT with no host - the handler should have "
+                                   "refused it" % (config_type, attrs["name"]))
+            # WAS fills the connection attributes nobody set, and shows them.
+            # A handler comparing them against an undeclared field would
+            # report a change on every replay; this is what proves it does not.
+            if config_type in ("MQConnectionFactory", "J2CActivationSpec"):
+                attrs.setdefault("qmgrHostname", "localhost")
+                attrs.setdefault("qmgrPortNumber", "1414")
+                attrs.setdefault("qmgrSvrconnChannel", "SYSTEM.DEF.SVRCONN")
+                attrs.setdefault("wmqTransportType", "BINDINGS_THEN_CLIENT")
         for other in self._jms_scope_ids(scope_id):
             o = self.config.state["objects"][other]["attrs"]
             if self.config.state["objects"][other]["type"] == config_type and o["name"] == attrs["name"]:
@@ -1111,6 +1156,70 @@ class FakeAdminTask(object):
         return self._jms_modify(config_id, args)
 
     def deleteSIBJMSActivationSpec(self, config_id):
+        self.config.remove(config_id)
+
+    # -- JMS on IBM MQ ------------------------------------------------------
+    #
+    # The WMQAdminCommands group. The same store, the same show format.
+
+    def createWMQConnectionFactory(self, scope_id, args):
+        return self._jms_create("MQConnectionFactory", scope_id, args)
+
+    def listWMQConnectionFactories(self, scope_id):
+        return self._jms_list("MQConnectionFactory", scope_id)
+
+    def showWMQConnectionFactory(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifyWMQConnectionFactory(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteWMQConnectionFactory(self, config_id):
+        self.config.remove(config_id)
+
+    def createWMQQueue(self, scope_id, args):
+        return self._jms_create("MQQueue", scope_id, args)
+
+    def listWMQQueues(self, scope_id):
+        return self._jms_list("MQQueue", scope_id)
+
+    def showWMQQueue(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifyWMQQueue(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteWMQQueue(self, config_id):
+        self.config.remove(config_id)
+
+    def createWMQTopic(self, scope_id, args):
+        return self._jms_create("MQTopic", scope_id, args)
+
+    def listWMQTopics(self, scope_id):
+        return self._jms_list("MQTopic", scope_id)
+
+    def showWMQTopic(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifyWMQTopic(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteWMQTopic(self, config_id):
+        self.config.remove(config_id)
+
+    def createWMQActivationSpec(self, scope_id, args):
+        return self._jms_create("J2CActivationSpec", scope_id, args)
+
+    def listWMQActivationSpecs(self, scope_id):
+        return self._jms_list("J2CActivationSpec", scope_id)
+
+    def showWMQActivationSpec(self, config_id):
+        return self._jms_show(config_id)
+
+    def modifyWMQActivationSpec(self, config_id, args):
+        return self._jms_modify(config_id, args)
+
+    def deleteWMQActivationSpec(self, config_id):
         self.config.remove(config_id)
 
     def modifyServerPort(self, args):
