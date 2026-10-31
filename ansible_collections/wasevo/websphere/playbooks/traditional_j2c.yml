@@ -1,0 +1,29 @@
+---
+# J2C authentication aliases, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Rotating a database password is
+# one replay of this, with -e j2c_password_policy=always, and nothing else: no
+# cluster, no datasource, no application touched.
+#
+# The aliases come before the JDBC job because a datasource refers to one by
+# name; created in that order, a first build needs no second pass.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: J2C authentication aliases, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The aliases
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.j2c_alias

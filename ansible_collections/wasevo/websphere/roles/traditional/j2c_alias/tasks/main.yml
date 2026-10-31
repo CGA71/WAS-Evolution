@@ -1,0 +1,136 @@
+---
+# J2C authentication aliases, on the deployment manager.
+#
+# Cell-wide by nature: an alias lives in the cell's security configuration,
+# so no scope applies - unlike the JDBC and JMS resources that follow it, which
+# default to the cluster.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names the job that produces what is missing.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [j2c, always]
+
+- name: Nothing declared, nothing to do
+  ansible.builtin.debug:
+    msg: >-
+      j2c_aliases is empty for this run. Aliases are declared in the shared
+      model or the inventory - see roles/traditional/j2c_alias/defaults/main.yml
+      for the shape.
+  when: j2c_aliases | length == 0
+  tags: [j2c]
+
+- name: Reconcile the J2C aliases
+  when: j2c_aliases | length > 0
+  tags: [j2c]
+  block:
+
+    # ------------------------------------------------------------------
+    # Each password resolved, or refused by name
+    # ------------------------------------------------------------------
+    # The value comes from the controller's environment - filled in AWX by a
+    # credential - or from an explicit password supplied by -e. Resolved here,
+    # on the controller, so the target never sees the variable name lookup.
+    - name: Resolve each alias and its password
+      ansible.builtin.set_fact:
+        j2c_spec: >-
+          {%- set out = [] -%}
+          {%- for alias in j2c_aliases -%}
+            {%- set _ = out.append({
+                  'name': alias.name,
+                  'user': alias.user,
+                  'description': alias.description | default(''),
+                  'password': alias.password | default(
+                      lookup('ansible.builtin.env', alias.password_env)
+                      if alias.password_env is defined else '', true),
+                }) -%}
+          {%- endfor -%}
+          {{ out }}
+      no_log: true
+
+    # Names only. Looping an assertion over j2c_spec itself would put each
+    # password in the task result as `item` - hidden from the console by a
+    # loop label, but recorded in full in the AWX job events.
+    - name: Which aliases have no password
+      ansible.builtin.set_fact:
+        j2c_missing: >-
+          {{ j2c_spec | selectattr('password', 'equalto', '')
+             | map(attribute='name') | list }}
+
+    # Refused before wsadmin, and by the name of the variable to fill: an
+    # alias created with an empty password authenticates nowhere, and the
+    # failure would surface hours later as a database refusing a connection.
+    - name: Every alias to create must have its password
+      ansible.builtin.assert:
+        that:
+          - j2c_missing | length == 0
+        fail_msg: >-
+          No password for {{ j2c_missing | join(', ') }}. Each declaration names
+          the controller variable that carries it -
+          {% for name in j2c_missing %}{{ name }} reads
+          {{ (j2c_aliases | selectattr('name', 'equalto', name) | first).password_env
+             | default('nothing, and declares no password_env') }}{{ '; ' if not loop.last }}{% endfor %}
+          - and it is empty. In AWX, attach the credential that injects it; on
+          the command line, export it or pass the password by -e from a vault.
+          It is never written into a versioned file.
+        success_msg: "every alias has its password"
+      when: j2c_state == 'present'
+
+    - name: Administrative credentials must be supplied to reach the cell
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Reaching a cell with administrative security enabled needs
+          was_admin_user and was_admin_password - the deployment manager's
+          administrator, not a local account. Supply them from an AWX
+          credential or a vault.
+        success_msg: "administrative credentials supplied"
+
+    # ------------------------------------------------------------------
+    # The driver, then the profile it runs in
+    # ------------------------------------------------------------------
+    - name: Stage the Jython driver on the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    - name: The deployment manager profile must exist on this host
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+      register: j2c_wsadmin
+      check_mode: false
+
+    - name: Refuse clearly when it does not
+      ansible.builtin.fail:
+        msg: >-
+          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+          {{ inventory_hostname }}. Aliases live in the cell's security
+          configuration, which is the deployment manager profile - created by
+          the profile job. A check run needs it too: reading the cell is how a
+          dry run tells the truth.
+      when: not (j2c_wsadmin.stat.exists | default(false))
+
+    # ------------------------------------------------------------------
+    # One wsadmin session for every alias
+    # ------------------------------------------------------------------
+    - name: Reconcile the aliases
+      wasevo.websphere.was_j2c_alias:
+        aliases: "{{ j2c_spec }}"
+        password_policy: "{{ j2c_password_policy }}"
+        state: "{{ j2c_state }}"
+        profile_path: "{{ was_profile_path }}"
+        admin_user: "{{ was_admin_user }}"
+        admin_password: "{{ was_admin_password }}"
+        jython_dir: "{{ was_jython_dir }}"
+      register: j2c_result
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "aliases  : {{ j2c_result.aliases | map(attribute='name') | join(', ') | default('(none)', true) }}"
+          - "state    : {{ j2c_state }}, password policy {{ j2c_password_policy }}"
+          - "changed  : {{ j2c_result.changed }}"
+          - "note     : the passwords are not in this output, and never will be"

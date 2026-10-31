@@ -1,0 +1,57 @@
+---
+# The target guard, imported first by every playbook that acts on the
+# deployment manager. One definition: it used to be written out in each of
+# them, and three copies of a rule are three chances to disagree.
+#
+#   - name: The target this run acts on
+#     ansible.builtin.import_playbook: guard_target.yml
+#
+# WHY THE REFUSAL IS A PLAY AND NOT A FILTER. Those playbooks used to build
+# their host pattern from `was_environment | mandatory`, which cannot be
+# rendered without that variable - so they could not be syntax-checked or
+# linted without being launched, and the failure read "Mandatory variable not
+# defined", a message about a filter rather than about a missing answer.
+#
+# Their pattern now falls back to a name no inventory can hold, so it always
+# renders; and because a pattern that matches nothing makes a run SUCCEED
+# having done nothing - the one outcome this repository refuses - the refusal
+# lives here, on localhost, where it always runs and can say what is missing.
+
+- name: An environment must be supplied before a host pattern is built from it
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Refuse a run with neither an environment nor an explicit host pattern
+      ansible.builtin.assert:
+        that:
+          - (was_environment | default('') | trim | length > 0)
+            or (config_dmgr_hosts | default('') | trim | length > 0)
+        fail_msg: >-
+          No environment was supplied. It decides which hosts this run targets,
+          because the host pattern is the intersection of an environment group
+          and the deployment manager group - the environment is an answer, not
+          a directory. In AWX, answer the survey question for the target
+          environment; on the command line, pass -e was_environment=<code>.
+          An inventory with no environment group - the lab - is run with
+          -e config_dmgr_hosts=dmgr instead.
+        success_msg: "a target was supplied"
+
+    # Checked here and not in the play that uses the pattern: if the group
+    # does not exist, that play matches no host at all, so an assertion inside
+    # it would never run and the job would end green having built nothing.
+    # Only the default pattern needs the group; an inventory with no
+    # environment group - the lab - supplies config_dmgr_hosts.
+    - name: The chosen environment must exist in the inventory
+      ansible.builtin.assert:
+        that:
+          - (was_environment | lower) in groups
+        fail_msg: >-
+          No inventory group named {{ was_environment | lower }}. Known
+          environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
+          'dmgr', 'nodeagents', 'ihs', 'was_lab']) | list | join(', ') }}.
+          An inventory with no environment group - the lab - is run with
+          -e config_dmgr_hosts=dmgr instead.
+        success_msg: "the environment group exists"
+      when: config_dmgr_hosts is not defined

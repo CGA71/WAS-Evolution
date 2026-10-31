@@ -130,11 +130,60 @@ payload member_port_clash <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# --------------------------------------------------------------------------
+# J2C authentication aliases
+# --------------------------------------------------------------------------
+# The password used here is a marker, searched for in every driver answer
+# below: it must never come back out. The real AdminConfig returns a stored
+# password encoded, so a handler that read it back would work in this fake and
+# leak or break on a real cell - the fake refuses to serve it at all.
+payload j2c_create <<'JSON'
+{"resource":"j2c_alias","state":"present",
+ "params":{"password_policy":"on_create",
+           "aliases":[{"name":"stubDbAlias","user":"app","password":"MARKER-pw-1","description":"stub db"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload j2c_user_check <<'JSON'
+{"resource":"j2c_alias","state":"present",
+ "params":{"password_policy":"on_create",
+           "aliases":[{"name":"stubDbAlias","user":"app2","password":"MARKER-pw-1","description":"stub db"}]},
+ "check_mode":true,"save_config":true,"sync_nodes":true}
+JSON
+
+# A new password under on_create: nothing to compare, so nothing written.
+payload j2c_new_pw_on_create <<'JSON'
+{"resource":"j2c_alias","state":"present",
+ "params":{"password_policy":"on_create",
+           "aliases":[{"name":"stubDbAlias","user":"app","password":"MARKER-pw-2","description":"stub db"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# The same under always: the rotation.
+payload j2c_rotate <<'JSON'
+{"resource":"j2c_alias","state":"present",
+ "params":{"password_policy":"always",
+           "aliases":[{"name":"stubDbAlias","user":"app","password":"MARKER-pw-2","description":"stub db"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload j2c_absent <<'JSON'
+{"resource":"j2c_alias","state":"absent",
+ "params":{"aliases":[{"name":"stubDbAlias","user":"app"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 # Run one payload through the driver and print the resulting `changed`, or an
 # error. Deliberately goes through the sentinel extraction the module uses, so
 # a change to the framing breaks here too.
+#
+# The raw output of every run is appended to $WORK/<payload>.raw, so a check
+# that inspects what the driver said - the password-leak guard - reads the
+# answers of the runs that actually happened, all of them, instead of running
+# the payload again, which would write twice and skew every count after it.
 run_one() {
     "$PY" "$STUB/shim.py" "$DRIVER" "$WORK/$1.json" 2>&1 \
+      | tee -a "$WORK/$1.raw" \
       | sed -n '/<<<VSSP-JSON>>>/,/<<<END-VSSP-JSON>>>/p' \
       | sed '1d;$d' \
       | "$PY" -c '
@@ -268,6 +317,44 @@ expect_refusal "two JVMs on one node claiming one port" \
     member_port_clash "cannot share a port"
 
 echo
+echo "=== J2C authentication aliases ==="
+# The stored password, and how many times it was written - read from the fake
+# cell's state, which is the only place it exists.
+j2c_pw() {
+    "$PY" -c '
+import json, os, sys
+for o in json.load(open(os.environ["WAS_SIM_STATE"])).get("objects", {}).values():
+    if o["type"] == "JAASAuthData" and o["attrs"]["alias"] == sys.argv[1]:
+        print("%s/%s" % (o["attrs"]["_password"], o["attrs"]["_password_writes"]))
+        sys.exit(0)
+print("absent")
+' "$1"
+}
+
+expect "create an alias"                        j2c_create           true
+expect "replay (idempotency)"                   j2c_create           false
+expect "--check a new user"                     j2c_user_check       true
+expect_value "the check wrote nothing" "$(j2c_pw stubDbAlias)" "MARKER-pw-1/1"
+expect "new password, on_create: left alone"    j2c_new_pw_on_create false
+expect_value "and it was not written" "$(j2c_pw stubDbAlias)" "MARKER-pw-1/1"
+expect "new password, always: rotated"          j2c_rotate           true
+expect_value "and it was written once more" "$(j2c_pw stubDbAlias)" "MARKER-pw-2/2"
+
+# The guard that matters most for this resource. Every answer the driver gave
+# about an alias is searched for the password markers - including the rotation,
+# where the new password was in the request and must not be in the answer.
+leak=""
+for pl in j2c_create j2c_user_check j2c_new_pw_on_create j2c_rotate; do
+    if grep -q "MARKER-pw" "$WORK/$pl.raw"; then
+        leak="$leak $pl"
+    fi
+done
+expect_value "no password in any driver answer" "${leak:-none}" "none"
+
+expect "delete"                                 j2c_absent           true
+expect "replay delete"                          j2c_absent           false
+
+echo
 echo "=== the cluster, deleted with its members ==="
 expect "delete"                             absent      true
 expect "replay delete"                      absent      false
@@ -314,16 +401,17 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Six effective changes above: the cluster created, its members created, a
-# port pinned, a member drained, a member deleted, the cluster deleted. Every
-# replay, every check run and the two refusals must add none - a node
-# synchronisation on a cell that did not change is a ripple through the estate
-# for nothing.
-if [ "$syncs" = "6" ]; then
-    echo "  ok     6 syncs for 6 effective changes, none for the replays,"
-    echo "         the check runs or the refusals"
+# Nine effective changes above: the cluster created, its members created, a
+# port pinned, a member drained, a member deleted, an alias created, its
+# password rotated, the alias deleted, the cluster deleted. Every replay, every
+# check run, the password left alone under on_create and the refusals must add
+# none - a node synchronisation on a cell that did not change is a ripple
+# through the estate for nothing.
+if [ "$syncs" = "9" ]; then
+    echo "  ok     9 syncs for 9 effective changes, none for the replays,"
+    echo "         the check runs, the untouched password or the refusals"
 else
-    echo "  FAIL   expected 6 syncs, state reports $syncs"
+    echo "  FAIL   expected 9 syncs, state reports $syncs"
     fail=1
 fi
 

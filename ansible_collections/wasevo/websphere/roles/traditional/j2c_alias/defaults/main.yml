@@ -1,0 +1,31 @@
+---
+# J2C authentication aliases: the credentials a datasource, a JMS connection
+# factory or a bus member presents to what it connects to.
+#
+# REPLAYABLE ON ITS OWN. Rotating a database password is one replay of this
+# role with j2c_password_policy: always, and nothing else - which is why the
+# aliases are a role of their own and not a step of the JDBC role.
+
+# The aliases to manage. Declared in the shared model - layer 1 - because the
+# Liberty back-end renders the same declaration into <authData>:
+#
+#   j2c_aliases:
+#     - name: as400ExtranetAlias
+#       user: wsextranet
+#       password_env: AS400_EXTRANET_PASSWORD   # the NAME of the variable
+#       description: AS/400 extranet database
+#
+# password_env names an environment variable on the controller, which in AWX
+# is filled by a credential and on the command line by the shell. The value is
+# never written into a versioned file. A literal `password:` is accepted for a
+# run that supplies one by -e from a vault, and wins over password_env.
+j2c_aliases: []
+
+# on_create: set the password when the alias is created, leave it alone after.
+# always:    write it on every run - how a password is rotated. Every run then
+#            reports changed, because it might have: WAS cannot be asked
+#            whether a stored password matches.
+j2c_password_policy: on_create
+
+# present creates and updates; absent removes exactly the aliases declared.
+j2c_state: present
