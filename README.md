@@ -1442,40 +1442,31 @@ naming a playbook. A playbook pushed since that update is otherwise refused
 with `Playbook not found for project.`, which reads like a path typo and is not
 one.
 
-### Open: this AWX cannot execute a job on this Kubernetes
+### Resolved: AWX runs jobs on this Kubernetes, at 24.6.1
 
-> **AWX 24.6.1 ships receptor 1.4.8, and the cluster is Kubernetes 1.37.**
+> **There is nothing to upgrade to, and nothing needed upgrading.** On
+> 31 October 2026, inventory update 49 and ad hoc command 52 (`ping` on the
+> three lab hosts) both succeeded on AWX 24.6.1, receptor 1.4.8, Kubernetes
+> v1.37.0+k3s1.
 >
-> Receptor runs each job as a pod and streams the job's data into it by
-> attaching to that pod. Its client speaks the **SPDY** remote-command
-> protocol, which Kubernetes deprecated in favour of WebSockets and has since
-> removed. The attach therefore ends immediately:
+> An earlier note here blamed receptor's **SPDY** attach and called for an AWX
+> upgrade. Both halves were wrong, and were checked:
 >
-> ```
-> Detected Error: EOF for pod awx/automation-job-33-gv8rv. Will retry 5 more times.
-> Error reading from pod awx/automation-job-33-gv8rv: EOF
-> ```
+> - this cluster still serves SPDY: `kubectl exec` and `kubectl attach -i` with
+>   `KUBECTL_REMOTE_COMMAND_WEBSOCKETS=false` both work, the attach carrying
+>   stdin into the pod;
+> - no upgrade exists: awx-operator 2.19.1 (AWX 24.6.1) is still the last
+>   release, and every receptor up to 1.6.9 and its `devel` branch still
+>   attach through `NewSPDYExecutor`;
+> - the job role already grants `pods/attach: create`, which WebSocket attach
+>   requires.
 >
-> and AWX reports `Failed to JSON parse a line from worker stream ... b''`,
-> which names the symptom and not the cause.
->
-> It affects **every** job pod, so inventory updates fail too and the
-> inventory holds no host. Project updates are unaffected: they run inside the
-> task pod, not in a job pod.
->
-> Verified not to be the repository's doing: `ansible-inventory -i
-> inventories/lab/hosts.yml --list` run inside the Execution Environment
-> resolves the three entries and every group variable.
->
-> Running jobs on the `controlplane` instance group instead is not a way round
-> it: that group is control-type only, with no execution capacity, so the task
-> sits in `pending` with *not enough available capacity* — worse than a
-> failure, because nothing says so.
->
-> **The fix is an AWX upgrade** to a version whose receptor streams over
-> WebSockets. That means unpinning AWX, which this repository pinned on
-> purpose, so it is a decision rather than a patch. Until then the playbooks
-> run from a shell, which is what [DEX.md](DEX.md) does throughout.
+> The October failures (`EOF for pod awx/automation-job-33-...`, then AWX's
+> `Failed to JSON parse a line from worker stream ... b''`) were not
+> reproduced, and their cause is not known. If they return, read the
+> `awx-ee` container of the task pod
+> (`kubectl -n awx logs deploy/awx-task -c awx-ee`) before suspecting the
+> protocol. AWX stays pinned.
 
 ## 21. Sources
 
@@ -2960,42 +2951,32 @@ nommer un playbook. Un playbook poussé depuis cette mise à jour est sinon
 refusé par `Playbook not found for project.`, qui ressemble à une faute de
 chemin et n'en est pas une.
 
-### Ouvert : cet AWX ne peut exécuter aucun job sur ce Kubernetes
+### Résolu : AWX exécute les jobs sur ce Kubernetes, en 24.6.1
 
-> **AWX 24.6.1 embarque receptor 1.4.8, et le cluster est en Kubernetes 1.37.**
+> **Il n'y a rien vers quoi monter, et rien ne l'exigeait.** Le 31 octobre
+> 2026, la mise à jour d'inventaire 49 et la commande ad hoc 52 (`ping` sur
+> les trois hôtes du lab) ont réussi sur AWX 24.6.1, receptor 1.4.8,
+> Kubernetes v1.37.0+k3s1.
 >
-> Receptor exécute chaque job dans un pod et y injecte les données du job en
-> s'attachant à ce pod. Son client parle le protocole de commande distante
-> **SPDY**, que Kubernetes a déprécié au profit des WebSockets puis retiré.
-> L'attache se termine donc immédiatement :
+> Une note précédente accusait l'attache **SPDY** de receptor et réclamait une
+> montée de version d'AWX. Les deux moitiés étaient fausses, et ont été
+> vérifiées :
 >
-> ```
-> Detected Error: EOF for pod awx/automation-job-33-gv8rv. Will retry 5 more times.
-> Error reading from pod awx/automation-job-33-gv8rv: EOF
-> ```
+> - ce cluster sert encore SPDY : `kubectl exec` et `kubectl attach -i` avec
+>   `KUBECTL_REMOTE_COMMAND_WEBSOCKETS=false` fonctionnent, l'attache portant
+>   bien stdin jusqu'au pod ;
+> - aucune montée n'existe : awx-operator 2.19.1 (AWX 24.6.1) reste la
+>   dernière version, et tous les receptor jusqu'à 1.6.9, comme sa branche
+>   `devel`, s'attachent encore par `NewSPDYExecutor` ;
+> - le rôle des jobs accorde déjà `pods/attach: create`, que l'attache en
+>   WebSocket exige.
 >
-> et AWX rapporte `Failed to JSON parse a line from worker stream ... b''`, qui
-> nomme le symptôme et pas la cause.
->
-> Cela touche **tous** les pods de job, donc les mises à jour d'inventaire
-> échouent aussi et l'inventaire ne contient aucun hôte. Les mises à jour de
-> projet n'y sont pas soumises : elles tournent dans le pod de tâches, pas dans
-> un pod de job.
->
-> Vérifié comme n'étant pas le fait du dépôt : `ansible-inventory -i
-> inventories/lab/hosts.yml --list` lancé dans l'Execution Environment résout
-> les trois entrées et toutes les variables de groupe.
->
-> Exécuter les jobs sur le groupe d'instances `controlplane` n'est pas un
-> contournement : ce groupe est de type contrôle uniquement, sans capacité
-> d'exécution, donc la tâche reste en `pending` avec *not enough available
-> capacity* — pire qu'un échec, puisque rien ne le dit.
->
-> **Le correctif est une montée de version d'AWX** vers une version dont le
-> receptor diffuse en WebSockets. Cela implique de dépingler AWX, que ce dépôt
-> a épinglé à dessein : c'est donc une décision, pas un correctif. En
-> attendant, les playbooks se lancent depuis un shell, ce que fait
-> [DEX.md](DEX.md) de bout en bout.
+> Les échecs d'octobre (`EOF for pod awx/automation-job-33-...`, puis
+> `Failed to JSON parse a line from worker stream ... b''` côté AWX) ne se
+> sont pas reproduits, et leur cause n'est pas connue. S'ils reviennent, lire
+> le conteneur `awx-ee` du pod de tâches
+> (`kubectl -n awx logs deploy/awx-task -c awx-ee`) avant de soupçonner le
+> protocole. AWX reste épinglé.
 
 ## 21. Sources
 
