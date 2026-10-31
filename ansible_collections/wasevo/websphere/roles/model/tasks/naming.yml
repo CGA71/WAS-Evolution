@@ -7,6 +7,11 @@
 # the exact class of bug where a prd.yml entry is ignored and nobody notices
 # until the object exists under the wrong name.
 #
+# A name typed into the AWX survey arrives as survey_<name>, never as <name>:
+# AWX sends every optional question it was not given as "", and an extra var
+# named was_cell_name="" would outrank this set_fact and empty the name. So a
+# survey answer wins when it is filled in, and is ignored when it is blank.
+#
 # Runs on the target host, not on localhost, because a node agent name is
 # built from inventory_hostname and a cluster member name from the node.
 
@@ -17,16 +22,24 @@
 
 - name: Publish the cell, profile and node names
   ansible.builtin.set_fact:
-    was_cell_name: "{{ was_cell_name | default(was_cell_name_pattern, true) }}"
+    was_cell_name: >-
+      {{ survey_was_cell_name | default('', true) | trim
+         or (was_cell_name | default(was_cell_name_pattern, true)) }}
     was_console_label: "{{ was_console_label | default(was_console_label_pattern, true) }}"
-    was_dmgr_profile_name: "{{ was_dmgr_profile_name | default(was_dmgr_profile_name_pattern, true) }}"
+    was_dmgr_profile_name: >-
+      {{ survey_was_dmgr_profile_name | default('', true) | trim
+         or (was_dmgr_profile_name | default(was_dmgr_profile_name_pattern, true)) }}
     was_profile_name: >-
-      {{ was_profile_name | default(was_dmgr_profile_name_pattern if _is_dmgr
-         else was_app_profile_name_pattern, true) }}
+      {{ (survey_was_dmgr_profile_name | default('', true) | trim if _is_dmgr else '')
+         or (was_profile_name | default(was_dmgr_profile_name_pattern if _is_dmgr
+             else was_app_profile_name_pattern, true)) }}
     was_node_name: >-
-      {{ was_node_name | default(was_dmgr_node_name_pattern if _is_dmgr
-         else was_nodeagent_node_name_pattern, true) }}
-    was_cluster_name: "{{ was_cluster_name | default(was_cluster_name_pattern, true) }}"
+      {{ survey_was_node_name | default('', true) | trim
+         or (was_node_name | default(was_dmgr_node_name_pattern if _is_dmgr
+             else was_nodeagent_node_name_pattern, true)) }}
+    was_cluster_name: >-
+      {{ survey_was_cluster_name | default('', true) | trim
+         or (was_cluster_name | default(was_cluster_name_pattern, true)) }}
     was_jvm_shared_class_cache: >-
       {{ was_jvm_shared_class_cache | default(was_jvm_shared_class_cache_pattern, true) }}
   tags: [model, naming, always]
@@ -37,7 +50,8 @@
 - name: Publish the cluster member name
   ansible.builtin.set_fact:
     was_cluster_member_name: >-
-      {{ was_cluster_member_name | default(was_cluster_member_name_pattern, true) | trim }}
+      {{ survey_was_cluster_member_name | default('', true) | trim
+         or (was_cluster_member_name | default(was_cluster_member_name_pattern, true) | trim) }}
   tags: [model, naming, always]
 
 - name: Every published name must be non-empty and free of whitespace

@@ -142,6 +142,19 @@ model-matrix:
         -e was_environment=ENVCODE -e was_environment_tier=prod \
         -e model_allow_production=true
     - |
+      set -e
+      echo "=============== blank survey names are derived, filled ones win ==============="
+      # Exactly what AWX sends for optional questions left blank: "" for each.
+      # An extra var named was_cell_name="" would outrank the model and empty
+      # the name; the survey's names are survey_* so a blank one is ignored.
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml         -e '{"was_environment": "ENVCODE", "survey_was_cell_name": "", "survey_was_cluster_name": "",
+             "survey_was_node_name": "", "survey_was_cluster_member_name": "",
+             "survey_was_dmgr_profile_name": ""}' > survey-blank.log
+      grep -q "_ENVCODE" survey-blank.log         || { echo "FAIL: a blank survey cell name was not derived"; exit 1; }
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml         -e was_environment=ENVCODE -e survey_was_cell_name=ImposedCell > survey-filled.log
+      grep -q "ImposedCell" survey-filled.log         || { echo "FAIL: a survey cell name filled in did not win"; exit 1; }
+      echo "blank names derived, a filled one imposed"
+    - |
       echo "=============== an unusable code must be refused ==============="
       # Not "unknown" - any code a site uses is accepted. This one is refused
       # for its shape: a value that cannot be a WAS object name or a path.
