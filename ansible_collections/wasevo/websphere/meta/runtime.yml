@@ -16,5 +16,6 @@ action_groups:
     - was_keystore
     - was_virtualhost
     - was_sibus
+    - was_jms
     - was_webserver
     - was_application

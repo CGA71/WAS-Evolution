@@ -309,10 +309,78 @@ def sibus_specs(sibuses, cluster_name):
     return {"buses": buses, "errors": errors}
 
 
+JMS_KINDS = ("connection_factories", "queues", "topics", "activation_specs")
+JMS_PROVIDERS = ("sib",)
+
+
+def jms_groups(jms, default_scope, cluster_name, cell_name, default_provider="sib"):
+    """Group the declared JMS resources by scope and provider.
+
+    One module call takes one scope and one provider, so the resources are
+    grouped on both. Every group also receives `known_destinations` - every
+    JMS queue and topic declared anywhere, with its type - because an
+    activation spec at cluster scope may listen on a queue declared at cell
+    scope: WAS resolves the JNDI name through the scopes, and a check confined
+    to one group would refuse a valid configuration.
+
+    Returns {"groups": [...], "errors": [...]}.
+    """
+    groups = []
+    by_key = {}
+    errors = []
+    known = {}
+    jndi_owner = {}
+
+    for kind in JMS_KINDS:
+        for resource in (jms or {}).get(kind) or []:
+            name = resource.get("name", "<unnamed>")
+            if not resource.get("jndi_name"):
+                errors.append("%s: no jndi_name" % name)
+                continue
+            jndi = resource["jndi_name"]
+            if jndi in jndi_owner:
+                errors.append("JNDI name %s is declared by %s and by %s" % (jndi, jndi_owner[jndi], name))
+                continue
+            jndi_owner[jndi] = name
+            if kind == "queues":
+                known[jndi] = "javax.jms.Queue"
+            elif kind == "topics":
+                known[jndi] = "javax.jms.Topic"
+
+    for kind in JMS_KINDS:
+        for resource in (jms or {}).get(kind) or []:
+            resource = dict(resource)
+            name = resource.get("name", "<unnamed>")
+            if not resource.get("jndi_name"):
+                continue
+            provider = resource.pop("provider", None) or default_provider
+            if provider not in JMS_PROVIDERS:
+                errors.append("%s: provider %r is not one of %s"
+                              % (name, provider, ", ".join(JMS_PROVIDERS)))
+                continue
+            if provider == "sib" and not resource.get("bus"):
+                errors.append("%s: a default messaging resource names its bus" % name)
+                continue
+            scope = resolve_scope(resource.pop("scope", None), default_scope, cluster_name, cell_name)
+            key = _scope_key(scope) + "|" + provider
+            if key not in by_key:
+                group = {"scope": scope, "provider": provider}
+                for k in JMS_KINDS:
+                    group[k] = []
+                by_key[key] = group
+                groups.append(group)
+            by_key[key][kind].append(resource)
+
+    for group in groups:
+        group["known_destinations"] = known
+    return {"groups": groups, "errors": errors}
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "jdbc_groups": jdbc_groups,
+            "jms_groups": jms_groups,
             "library_groups": library_groups,
             "sibus_specs": sibus_specs,
             "to_seconds": to_seconds,
