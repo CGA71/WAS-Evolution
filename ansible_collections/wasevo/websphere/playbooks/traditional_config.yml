@@ -10,13 +10,19 @@
 # job template - because replaying one step after a change has to cost one
 # wsadmin session, not the entire chain.
 #
-#   traditional_cluster.yml          the cluster object
-#   traditional_cluster_members.yml  the application servers in it
-#   traditional_j2c.yml              the J2C authentication aliases
-#   traditional_jdbc.yml             the JDBC providers and datasources
-#   traditional_shared_libraries.yml the shared libraries
-#   traditional_sibus.yml            the service integration buses
-#   traditional_jms.yml              the JMS resources
+#   traditional_cluster.yml          the cluster object                  family 0
+#   traditional_cluster_members.yml  the application servers in it       family 0
+#   traditional_j2c.yml              the J2C authentication aliases      family 5
+#   traditional_jdbc.yml             the JDBC providers and datasources  family 2
+#   traditional_shared_libraries.yml the shared libraries                family 5
+#   traditional_sibus.yml            the service integration buses       family 4
+#   traditional_jms.yml              the JMS resources                   family 4
+#
+# DEPENDENCY ORDER, NOT FAMILY ORDER. The roles are catalogued under API
+# families - family_<n>_<name>.yml imports one family's playbooks, README
+# section 19 - but a datasource (family 2) presents a J2C alias (family 5), so
+# this chain runs the steps in the order they need each other, whatever their
+# family.
 #
 # So there is exactly one definition of each step, and this file cannot drift
 # from the step it used to carry inline - which is what happened to the legacy

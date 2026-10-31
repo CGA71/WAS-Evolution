@@ -1,0 +1,19 @@
+---
+# Family 2 - persistence and data.
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# A FAMILY IS A CATALOGUE, NOT A ROLE. It imports the playbooks of its roles,
+# in the order they need each other, and defines none of them: each role keeps
+# its own playbook and its own AWX job template, and replaying one role after
+# a change is still one wsadmin session. Running this is the same work as
+# running its playbooks in order.
+#
+# JDBC today; JPA joins it. A datasource presents a J2C alias, which lives in
+# family 5 (security and authentication): run that family, or its J2C job,
+# first - the JDBC role refuses a missing alias and names the job.
+#
+# The whole plane, every family in dependency order, is traditional_config.yml.
+
+- name: The JDBC providers and datasources
+  import_playbook: traditional_jdbc.yml

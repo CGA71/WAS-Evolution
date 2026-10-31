@@ -1007,19 +1007,45 @@ for the profile roles.
 
 ## 19. The resources of the cell
 
+The roles are catalogued under **API families** - the list of the APIs an
+application uses, which is how a team asks for a change ("our messaging", "our
+persistence"). A family is a catalogue, never a merge: each role keeps its own
+playbook and its own job template, replayable on its own, and a family
+playbook imports its roles' playbooks in order.
+
+| # | Family | Roles today | Family playbook | Next |
+|---|---|---|---|---|
+| 0 | Cell foundation | cluster, members (section 18) | `family_0_foundation.yml` | - |
+| 1 | Web services and REST - JAX-RS, JAX-WS, JAX-RPC | - | - | policy sets and bindings |
+| 2 | Persistence and data - JPA, JDBC | JDBC | `family_2_persistence.yml` | JPA |
+| 3 | Enterprise components - EJB, CDI, JTA/JTS | - | - | transactions and peer recovery, EJB container and timers, CDI |
+| 4 | Messaging and integration - JMS | SIBus, JMS on the bus and on IBM MQ | `family_4_messaging.yml` | - |
+| 5 | Proprietary and extended APIs | J2C aliases, shared libraries | `family_5_extended.yml` | user registry (all four types), SSL, dynamic cache, logging and HPEL |
+| 6 | JMX and management - PMI, MBeans | - | - | PMI |
+| 7 | MicroProfile | - | - | phase 2, the Liberty back-end |
+
+Application deployment comes after all of them. A family with no role yet has
+no playbook: it gets one with its first role.
+
+**Dependency order, not family order.** A datasource (family 2) presents a J2C
+alias (family 5), so `traditional_config.yml` runs the steps in the order they
+need each other, whatever their family - the step numbers below. A family
+playbook run on its own relies on what the other families already built, and
+each role refuses a missing prerequisite and names the job that produces it.
+
 Each family of resources is its own role, its own playbook and its own job
 template, in the order a cell needs them - and each is replayable on its own,
 for the reason section 18 gives. They default to **cluster scope**, which
 follows the vertical and horizontal members built just before; a resource
 names another scope when it needs one.
 
-| Step | Playbook | Family |
-|---|---|---|
-| 8 | `traditional_j2c.yml` | J2C authentication aliases |
-| 9 | `traditional_jdbc.yml` | JDBC providers and datasources |
-| 10 | `traditional_shared_libraries.yml` | shared libraries |
-| 11 | `traditional_sibus.yml` | service integration buses |
-| 12 | `traditional_jms.yml` | JMS resources, on the bus and on IBM MQ |
+| Step | Playbook | Resources | API family |
+|---|---|---|---|
+| 8 | `traditional_j2c.yml` | J2C authentication aliases | 5 |
+| 9 | `traditional_jdbc.yml` | JDBC providers and datasources | 2 |
+| 10 | `traditional_shared_libraries.yml` | shared libraries | 5 |
+| 11 | `traditional_sibus.yml` | service integration buses | 4 |
+| 12 | `traditional_jms.yml` | JMS resources, on the bus and on IBM MQ | 4 |
 
 ### J2C authentication aliases
 
@@ -2415,6 +2441,33 @@ profil.
 
 ## 19. Les ressources de la cellule
 
+Les rôles sont rangés par **familles d'API** - la liste des API qu'utilise une
+application, qui est la façon dont une équipe demande un changement (« notre
+messagerie », « notre persistance »). Une famille est un catalogue, jamais une
+fusion : chaque rôle garde son playbook et son job template, rejouable seul,
+et le playbook d'une famille importe ceux de ses rôles dans l'ordre.
+
+| # | Famille | Rôles aujourd'hui | Playbook de famille | Ensuite |
+|---|---|---|---|---|
+| 0 | Socle de la cellule | cluster, membres (section 18) | `family_0_foundation.yml` | - |
+| 1 | Services web et REST - JAX-RS, JAX-WS, JAX-RPC | - | - | policy sets et bindings |
+| 2 | Persistance et données - JPA, JDBC | JDBC | `family_2_persistence.yml` | JPA |
+| 3 | Composants d'entreprise - EJB, CDI, JTA/JTS | - | - | transactions et reprise par un pair, conteneur EJB et minuteurs, CDI |
+| 4 | Messagerie et intégration - JMS | SIBus, JMS sur le bus et sur IBM MQ | `family_4_messaging.yml` | - |
+| 5 | API propriétaires et étendues | alias J2C, bibliothèques partagées | `family_5_extended.yml` | registre d'utilisateurs (les quatre types), SSL, cache dynamique, logging et HPEL |
+| 6 | JMX et administration - PMI, MBeans | - | - | PMI |
+| 7 | MicroProfile | - | - | phase 2, le back-end Liberty |
+
+Le déploiement d'application vient après toutes. Une famille sans rôle n'a pas
+encore de playbook : elle en reçoit un avec son premier rôle.
+
+**L'ordre des dépendances, pas celui des familles.** Une datasource (famille 2)
+présente un alias J2C (famille 5) : `traditional_config.yml` enchaîne donc les
+étapes dans l'ordre où elles ont besoin les unes des autres, quelle que soit
+leur famille - les numéros d'étape ci-dessous. Un playbook de famille lancé
+seul compte sur ce que les autres familles ont déjà construit, et chaque rôle
+refuse un prérequis absent en nommant le job qui le produit.
+
 Chaque famille de ressources est son propre rôle, son propre playbook et son
 propre job template, dans l'ordre où une cellule en a besoin - et chacune est
 rejouable seule, pour la raison donnée en section 18. Elles sont créées par
@@ -2422,13 +2475,13 @@ défaut **à la portée du cluster**, ce qui suit les membres verticaux et
 horizontaux construits juste avant ; une ressource nomme une autre portée quand
 elle en a besoin.
 
-| Étape | Playbook | Famille |
-|---|---|---|
-| 8 | `traditional_j2c.yml` | alias d'authentification J2C |
-| 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources |
-| 10 | `traditional_shared_libraries.yml` | bibliothèques partagées |
-| 11 | `traditional_sibus.yml` | bus d'intégration de services |
-| 12 | `traditional_jms.yml` | ressources JMS, sur le bus et sur IBM MQ |
+| Étape | Playbook | Ressources | Famille d'API |
+|---|---|---|---|
+| 8 | `traditional_j2c.yml` | alias d'authentification J2C | 5 |
+| 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources | 2 |
+| 10 | `traditional_shared_libraries.yml` | bibliothèques partagées | 5 |
+| 11 | `traditional_sibus.yml` | bus d'intégration de services | 4 |
+| 12 | `traditional_jms.yml` | ressources JMS, sur le bus et sur IBM MQ | 4 |
 
 ### Alias d'authentification J2C
 
