@@ -496,11 +496,15 @@ sim:isolation:
         fi
         echo "ok: no exec in $ns"
       done
+    # The boundary is asserted by TRAFFIC, not by reading the policy objects.
+    # An existing NetworkPolicy proves a YAML object exists, not that anything
+    # is blocked - and reading it needed a right an administrator had to grant
+    # by hand. Sending connections across the boundary needs only pods/exec,
+    # which this identity already holds, and proves the thing that matters.
     - |
       set -e
-      echo "--- the NetworkPolicies must be in place ---"
-      kubectl -n $NS_NODES get networkpolicy deny-ingress-by-default -o name
-      kubectl -n $NS_DMGR  get networkpolicy allow-nodeagent-to-dmgr-soap -o name
+      echo "--- the boundary must hold, checked by connections ---"
+      bash ci/assert-network-boundary.sh
 
 sim:teardown:
   extends: .k3s

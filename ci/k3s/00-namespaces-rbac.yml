@@ -66,14 +66,6 @@ rules:
   - apiGroups: [""]
     resources: [pods, pods/exec, pods/log, pods/status, configmaps, services]
     verbs: [get, list, watch, create, delete, patch, update]
-  # Read-only, and the reason is sim:isolation: a job that asserts the
-  # NetworkPolicies are in place has to be able to read them. Without this the
-  # assertion failed on "Forbidden", which looks the same as a missing policy
-  # and is not. No write verbs: the boundary is applied by an administrator,
-  # and the pipeline's business is to check it, not to set it.
-  - apiGroups: ["networking.k8s.io"]
-    resources: [networkpolicies]
-    verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -84,14 +76,6 @@ rules:
   - apiGroups: [""]
     resources: [pods, pods/exec, pods/log, pods/status, configmaps, services]
     verbs: [get, list, watch, create, delete, patch, update]
-  # Read-only, and the reason is sim:isolation: a job that asserts the
-  # NetworkPolicies are in place has to be able to read them. Without this the
-  # assertion failed on "Forbidden", which looks the same as a missing policy
-  # and is not. No write verbs: the boundary is applied by an administrator,
-  # and the pipeline's business is to check it, not to set it.
-  - apiGroups: ["networking.k8s.io"]
-    resources: [networkpolicies]
-    verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

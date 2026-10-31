@@ -457,12 +457,17 @@ refused, and that one imposed member name against a count of two is refused
 with both ways out named.
 
 `sim:isolation` asserts the boundary rather than describing it: the CI identity
-must **not** be able to exec into `kube-system`, `ci` or `default`, and both
-NetworkPolicies must be in place. Reading those two policies is a right the
-Roles grant explicitly, and the only one that is read-only: without it the
-assertion failed on `Forbidden`, which looks exactly like a missing policy and
-is not. No write verb on them, because the boundary is applied by an
-administrator and the pipeline's business is to check it. The ServiceAccount is bound by namespaced
+must **not** be able to exec into `kube-system`, `ci` or `default`, and the
+boundary must hold - checked by **traffic**, not by reading the policy objects.
+[`ci/assert-network-boundary.sh`](ci/assert-network-boundary.sh) starts a
+listener on the target, then connects across the boundary: a node agent
+reaches the deployment manager on the allowed port, and is refused on any
+other; the deployment manager cannot reach a node agent; a node agent cannot
+reach another. An existing NetworkPolicy proves a YAML object exists, not that
+anything is blocked - a cluster with its policy controller off holds the same
+objects and enforces nothing. And checking traffic needs only `pods/exec`,
+which the CI identity already holds, so the test runs on a cluster built from
+this repository with nothing granted by hand. The ServiceAccount is bound by namespaced
 Roles, never a ClusterRole, so a leaked CI token reaches exactly two throwaway
 namespaces.
 
@@ -1532,13 +1537,18 @@ au-dessus de la borne est refusé, et qu'un nom de membre imposé contre un
 compteur de deux est refusé en nommant les deux sorties.
 
 `sim:isolation` vérifie la frontière plutôt que de la décrire : l'identité CI ne
-doit **pas** pouvoir faire d'exec dans `kube-system`, `ci` ou `default`, et les
-deux NetworkPolicies doivent être en place. Lire ces deux politiques est un
-droit que les Roles accordent explicitement, et le seul qui soit en lecture
-seule : sans lui, l'assertion échouait sur `Forbidden`, ce qui ressemble
-exactement à une politique absente et n'en est pas une. Aucun verbe d'écriture
-dessus : la frontière est posée par un administrateur, et la chaîne a pour
-affaire de la vérifier. Le ServiceAccount est lié par des
+doit **pas** pouvoir faire d'exec dans `kube-system`, `ci` ou `default`, et la
+frontière doit tenir - vérifiée par le **trafic**, et non en lisant les objets
+de politique. [`ci/assert-network-boundary.sh`](ci/assert-network-boundary.sh)
+démarre une écoute sur la cible, puis se connecte à travers la frontière : un
+agent de nœud atteint le gestionnaire de déploiement sur le port autorisé, et
+est refusé sur tout autre ; le gestionnaire ne peut pas atteindre un agent de
+nœud ; un agent ne peut pas en atteindre un autre. Une NetworkPolicy existante
+prouve qu'un objet YAML existe, pas que quoi que ce soit est bloqué - un
+cluster dont le contrôleur de politiques est éteint contient les mêmes objets
+et n'applique rien. Et vérifier le trafic ne demande que `pods/exec`, que
+l'identité CI détient déjà : le test tourne sur un cluster construit depuis ce
+dépôt, sans rien accorder à la main. Le ServiceAccount est lié par des
 Roles namespacés, jamais par un ClusterRole, donc un token CI fuité n'atteint
 exactement que deux namespaces jetables.
 
