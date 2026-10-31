@@ -1018,6 +1018,7 @@ names another scope when it needs one.
 | 8 | `traditional_j2c.yml` | J2C authentication aliases |
 | 9 | `traditional_jdbc.yml` | JDBC providers and datasources |
 | 10 | `traditional_shared_libraries.yml` | shared libraries |
+| 11 | `traditional_sibus.yml` | service integration buses |
 
 ### J2C authentication aliases
 
@@ -1179,6 +1180,57 @@ last.
 The simulation exercises both forms. `sim:configure` stages two jars **and a
 README** in the pattern library's directory and asserts the library holds
 exactly the two jars - the pattern honoured, not the directory taken whole.
+
+### Service integration buses
+
+The embedded messaging of WAS traditional, which JMS on the default messaging
+provider runs on. **Traditional only**: Liberty has no bus, and moving there
+means an external broker (section 10), so this declaration lives in the
+traditional part of the model, not in the shared layer.
+
+```yaml
+sibuses:
+  - name: OrdersBus
+    members:                      # omitted: the run's cluster
+      - { cluster: ClusterEXT01, store: file, policy: HA }
+    destinations:
+      - { name: OrdersQueue, max_failed_deliveries: 5, exception_destination: OrdersDeadLetters }
+      - { name: OrdersDeadLetters }
+      - { name: PricesTopic, type: topic_space, reliability: RELIABLE_NONPERSISTENT }
+```
+
+**One bus, one session.** `was_sibus` takes the bus, the members that host its
+messaging engines and the destinations it carries, and reconciles them in one
+wsadmin session, in the order they depend on each other. A bus that names no
+member takes the run's cluster. The engine policy says how the cluster runs
+its engines: `HA` is one engine that fails over between members, `SCALABILITY`
+one engine per member - which is where the vertical members of section 18
+start to matter for messaging.
+
+**What a run never does: recreate an engine.** A member's message store and
+its engine policy are fixed when the engine is created. Changing either means
+removing the member and adding it back, which **discards every message the
+engine holds**. So a declared store that differs from the live one is reported
+as an Ansible warning and left alone - `changed` stays false, because the run
+did not change it, and the warning says why. Losing messages has to be a
+decision somebody takes, not a side effect of a replay. A stub test declares a
+data store over a file-store engine and asserts the engine was not recreated.
+
+The engine policy is applied when a cluster member is added and is **not**
+read back: it lives in the core group's HA manager policies, not on the
+member, and a plan that compared it would be comparing a guess.
+
+Refused before anything is written: a bus with no member - no engine, so no
+queue point and nothing to carry a message; an **exception destination** that
+is not a destination of the bus - WAS accepts any string there, and failed
+messages then have nowhere to go; and any value WAS constrains - a reliability
+level, an engine policy - misspelt, with the accepted values listed. `state:
+absent` deletes the bus, its members, their engines and their messages, and is
+only ever explicit.
+
+**Not yet verified on a real cell**: the `addSIBusMember` and
+`createSIBDestination` arguments, and reading the store through the member's
+engine. They follow the AdminTask reference; the lab run is what proves them.
 
 ## 20. AWX
 
@@ -2292,6 +2344,7 @@ elle en a besoin.
 | 8 | `traditional_j2c.yml` | alias d'authentification J2C |
 | 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources |
 | 10 | `traditional_shared_libraries.yml` | bibliothèques partagées |
+| 11 | `traditional_sibus.yml` | bus d'intégration de services |
 
 ### Alias d'authentification J2C
 
@@ -2463,6 +2516,63 @@ La simulation exerce les deux formes. `sim:configure` dépose deux jars **et un
 README** dans le répertoire de la bibliothèque à motif, et vérifie qu'elle
 contient exactement les deux jars - le motif respecté, et non le répertoire
 pris en bloc.
+
+### Bus d'intégration de services
+
+La messagerie intégrée de WAS traditionnel, sur laquelle tourne JMS avec le
+fournisseur de messagerie par défaut. **Traditionnel uniquement** : Liberty n'a
+pas de bus, et y migrer veut dire un broker externe (section 10) ; cette
+déclaration vit donc dans la partie traditionnelle du modèle, et non dans la
+couche commune.
+
+```yaml
+sibuses:
+  - name: OrdersBus
+    members:                      # omis : le cluster du run
+      - { cluster: ClusterEXT01, store: file, policy: HA }
+    destinations:
+      - { name: OrdersQueue, max_failed_deliveries: 5, exception_destination: OrdersDeadLetters }
+      - { name: OrdersDeadLetters }
+      - { name: PricesTopic, type: topic_space, reliability: RELIABLE_NONPERSISTENT }
+```
+
+**Un bus, une session.** `was_sibus` prend le bus, les membres qui portent ses
+moteurs de messagerie et les destinations qu'il transporte, et les réconcilie
+en une seule session wsadmin, dans l'ordre où ils dépendent les uns des
+autres. Un bus qui ne nomme aucun membre prend le cluster du run. La politique
+de moteur dit comment le cluster fait tourner ses moteurs : `HA`, un moteur qui
+bascule entre les membres ; `SCALABILITY`, un moteur par membre - c'est là que
+les membres verticaux de la section 18 commencent à compter pour la
+messagerie.
+
+**Ce qu'un run ne fait jamais : recréer un moteur.** Le magasin de messages
+d'un membre et la politique de son moteur sont fixés à la création du moteur.
+Changer l'un ou l'autre veut dire retirer le membre et le rajouter, ce qui
+**détruit tous les messages que le moteur contient**. Un magasin déclaré qui
+diffère du magasin réel est donc signalé par un avertissement Ansible et laissé
+tel quel - `changed` reste à faux, puisque le run ne l'a pas changé, et
+l'avertissement dit pourquoi. Perdre des messages doit être une décision que
+quelqu'un prend, pas un effet de bord d'un rejeu. Un test de la fausse cellule
+déclare un magasin en base sur un moteur à magasin fichier, et vérifie que le
+moteur n'a pas été recréé.
+
+La politique de moteur est appliquée à l'ajout d'un membre cluster et n'est
+**pas** relue : elle vit dans les politiques du gestionnaire HA du groupe de
+coordination, pas sur le membre, et un plan qui la comparerait comparerait une
+supposition.
+
+Refusé avant toute écriture : un bus sans membre - aucun moteur, donc aucun
+point de file et rien pour porter un message ; une **destination d'exception**
+qui n'est pas une destination du bus - WAS accepte n'importe quelle chaîne, et
+les messages en échec n'ont alors nulle part où aller ; et toute valeur que
+WAS contraint - niveau de fiabilité, politique de moteur - mal orthographiée,
+avec la liste des valeurs acceptées. `state: absent` supprime le bus, ses
+membres, leurs moteurs et leurs messages, et n'est jamais implicite.
+
+**Pas encore vérifié sur une vraie cellule** : les arguments
+d'`addSIBusMember` et de `createSIBDestination`, et la lecture du magasin via
+le moteur du membre. Ils suivent la référence AdminTask ; c'est le run du lab
+qui les prouvera.
 
 ## 20. AWX
 

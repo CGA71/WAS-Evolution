@@ -1,0 +1,34 @@
+---
+# Service integration buses: the embedded messaging of WAS traditional.
+#
+# REPLAYABLE ON ITS OWN. A destination added, a redelivery limit corrected, a
+# member added for scalability - one replay of this role.
+#
+# TRADITIONAL ONLY. There is no Liberty equivalent of a bus; moving to Liberty
+# means an external broker (README section 10). So these declarations live in
+# the traditional part of the model, not in the shared layer.
+#
+#   sibuses:
+#     - name: OrdersBus
+#       description: Orders and prices
+#       members:                        # omitted: the run's cluster
+#         - cluster: ClusterEXT01       # or node + server
+#           store: file                 # or data, with data_store: {...}
+#           policy: HA                  # or SCALABILITY - one engine per member
+#       destinations:
+#         - name: OrdersQueue
+#           max_failed_deliveries: 5
+#           exception_destination: OrdersDeadLetters
+#         - name: OrdersDeadLetters
+#         - name: PricesTopic
+#           type: topic_space
+#           reliability: RELIABLE_NONPERSISTENT
+#
+# A member's store and engine policy are fixed when its engine is created.
+# Changing either recreates the engine and discards its messages, so a run
+# reports the difference as a warning and leaves the engine alone.
+sibuses: []
+
+# present creates and updates. absent DELETES each declared bus, with its
+# members, their engines, every message they hold, and its destinations.
+sibus_state: present

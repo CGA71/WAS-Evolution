@@ -50,6 +50,21 @@ GENERIC_TYPES = (
     "J2EEResourcePropertySet",
     "J2EEResourceProperty",
     "Library",
+    "SIBus",
+    "SIBusMember",
+    "SIBMessagingEngine",
+    "SIBQueue",
+    "SIBTopicSpace",
+)
+
+# The reliability levels WAS accepts on a bus destination. Anything else is a
+# handler or a declaration bug, and the fake refuses it rather than store it.
+SIB_RELIABILITY = (
+    "BEST_EFFORT_NONPERSISTENT",
+    "EXPRESS_NONPERSISTENT",
+    "RELIABLE_NONPERSISTENT",
+    "RELIABLE_PERSISTENT",
+    "ASSURED_PERSISTENT",
 )
 
 # The JDBC provider templates this fake cell offers, as AdminConfig.listTemplates
@@ -79,6 +94,11 @@ ATTRIBUTE_DEFAULTS = {
         "description": "",
         "isolatedClassLoader": "false",
     },
+    "SIBus": {"description": ""},
+    "SIBusMember": {"cluster": "", "node": "", "server": ""},
+    "SIBMessagingEngine": {"fileStore": "", "dataStore": ""},
+    "SIBQueue": {"exceptionDestination": "", "description": ""},
+    "SIBTopicSpace": {"exceptionDestination": "", "description": ""},
 }
 
 # What a new connection pool holds before anything is set: WAS's defaults, so a
@@ -820,6 +840,150 @@ class FakeAdminTask(object):
                 ["name", prop_name], ["type", prop_type], ["value", prop_value],
             ])
         return ds_id
+
+    # -- service integration bus ------------------------------------------
+
+    def _bus(self, name):
+        bus_id = self.config._find("SIBus", name=name)
+        if bus_id is None:
+            raise KeyError("no bus %r" % name)
+        return bus_id
+
+    def _children(self, parent, config_type):
+        return [i for i, o in self.config.state["objects"].items()
+                if o["parent"] == parent and o["type"] == config_type]
+
+    def createSIBus(self, args):
+        name = self._named(args, "-bus")
+        if self.config._find("SIBus", name=name):
+            raise RuntimeError("bus %r already exists - the handler should have planned an update" % name)
+        return self.config._create_object("SIBus", name, {
+            "name": name,
+            "description": self._named(args, "-description", ""),
+            "busSecurity": self._named(args, "-busSecurity", "false"),
+        })
+
+    def modifySIBus(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        description = self._named(args, "-description", None)
+        if description is not None:
+            self.config.state["objects"][bus_id]["attrs"]["description"] = description
+        _store(self.config.state)
+
+    def deleteSIBus(self, args):
+        self.config.remove(self._bus(self._named(args, "-bus")))
+
+    def _member_match(self, member_id, cluster, node, server):
+        attrs = self.config.state["objects"][member_id]["attrs"]
+        if cluster:
+            return attrs.get("cluster") == cluster
+        return attrs.get("node") == node and attrs.get("server") == server
+
+    def addSIBusMember(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        cluster = self._named(args, "-cluster", None)
+        node = self._named(args, "-node", None)
+        server = self._named(args, "-server", None)
+        if cluster:
+            if not self.config.getid("/ServerCluster:%s/" % cluster):
+                raise RuntimeError("no cluster %r to add to the bus" % cluster)
+        elif not (node and server):
+            raise ValueError("a bus member is a -cluster, or a -node and a -server")
+        file_store = "-fileStore" in args
+        data_store = "-dataStore" in args
+        # Exactly one store. WAS picks a default when neither is given, and the
+        # handler is supposed to say which it means.
+        if file_store == data_store:
+            raise RuntimeError("a bus member needs exactly one of -fileStore and -dataStore")
+        if "-policyName" in args and not cluster:
+            raise RuntimeError("-policyName applies to a cluster bus member, not a server")
+        for member_id in self._children(bus_id, "SIBusMember"):
+            if self._member_match(member_id, cluster, node, server):
+                raise RuntimeError("that bus member already exists - the handler should have planned no change")
+        attrs = {"cluster": cluster or "", "node": node or "", "server": server or ""}
+        member_id = self.config._create_object("SIBusMember", cluster or server, attrs, bus_id)
+        engine = dict(attrs)
+        engine["fileStore"] = file_store and "store" or ""
+        engine["dataStore"] = data_store and "store" or ""
+        self.config._create_object("SIBMessagingEngine", (cluster or server) + "-ME", engine, member_id)
+        return member_id
+
+    def listSIBusMembers(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        return "\n".join(sorted(self._children(bus_id, "SIBusMember")))
+
+    def listSIBEngines(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        cluster = self._named(args, "-cluster", None)
+        node = self._named(args, "-node", None)
+        server = self._named(args, "-server", None)
+        engines = []
+        for member_id in self._children(bus_id, "SIBusMember"):
+            if self._member_match(member_id, cluster, node, server):
+                engines += self._children(member_id, "SIBMessagingEngine")
+        return "\n".join(sorted(engines))
+
+    def _destination(self, bus_id, name):
+        for config_type in ("SIBQueue", "SIBTopicSpace"):
+            for dest_id in self._children(bus_id, config_type):
+                if self.config.state["objects"][dest_id]["attrs"]["identifier"] == name:
+                    return dest_id
+        return None
+
+    def _destination_attrs(self, args, attrs):
+        reliability = self._named(args, "-reliability", None)
+        if reliability is not None:
+            if reliability not in SIB_RELIABILITY:
+                raise ValueError("reliability %r is not a WAS level" % reliability)
+            attrs["reliability"] = reliability
+        for flag, key in (("-maxFailedDeliveries", "maxFailedDeliveries"),
+                          ("-exceptionDestination", "exceptionDestination"),
+                          ("-description", "description")):
+            value = self._named(args, flag, None)
+            if value is not None:
+                attrs[key] = value
+        return attrs
+
+    def createSIBDestination(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        name = self._named(args, "-name")
+        kind = self._named(args, "-type")
+        if kind not in ("Queue", "TopicSpace"):
+            raise NotImplementedError("fake createSIBDestination does not know -type %r" % kind)
+        if self._destination(bus_id, name):
+            raise RuntimeError("destination %r already exists - the handler should have planned an update" % name)
+        if kind == "Queue":
+            cluster = self._named(args, "-cluster", None)
+            node = self._named(args, "-node", None)
+            server = self._named(args, "-server", None)
+            # A queue point lives on a bus member. WAS refuses a queue
+            # localised anywhere else.
+            if not any(self._member_match(m, cluster, node, server)
+                       for m in self._children(bus_id, "SIBusMember")):
+                raise RuntimeError("queue %r is localised on something that is not a member of the bus" % name)
+        attrs = self._destination_attrs(args, {
+            "identifier": name, "reliability": "ASSURED_PERSISTENT", "maxFailedDeliveries": "5",
+        })
+        config_type = kind == "Queue" and "SIBQueue" or "SIBTopicSpace"
+        return self.config._create_object(config_type, name, attrs, bus_id)
+
+    def modifySIBDestination(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        dest_id = self._destination(bus_id, self._named(args, "-name"))
+        if dest_id is None:
+            raise KeyError("no destination %r to modify" % self._named(args, "-name"))
+        self._destination_attrs(args, self.config.state["objects"][dest_id]["attrs"])
+        self.config.state["saved"] = False
+        _store(self.config.state)
+
+    def listSIBDestinations(self, args):
+        bus_id = self._bus(self._named(args, "-bus"))
+        kind = self._named(args, "-type", None)
+        types = {"Queue": ["SIBQueue"], "TopicSpace": ["SIBTopicSpace"]}.get(kind, ["SIBQueue", "SIBTopicSpace"])
+        ids = []
+        for config_type in types:
+            ids += self._children(bus_id, config_type)
+        return "\n".join(sorted(ids))
 
     def modifyServerPort(self, args):
         # modifyServerPort(<server>, '-nodeName n -endPointName e -host * -port p')

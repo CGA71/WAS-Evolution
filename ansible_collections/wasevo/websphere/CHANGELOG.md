@@ -48,6 +48,12 @@ Wave 0, the foundation. Nothing in production changes.
   pattern, expanded on the deployment manager because WAS has no wildcard in a
   library class path, or an explicit list of jars. A pattern that matches
   nothing is refused. The Liberty template renders the explicit form too.
+- `was_sibus`, with its handler, and `roles/traditional/sibus`: a service
+  integration bus, its members and its destinations, in one wsadmin session
+  per bus. Traditional only. A declared message store that differs from the
+  engine's is reported as a warning and never changed, because changing it
+  recreates the engine and discards its messages. Refuses a bus with no
+  member and an exception destination that is not on the bus.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.

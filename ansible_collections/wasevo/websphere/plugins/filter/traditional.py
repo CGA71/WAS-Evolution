@@ -238,10 +238,82 @@ def library_groups(libraries, expanded, default_scope, cluster_name, cell_name):
     return {"groups": groups, "errors": errors}
 
 
+SIB_RELIABILITY = (
+    "BEST_EFFORT_NONPERSISTENT",
+    "EXPRESS_NONPERSISTENT",
+    "RELIABLE_NONPERSISTENT",
+    "RELIABLE_PERSISTENT",
+    "ASSURED_PERSISTENT",
+)
+SIB_POLICIES = ("HA", "SCALABILITY", "SCALABILITY_HA")
+
+
+def sibus_specs(sibuses, cluster_name):
+    """The declared buses, completed and checked, as module arguments.
+
+    A bus that names no member gets the run's cluster - the usual shape, and
+    the one that follows the members built before it. Every value WAS
+    constrains is checked here, so a typo in a reliability level is refused
+    with the accepted values before a wsadmin session starts.
+
+    Returns {"buses": [...], "errors": [...]}.
+    """
+    buses = []
+    errors = []
+    for bus in sibuses or []:
+        name = bus.get("name", "<unnamed>")
+        before = len(errors)
+
+        members = []
+        for member in bus.get("members") or [{}]:
+            member = dict(member)
+            if not member.get("cluster") and not member.get("server"):
+                member["cluster"] = cluster_name
+            if member.get("server") and not member.get("node"):
+                errors.append("%s: member server %s names no node" % (name, member["server"]))
+            store = member.get("store", "file")
+            if store not in ("file", "data"):
+                errors.append("%s: member store %r is not file or data" % (name, store))
+            policy = member.get("policy", "HA")
+            if member.get("cluster") and policy not in SIB_POLICIES:
+                errors.append("%s: engine policy %r is not one of %s"
+                              % (name, policy, ", ".join(SIB_POLICIES)))
+            members.append(member)
+
+        destinations = []
+        seen = []
+        for dest in bus.get("destinations") or []:
+            dest = dict(dest)
+            dname = dest.get("name", "<unnamed>")
+            if dname in seen:
+                errors.append("%s: destination %s declared twice" % (name, dname))
+            seen.append(dname)
+            if dest.get("type", "queue") not in ("queue", "topic_space"):
+                errors.append("%s: destination %s type %r is not queue or topic_space"
+                              % (name, dname, dest.get("type")))
+            reliability = dest.get("reliability", "ASSURED_PERSISTENT")
+            if reliability not in SIB_RELIABILITY:
+                errors.append("%s: destination %s reliability %r is not one of %s"
+                              % (name, dname, reliability, ", ".join(SIB_RELIABILITY)))
+            destinations.append(dest)
+
+        if len(errors) > before:
+            continue
+        buses.append({
+            "bus": name,
+            "description": bus.get("description", ""),
+            "security": bool(bus.get("security", False)),
+            "members": members,
+            "destinations": destinations,
+        })
+    return {"buses": buses, "errors": errors}
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "jdbc_groups": jdbc_groups,
             "library_groups": library_groups,
+            "sibus_specs": sibus_specs,
             "to_seconds": to_seconds,
         }

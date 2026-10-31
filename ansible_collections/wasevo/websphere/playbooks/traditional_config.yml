@@ -15,6 +15,7 @@
 #   traditional_j2c.yml              the J2C authentication aliases
 #   traditional_jdbc.yml             the JDBC providers and datasources
 #   traditional_shared_libraries.yml the shared libraries
+#   traditional_sibus.yml            the service integration buses
 #
 # So there is exactly one definition of each step, and this file cannot drift
 # from the step it used to carry inline - which is what happened to the legacy
@@ -49,3 +50,6 @@
 
 - name: The shared libraries
   import_playbook: traditional_shared_libraries.yml
+
+- name: The service integration buses
+  import_playbook: traditional_sibus.yml

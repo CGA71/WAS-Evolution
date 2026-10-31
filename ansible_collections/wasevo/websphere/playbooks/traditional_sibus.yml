@@ -1,0 +1,29 @@
+---
+# Service integration buses, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e was_topology=nd -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. A destination added or a
+# redelivery limit corrected is one replay of this.
+#
+# After the cluster job, because a bus takes the cluster as its member; before
+# the JMS job, because a connection factory and a JMS queue name a bus and a
+# bus destination.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: Service integration buses, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The buses
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.sibus

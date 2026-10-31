@@ -86,3 +86,21 @@ shared_libraries:
     jars:
       - /app/sim-reporting/engine.jar
       - /app/sim-reporting/fonts.jar
+
+# --------------------------------------------------------------------------
+# Service integration bus
+# --------------------------------------------------------------------------
+# Traditional only - no Liberty equivalent. No member is declared, so the bus
+# takes the run's cluster, which exercises that default. A queue with its own
+# exception destination, the dead-letter queue itself, and a topic space.
+sibuses:
+  - name: SimOrdersBus
+    description: CI simulation bus
+    destinations:
+      - name: SimOrdersQueue
+        max_failed_deliveries: 5
+        exception_destination: SimOrdersDeadLetters
+      - name: SimOrdersDeadLetters
+      - name: SimPricesTopic
+        type: topic_space
+        reliability: RELIABLE_NONPERSISTENT
