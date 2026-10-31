@@ -12,13 +12,14 @@
 #
 #   traditional_cluster.yml          the cluster object
 #   traditional_cluster_members.yml  the application servers in it
+#   traditional_j2c.yml              the J2C authentication aliases
 #
 # So there is exactly one definition of each step, and this file cannot drift
 # from the step it used to carry inline - which is what happened to the legacy
 # launch_*.sh scripts, each with its own copy of the same cell build.
 #
-# Both imported playbooks take the same launch inputs as this one, resolve the
-# model themselves and stage the Jython driver themselves. Running this is the
+# Every imported playbook takes the same launch inputs as this one, resolves
+# the model itself and stages the Jython driver itself. Running this is the
 # same work as running them in order, and running one of them is a supported
 # way to fix one thing.
 #
@@ -37,3 +38,6 @@
 
 - name: The application servers in it
   import_playbook: traditional_cluster_members.yml
+
+- name: The J2C authentication aliases
+  import_playbook: traditional_j2c.yml

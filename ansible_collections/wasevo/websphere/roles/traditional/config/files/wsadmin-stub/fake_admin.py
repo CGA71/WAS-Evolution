@@ -40,6 +40,12 @@ TEMPLATE_ENDPOINTS = [
     "SOAP_CONNECTOR_ADDRESS",
 ]
 
+# Types held by the generic store. Listed so AdminConfig.list can refuse a type
+# no fake implements, rather than answering "none" and hiding a handler bug.
+GENERIC_TYPES = (
+    "JAASAuthData",
+)
+
 EMPTY = {
     "clusters": {},
     "members": {},
@@ -47,6 +53,11 @@ EMPTY = {
     "entries": {},
     "specials": {},
     "ports": {},
+    # Every resource type added after the cluster and its members lives here:
+    # id -> {"type", "parent", "attrs"}. One store for J2C aliases, JDBC
+    # providers, datasources, buses and the rest, so a new handler needs a
+    # fake of its AdminTask verbs and nothing else.
+    "objects": {},
     "next_id": 1,
     "next_port": FIRST_GENERATED_PORT,
     "saved": True,
@@ -128,14 +139,31 @@ class FakeAdminConfig(object):
 
     # -- reads ------------------------------------------------------------
 
-    def list(self, config_type):
-        if config_type != "ServerCluster":
-            # Only what the handlers need is implemented. An unimplemented type
-            # is a bug in the simulation, not something to paper over.
-            raise NotImplementedError(
-                "fake AdminConfig.list does not know type %r" % config_type
-            )
-        return "\n".join(sorted(self.state["clusters"].keys()))
+    def list(self, config_type, scope=None):
+        if config_type == "ServerCluster":
+            return "\n".join(sorted(self.state["clusters"].keys()))
+        if config_type in GENERIC_TYPES:
+            ids = [
+                config_id for config_id, obj in self.state["objects"].items()
+                if obj["type"] == config_type
+                and (scope is None or self._within(config_id, scope))
+            ]
+            return "\n".join(sorted(ids))
+        # Only what the handlers need is implemented. An unimplemented type is
+        # a bug in the simulation, not something to paper over.
+        raise NotImplementedError(
+            "fake AdminConfig.list does not know type %r" % config_type
+        )
+
+    def _within(self, config_id, scope):
+        """Whether an object sits under a scope, following parents up."""
+        current = config_id
+        while current:
+            if current == scope:
+                return True
+            obj = self.state["objects"].get(current)
+            current = obj["parent"] if obj else None
+        return False
 
     def getid(self, pattern):
         """Containment path lookup. Only /Node:<node>/ServerIndex:/ is needed."""
@@ -163,6 +191,16 @@ class FakeAdminConfig(object):
         ):
             if config_id in self.state[store]:
                 return reader(self.state[store][config_id], attribute, config_id)
+        obj = self.state["objects"].get(config_id)
+        if obj is not None:
+            if attribute not in obj["attrs"]:
+                raise KeyError("no attribute %r on %r" % (attribute, config_id))
+            value = obj["attrs"][attribute]
+            # A list attribute is a list of config ids, rendered the way the
+            # real AdminConfig renders it, so handler parsing is exercised.
+            if isinstance(value, list):
+                return "[%s]" % " ".join(value)
+            return value if value is None else str(value)
         raise KeyError("no such config id: %r" % config_id)
 
     @staticmethod
@@ -205,6 +243,13 @@ class FakeAdminConfig(object):
     # -- writes -----------------------------------------------------------
 
     def modify(self, config_id, attributes):
+        obj = self.state["objects"].get(config_id)
+        if obj is not None:
+            for pair in attributes:
+                obj["attrs"][pair[0]] = pair[1]
+            self.state["saved"] = False
+            _store(self.state)
+            return
         for store in ("clusters", "members", "ports"):
             obj = self.state[store].get(config_id)
             if obj is None:
@@ -220,6 +265,37 @@ class FakeAdminConfig(object):
     def save(self):
         self.state = _load()
         self.state["saved"] = True
+        _store(self.state)
+
+    # -- the generic store ------------------------------------------------
+
+    def _create_object(self, config_type, name, attrs, parent=None):
+        config_id = self._next(config_type, name)
+        self.state["objects"][config_id] = {
+            "type": config_type, "parent": parent, "attrs": dict(attrs),
+        }
+        self.state["saved"] = False
+        _store(self.state)
+        return config_id
+
+    def _find(self, config_type, **match):
+        """The id of the first object of a type whose attributes match."""
+        for config_id, obj in self.state["objects"].items():
+            if obj["type"] != config_type:
+                continue
+            if all(obj["attrs"].get(k) == v for k, v in match.items()):
+                return config_id
+        return None
+
+    def remove(self, config_id):
+        """AdminConfig.remove, for generic objects. Children go with it."""
+        if config_id not in self.state["objects"]:
+            raise KeyError("no such config id: %r" % config_id)
+        children = [c for c, o in self.state["objects"].items() if o["parent"] == config_id]
+        for child in children:
+            self.remove(child)
+        del self.state["objects"][config_id]
+        self.state["saved"] = False
         _store(self.state)
 
     # -- used by AdminTask ------------------------------------------------
@@ -486,6 +562,54 @@ class FakeAdminTask(object):
             self._named(args, "-memberNode"),
             self._named(args, "-memberName"),
         )
+
+    # -- J2C authentication aliases ---------------------------------------
+    #
+    # The password is kept, so a test can assert it was or was not written.
+    # The handler must never READ it back: the real AdminConfig returns it
+    # encoded, so a handler that compared it would work here and nowhere else.
+    # showAttribute on "password" therefore raises, as a guard.
+
+    def createAuthDataEntry(self, args):
+        alias = self._named(args, "-alias")
+        if self.config._find("JAASAuthData", alias=alias):
+            raise RuntimeError(
+                "alias %r already exists - the handler should have planned "
+                "an update, not a creation" % alias
+            )
+        return self.config._create_object("JAASAuthData", alias, {
+            "alias": alias,
+            "userId": self._named(args, "-user"),
+            "_password": self._named(args, "-password"),
+            "description": self._named(args, "-description", ""),
+            "_password_writes": 1,
+        })
+
+    def modifyAuthDataEntry(self, args):
+        alias = self._named(args, "-alias")
+        config_id = self.config._find("JAASAuthData", alias=alias)
+        if config_id is None:
+            raise KeyError("no alias %r to modify" % alias)
+        attrs = self.config.state["objects"][config_id]["attrs"]
+        user = self._named(args, "-user", None)
+        if user is not None:
+            attrs["userId"] = user
+        description = self._named(args, "-description", None)
+        if description is not None:
+            attrs["description"] = description
+        password = self._named(args, "-password", None)
+        if password is not None:
+            attrs["_password"] = password
+            attrs["_password_writes"] = attrs.get("_password_writes", 0) + 1
+        self.config.state["saved"] = False
+        _store(self.config.state)
+
+    def deleteAuthDataEntry(self, args):
+        alias = self._named(args, "-alias")
+        config_id = self.config._find("JAASAuthData", alias=alias)
+        if config_id is None:
+            raise KeyError("no alias %r to delete" % alias)
+        self.config.remove(config_id)
 
     def modifyServerPort(self, args):
         # modifyServerPort(<server>, '-nodeName n -endPointName e -host * -port p')

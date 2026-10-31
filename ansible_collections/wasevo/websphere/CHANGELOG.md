@@ -29,6 +29,13 @@ Wave 0, the foundation. Nothing in production changes.
   reconciles routing weight and pinned ports. Vertical and horizontal are the
   same call — see README section 18.
 - `roles/traditional/server_member`: drives it, replayable on its own.
+- `was_j2c_alias`, with `handlers/j2c_alias.py`, and `roles/traditional/j2c_alias`:
+  cell-wide J2C authentication aliases, read from the shared model. The
+  password cannot be compared, so `password_policy` says what to do about it -
+  `on_create`, or `always` to rotate it; it never appears in a result, a diff
+  or a log, and the stub tests search every answer to prove it.
+- `playbooks/guard_target.yml`: the refusal of a run with no target, one
+  definition imported by every playbook that acts on the deployment manager.
 - `roles/traditional/{prereqs_os,installation_manager,was_install,was_fixpack,was_sdk,profile_dmgr,profile_nodeagent,profile_standalone,config}`:
   the install and profile chain for the lab, each a separate job.
 - `roles/traditional/{ihs,audit}`: declared, scheduled for wave 1, and failing

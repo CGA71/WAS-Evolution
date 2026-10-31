@@ -36,49 +36,8 @@
 # There is no cluster-type variable anywhere. The shape is a consequence of the
 # member list, never a switch.
 
-# Same reason as in traditional_cluster.yml: the deployment manager pattern
-# below has to render without being launched, so it falls back to a name no
-# inventory can hold - and a pattern that matches nothing would make the run
-# succeed having done nothing. The refusal is a play, and it names the answer
-# that is missing.
-- name: An environment must be supplied before a host pattern is built from it
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  tasks:
-    - name: Refuse a run with neither an environment nor an explicit host pattern
-      ansible.builtin.assert:
-        that:
-          - (was_environment | default('') | trim | length > 0)
-            or (config_dmgr_hosts | default('') | trim | length > 0)
-        fail_msg: >-
-          No environment was supplied. It decides which hosts this run targets,
-          because the host pattern is the intersection of an environment group
-          and the deployment manager group - the environment is an answer, not
-          a directory. In AWX, answer the survey question for the target
-          environment; on the command line, pass -e was_environment=<code>.
-          An inventory with no environment group - the lab - is run with
-          -e config_dmgr_hosts=dmgr instead.
-        success_msg: "a target was supplied"
-
-    # Checked HERE, on localhost, and not in the play that uses the pattern.
-    # If the group does not exist that play matches no host at all, so an
-    # assertion inside it would never run and the job would end green having
-    # built nothing. Only the default pattern needs the group: an inventory
-    # with no environment group - the lab - supplies config_dmgr_hosts.
-    - name: The chosen environment must exist in the inventory
-      ansible.builtin.assert:
-        that:
-          - (was_environment | lower) in groups
-        fail_msg: >-
-          No inventory group named {{ was_environment | lower }}. Known
-          environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
-          'dmgr', 'nodeagents', 'ihs', 'was_lab']) | list | join(', ') }}.
-          An inventory with no environment group - the lab - is run with
-          -e config_dmgr_hosts=dmgr instead.
-        success_msg: "the environment group exists"
-      when: config_dmgr_hosts is not defined
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
 
 - name: Resolve the member names on each federated node
   hosts: "{{ members_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"

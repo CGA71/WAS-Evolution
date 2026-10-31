@@ -1,0 +1,18 @@
+---
+# The resources the simulation builds in its fake cell, family by family.
+#
+# Same shape as the shared model - layer 1 - so the simulation exercises the
+# declaration a real environment writes, not a test-only variant of it.
+
+# --------------------------------------------------------------------------
+# J2C authentication aliases
+# --------------------------------------------------------------------------
+# password_env names a variable on the controller. In AWX a credential fills
+# it; in the pipeline the job sets it (.gitlab-ci.yml, SIM_J2C_PASSWORD), with
+# a value that is a marker and not a secret. Either way the path is the same:
+# the declaration carries the NAME, the run supplies the value.
+j2c_aliases:
+  - name: simDbAlias
+    user: simapp
+    password_env: SIM_J2C_PASSWORD
+    description: CI simulation database

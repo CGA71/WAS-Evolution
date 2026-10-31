@@ -1005,7 +1005,63 @@ the same VM is built as any environment — and passes
 `-e config_dmgr_hosts=dmgr`, exactly as `lab_create_profiles.yml` already does
 for the profile roles.
 
-## 19. AWX
+## 19. The resources of the cell
+
+Each family of resources is its own role, its own playbook and its own job
+template, in the order a cell needs them - and each is replayable on its own,
+for the reason section 18 gives. They default to **cluster scope**, which
+follows the vertical and horizontal members built just before; a resource
+names another scope when it needs one.
+
+| Step | Playbook | Family |
+|---|---|---|
+| 8 | `traditional_j2c.yml` | J2C authentication aliases |
+
+### J2C authentication aliases
+
+The credentials a datasource, a JMS connection factory or a bus member
+presents. **Cell-wide, always**: an alias lives in the cell's security
+configuration, so it takes no scope, and a datasource at cluster scope refers
+to it by name. That is also why it comes first - a first build then needs no
+second pass.
+
+The declaration is the shared model's - layer 1 - and carries the **name** of a
+variable, never a password:
+
+```yaml
+j2c_aliases:
+  - name: as400ExtranetAlias
+    user: wsextranet
+    password_env: AS400_EXTRANET_PASSWORD
+```
+
+The role reads that variable from the controller's environment, which is
+exactly where an AWX credential puts it. An alias with no password is refused
+before wsadmin, by the name of the variable to fill, because an alias created
+with an empty password authenticates nowhere and the failure would surface
+hours later as a database refusing a connection.
+
+**The password cannot be compared.** WAS stores it encoded and returns nothing
+a plan could compare against, so the module does not pretend:
+
+| `j2c_password_policy` | Does | Reports |
+|---|---|---|
+| `on_create` (default) | sets the password when the alias is created, then leaves it | changed only for what can be compared - the user and the description |
+| `always` | writes the password on every run | changed on every run, because it might have |
+
+**Rotating a database password is one replay of `traditional_j2c.yml` with
+`-e j2c_password_policy=always`** - no cluster, no datasource, no application
+touched. That is why aliases are a role of their own rather than a step of the
+JDBC one.
+
+The password never appears in what the module returns, so not in a diff and
+not in a log; it travels only in the 0600 payload file the module removes. The
+stub tests assert it: every driver answer about an alias, rotation included, is
+searched for the password and must not contain it. And the fake cell refuses
+to serve a stored password at all, because the real one returns it encoded - a
+handler that read it back would pass in CI and break on a cell.
+
+## 20. AWX
 
 AWX runs inside k3s on the Ubuntu host, deployed by the AWX Operator, pinned.
 See [`ci/awx/README.md`](ci/awx/README.md).
@@ -1087,7 +1143,7 @@ one.
 > purpose, so it is a decision rather than a patch. Until then the playbooks
 > run from a shell, which is what [DEX.md](DEX.md) does throughout.
 
-## 20. Sources
+## 21. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
 - [Java SE 8 in WebSphere Application Server traditional V9](https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html)
@@ -2103,7 +2159,66 @@ comme n'importe quel environnement — et passe `-e config_dmgr_hosts=dmgr`,
 exactement comme le fait déjà `lab_create_profiles.yml` pour les rôles de
 profil.
 
-## 19. AWX
+## 19. Les ressources de la cellule
+
+Chaque famille de ressources est son propre rôle, son propre playbook et son
+propre job template, dans l'ordre où une cellule en a besoin - et chacune est
+rejouable seule, pour la raison donnée en section 18. Elles sont créées par
+défaut **à la portée du cluster**, ce qui suit les membres verticaux et
+horizontaux construits juste avant ; une ressource nomme une autre portée quand
+elle en a besoin.
+
+| Étape | Playbook | Famille |
+|---|---|---|
+| 8 | `traditional_j2c.yml` | alias d'authentification J2C |
+
+### Alias d'authentification J2C
+
+Les identifiants qu'une datasource, une fabrique de connexions JMS ou un membre
+de bus présente. **À l'échelle de la cellule, toujours** : un alias vit dans la
+configuration de sécurité de la cellule, donc il ne prend aucune portée, et une
+datasource à portée cluster y fait référence par son nom. C'est aussi pourquoi
+il vient en premier - une première construction n'a alors pas besoin d'un
+second passage.
+
+La déclaration est celle du modèle partagé - la couche 1 - et porte le **nom**
+d'une variable, jamais un mot de passe :
+
+```yaml
+j2c_aliases:
+  - name: as400ExtranetAlias
+    user: wsextranet
+    password_env: AS400_EXTRANET_PASSWORD
+```
+
+Le rôle lit cette variable dans l'environnement du contrôleur, exactement là où
+une credential AWX la dépose. Un alias sans mot de passe est refusé avant
+wsadmin, par le nom de la variable à remplir, parce qu'un alias créé avec un
+mot de passe vide ne s'authentifie nulle part et que l'échec n'apparaîtrait
+que des heures plus tard, sous la forme d'une base qui refuse une connexion.
+
+**Le mot de passe ne peut pas être comparé.** WAS le stocke encodé et ne rend
+rien qu'un plan pourrait comparer ; le module ne fait donc pas semblant :
+
+| `j2c_password_policy` | Fait | Annonce |
+|---|---|---|
+| `on_create` (défaut) | pose le mot de passe à la création de l'alias, puis n'y touche plus | un changement seulement sur ce qui se compare - l'utilisateur et la description |
+| `always` | écrit le mot de passe à chaque exécution | un changement à chaque exécution, parce qu'il a pu en avoir un |
+
+**Faire tourner le mot de passe d'une base, c'est un rejeu de
+`traditional_j2c.yml` avec `-e j2c_password_policy=always`** - aucun cluster,
+aucune datasource, aucune application touchés. C'est pourquoi les alias sont un
+rôle à part et non une étape du rôle JDBC.
+
+Le mot de passe n'apparaît jamais dans ce que rend le module, donc ni dans un
+diff ni dans un log ; il ne circule que dans le fichier de payload 0600 que le
+module supprime. Les tests de la fausse cellule le vérifient : chaque réponse
+du driver sur un alias, rotation comprise, est fouillée à la recherche du mot
+de passe et ne doit pas le contenir. Et la fausse cellule refuse tout
+simplement de servir un mot de passe stocké, parce que la vraie le rend encodé
+- un handler qui le relirait passerait en CI et casserait sur une cellule.
+
+## 20. AWX
 
 AWX tourne dans k3s sur l'hôte Ubuntu, déployé par l'AWX Operator, en version
 figée. Voir [`ci/awx/README.md`](ci/awx/README.md).
@@ -2187,7 +2302,7 @@ chemin et n'en est pas une.
 > attendant, les playbooks se lancent depuis un shell, ce que fait
 > [DEX.md](DEX.md) de bout en bout.
 
-## 20. Sources
+## 21. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
 - [Java SE 8 in WebSphere Application Server traditional V9](https://www.ibm.com/docs/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/covr_javase8.html)
