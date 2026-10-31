@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  role_name: platform_cell_media
+  author: neo
+  description: >-
+    Stage the Installation Manager and WAS media on the machines of a cell from the install lab, which already holds them.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+dependencies: []

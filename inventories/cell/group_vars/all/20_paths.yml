@@ -1,0 +1,28 @@
+---
+# Same layout as the real inventory. cloud-init pre-creates /app, /mnt/binaries
+# and /opt/exploit and gives them to the ansible account, so the install roles
+# do not have to invent a layout.
+was_app_base_dir: /app
+was_binaries_base_dir: "{{ was_app_base_dir }}/binaries"
+was_logs_base_dir: "{{ was_app_base_dir }}/logs"
+was_data_base_dir: "{{ was_app_base_dir }}/data"
+was_dump_base_dir: "{{ was_app_base_dir }}/dump/was"
+
+was_install_binaries_base_dir: /mnt/binaries
+was_backup_base_dir: /backup
+
+was_exploit_base_dir: /opt/exploit
+was_exploit_scripts_dir: "{{ was_exploit_base_dir }}/scripts"
+was_jython_dir: "{{ was_exploit_base_dir }}/scripts/{{ site_jython_dirname }}"
+
+was_version_short: "90"
+
+# Profile names come from roles/model/vars/naming.yml; only the paths are here.
+was_profile_path: "{{ was_profiles_base_dir }}/{{ was_profile_name }}"
+was_dmgr_profile_path: "{{ was_profiles_base_dir }}/{{ was_dmgr_profile_name }}"
+
+systemd_base_dir: /usr/lib/systemd/system
+
+# Installation directories - where Installation Manager and WAS are
+# installed - are declared in 25_install_dirs.yml, with each one mapped to
+# the imcl flag it feeds.

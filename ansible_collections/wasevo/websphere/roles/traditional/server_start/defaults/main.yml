@@ -1,0 +1,4 @@
+---
+# Nothing to declare: what runs where comes from the inventory groups and the
+# model - the deployment manager group, the node agent group, and the members
+# each node publishes (was_cluster_members_per_node, the member name pattern).

@@ -1,0 +1,46 @@
+---
+# On the source machine: the archive, once, and an HTTP server for the copy.
+
+- name: The media must be on the source
+  ansible.builtin.stat:
+    path: "{{ was_install_binaries_base_dir }}/{{ item }}"
+  loop: "{{ media_dirs }}"
+  register: _media_source_dirs
+
+- name: Refuse when they are not
+  ansible.builtin.assert:
+    that:
+      - _media_source_dirs.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      {{ _media_source_dirs.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
+      missing under {{ was_install_binaries_base_dir }} on {{ inventory_hostname }}.
+      The WAS repository is mirrored from IBM with an IBMid by
+      ci/k3s/lab-mirror-was.sh; that is the one step no job can do.
+    success_msg: "the media is on {{ inventory_hostname }}"
+
+- name: Archive the media once
+  ansible.builtin.command:
+    cmd: >-
+      tar -cf {{ was_install_binaries_base_dir }}/{{ media_archive }}
+      -C {{ was_install_binaries_base_dir }} {{ media_dirs | join(' ') }}
+    creates: "{{ was_install_binaries_base_dir }}/{{ media_archive }}"
+  become: true
+
+- name: Is the server already up
+  ansible.builtin.command:
+    cmd: systemctl is-active {{ media_unit }}
+  register: _media_unit_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Serve the archive for the time of the copy
+  ansible.builtin.command:
+    cmd: >-
+      systemd-run --unit={{ media_unit }}
+      --property=RuntimeMaxSec={{ media_serve_max_seconds }}
+      python3 -m http.server {{ media_port }}
+      --directory {{ was_install_binaries_base_dir }}
+  become: true
+  when: _media_unit_state.stdout != 'active'
+  changed_when: true

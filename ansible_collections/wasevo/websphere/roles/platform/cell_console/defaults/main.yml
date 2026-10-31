@@ -1,0 +1,19 @@
+---
+# The deployment manager's administrative console, reachable from the LAN on
+# the k3s node's address.
+#
+#   http://<console_address>:<console_node_port>/ibm/console
+#
+# TWO PORTS, ON PURPOSE. The console is served over HTTP on WC_adminhost, and
+# with administrative security on - always, here - WAS answers the login page
+# with a redirect to HTTPS on WC_adminhost_secure, at the address the browser
+# used. So the HTTP port is published as a NodePort (console_node_port, in the
+# node port range), and the secure port is published under its own number on
+# the node address by the cluster's service load balancer: the redirect then
+# lands where it says.
+#
+# The ports are READ from the created profile - portdef.props - never assumed.
+console_node_port: 30000
+console_address: ""
+console_dmgr_group: dmgr
+console_service: was-console

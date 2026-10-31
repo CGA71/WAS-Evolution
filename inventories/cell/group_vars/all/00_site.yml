@@ -1,0 +1,14 @@
+---
+# The cell on the k3s cluster. Site values: where things live, who runs them.
+# Same accounts and layout as the install lab, whose media the cell copies.
+site_dns_domain: was-cell.svc.cluster.local
+site_binaries_repository: "(copied from the install lab - playbooks/cell_media.yml)"
+site_binaries_repository_type: none
+site_timezone: Europe/Paris
+site_was_user: ansible
+site_was_group: ansible
+site_jython_dirname: jython-ansible
+
+# The model refuses an inventory without an environment group unless told
+# otherwise: the environment here is a launch input, not a group.
+model_require_hosts: false

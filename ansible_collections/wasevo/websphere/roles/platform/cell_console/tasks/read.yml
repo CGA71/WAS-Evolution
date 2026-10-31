@@ -1,0 +1,21 @@
+---
+# On the deployment manager: the console ports its profile really got.
+
+- name: Read the ports of the deployment manager profile
+  ansible.builtin.slurp:
+    src: "{{ was_dmgr_profile_path }}/properties/portdef.props"
+  register: _console_portdef
+  become: true
+
+- name: Publish the console ports
+  ansible.builtin.set_fact:
+    console_http_port: >-
+      {{ (_console_portdef.content | b64decode)
+         | regex_search('WC_adminhost=([0-9]+)', '\1') | first }}
+    console_https_port: >-
+      {{ (_console_portdef.content | b64decode)
+         | regex_search('WC_adminhost_secure=([0-9]+)', '\1') | first }}
+
+- name: Report them
+  ansible.builtin.debug:
+    msg: "console HTTP {{ console_http_port }}, HTTPS {{ console_https_port }}"

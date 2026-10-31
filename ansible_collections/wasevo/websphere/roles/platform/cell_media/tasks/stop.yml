@@ -1,0 +1,12 @@
+---
+# On the source: the HTTP server stopped as soon as the copy is done. The
+# archive stays, so the next cell built from this lab copies without
+# re-archiving.
+
+- name: Stop serving the media
+  ansible.builtin.command:
+    cmd: systemctl stop {{ media_unit }}
+  become: true
+  register: _media_stop
+  changed_when: _media_stop.rc == 0
+  failed_when: false

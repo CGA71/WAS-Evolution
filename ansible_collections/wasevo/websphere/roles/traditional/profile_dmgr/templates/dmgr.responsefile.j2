@@ -24,8 +24,15 @@ hostName={{ profile_dmgr_hostname }}
 #}
 {% if profile_dmgr_ports | length > 0 %}
 portsFile={{ profile_response_dir }}/ports.dmgr
-{% else %}
+{% elif was_base_port | default('') | string | length > 0 %}
 startingPort={{ was_base_port }}
+{% else %}
+{#
+  No port map and no base port: the product's own defaults - 9060 and 9043
+  for a deployment manager's console, 8879 for its SOAP connector. What a
+  machine that carries one profile of each kind wants.
+#}
+defaultPorts=true
 {% endif %}
 {% if profile_dmgr_admin_security | bool %}
 enableAdminSecurity=true

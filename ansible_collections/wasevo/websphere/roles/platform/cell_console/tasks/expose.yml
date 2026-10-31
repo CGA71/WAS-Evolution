@@ -1,0 +1,39 @@
+---
+# On the controller: the Services, then a request through them.
+
+- name: The address the console is published on must be declared
+  ansible.builtin.assert:
+    that:
+      - console_address | length > 0
+    fail_msg: >-
+      console_address is empty. It is the k3s node's address on the LAN, and
+      it comes from the inventory.
+    success_msg: "console on {{ console_address }}"
+
+- name: Publish the console
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('ansible.builtin.template', 'services.yml.j2') | from_yaml }}"
+  vars:
+    _console_dmgr: "{{ groups[console_dmgr_group] | first }}"
+    _console_vm: "{{ hostvars[_console_dmgr].platform_vm_name }}"
+    _console_http: "{{ hostvars[_console_dmgr].console_http_port }}"
+    _console_https: "{{ hostvars[_console_dmgr].console_https_port }}"
+
+- name: The console must answer on the published address
+  ansible.builtin.uri:
+    url: "http://{{ console_address }}:{{ console_node_port }}/ibm/console/"
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307]
+  register: _console_answer
+  retries: 20
+  delay: 15
+  until: _console_answer is succeeded
+  when: not ansible_check_mode
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "console : http://{{ console_address }}:{{ console_node_port }}/ibm/console"
+      - "answer  : HTTP {{ _console_answer.status | default('(check run)') }}{{
+          (' -> ' ~ _console_answer.location) if _console_answer.location is defined else '' }}"

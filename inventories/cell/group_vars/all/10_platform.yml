@@ -1,0 +1,10 @@
+---
+# Where the cell's machines live on the k3s cluster, and how the console is
+# reached from the LAN.
+platform_namespace: was-cell
+platform_vm_group: was_install
+
+# The k3s node's address on the LAN. The console is published on it:
+#   http://lab.example.com:30000/ibm/console
+console_address: lab.example.com
+console_node_port: 30000

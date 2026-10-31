@@ -1,0 +1,8 @@
+---
+# Installation Manager and WAS, from the media job 2 copied from the install
+# lab. The same version as the lab, which is what that media holds.
+im_media_src: "/mnt/binaries/IBM/install_im/*.zip"
+was_media_src: "/mnt/binaries/IBM/install_was90/*.zip"
+was_expected_version: "9.0.5.28"
+was_fixpack_media_src: "/mnt/binaries/IBM/fixes/*.zip"
+was_fixpack_target_version: ""

@@ -1,0 +1,51 @@
+---
+# On each target: the media, streamed in, unless it is already there.
+
+- name: Is the WAS repository already staged
+  ansible.builtin.stat:
+    path: "{{ was_media_dir }}/repository.config"
+  register: _media_staged
+
+- name: The media directory
+  ansible.builtin.file:
+    path: "{{ was_install_binaries_base_dir }}"
+    state: directory
+    owner: "{{ site_was_user }}"
+    group: "{{ site_was_group }}"
+    mode: "0755"
+  become: true
+
+- name: Stream the media from the source
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      curl -fsS --retry 3 "{{ media_url }}"
+      | tar -xf - -C {{ was_install_binaries_base_dir }}
+    executable: /bin/bash
+  become: true
+  when: not _media_staged.stat.exists
+  changed_when: true
+
+- name: Hand it to the install account
+  ansible.builtin.file:
+    path: "{{ was_install_binaries_base_dir }}/IBM"
+    owner: "{{ site_was_user }}"
+    group: "{{ site_was_group }}"
+    recurse: true
+  become: true
+  when: not _media_staged.stat.exists
+
+- name: The repository must now be there
+  ansible.builtin.stat:
+    path: "{{ was_media_dir }}/repository.config"
+  register: _media_after
+  check_mode: false
+
+- name: Refuse when it is not
+  ansible.builtin.assert:
+    that:
+      - _media_after.stat.exists or ansible_check_mode
+    fail_msg: >-
+      No {{ was_media_dir }}/repository.config on {{ inventory_hostname }}
+      after the copy from {{ media_url }}.
+    success_msg: "the media is staged on {{ inventory_hostname }}"

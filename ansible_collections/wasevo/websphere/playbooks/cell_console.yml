@@ -1,0 +1,30 @@
+---
+# Last job of the cell workflow: the deployment manager's console, published
+# on the k3s node's address and checked through that address.
+#
+#   ansible-playbook -i inventories/cell <this> -e was_environment=<code> -e was_topology=nd
+
+- name: The console ports the deployment manager profile got
+  hosts: "{{ console_dmgr_group | default('dmgr') }}"
+  gather_facts: true
+
+  tasks:
+    - name: Resolve the model and the names
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+
+    - name: Read the ports
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.cell_console
+        tasks_from: read.yml
+
+- name: Publish the console
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Expose and check
+      ansible.builtin.include_role:
+        name: wasevo.websphere.platform.cell_console
+        tasks_from: expose.yml

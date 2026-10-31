@@ -1,0 +1,5 @@
+---
+# The deployment manager. Profile and node names come from the model's
+# patterns and the launch inputs; only the paths and the service are set here.
+was_profile_path: "{{ was_dmgr_profile_path }}"
+was_service_name: wasdmgr
