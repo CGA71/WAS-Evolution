@@ -36,6 +36,23 @@ Wave 0, the foundation. Nothing in production changes.
   or a log, and the stub tests search every answer to prove it.
 - `playbooks/guard_target.yml`: the refusal of a run with no target, one
   definition imported by every playbook that acts on the deployment manager.
+- `was_jdbc_provider` and `was_datasource`, with their handlers, and
+  `roles/traditional/jdbc`: JDBC providers and datasources rendered from the
+  same shared-model declaration the Liberty back-end renders. Cluster scope by
+  default, another per datasource. Refuses a provider type the cell does not
+  offer, a datasource whose J2C alias or provider does not exist, and a pool
+  setting with no WAS equivalent. Replaces a classpath instead of appending to
+  it, and compares only the settings a declaration names.
+- `handlers/_scope.py`: scope resolution shared by every resource handler.
+- `plugins/filter/traditional.py`: the traditional rendering of the shared
+  model, as pure functions the stub tests call directly.
+
+### Shared model, corrected
+
+- `vendor` is now an abstract intent translated by
+  `roles/model/vars/jdbc_vendors.yml`. It used to be pasted into the Liberty
+  template, which produced `<properties.db2>` - not a Liberty element. The
+  model refuses a vendor neither back-end can render.
 - `roles/traditional/{prereqs_os,installation_manager,was_install,was_fixpack,was_sdk,profile_dmgr,profile_nodeagent,profile_standalone,config}`:
   the install and profile chain for the lab, each a separate job.
 - `roles/traditional/{ihs,audit}`: declared, scheduled for wave 1, and failing

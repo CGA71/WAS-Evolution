@@ -1,0 +1,127 @@
+---
+# JDBC providers and datasources, on the deployment manager.
+#
+# The declaration is the shared model's; plugins/filter/traditional.py renders
+# it for WAS traditional - the abstract vendor into a provider type and a
+# helper class, Liberty-style pool settings into WAS attributes in seconds -
+# and this role hands the result to the modules, one wsadmin session per
+# module per scope.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names the job that produces what is missing.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [jdbc, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [jdbc, always]
+
+- name: Nothing declared, nothing to do
+  ansible.builtin.debug:
+    msg: >-
+      datasources is empty for this run. Datasources are declared in the
+      shared model or the inventory - see
+      roles/traditional/jdbc/defaults/main.yml for the shape.
+  when: datasources | length == 0
+  tags: [jdbc]
+
+- name: Reconcile the JDBC providers and datasources
+  when: datasources | length > 0
+  tags: [jdbc]
+  block:
+
+    # ------------------------------------------------------------------
+    # Render the shared model for this back-end, refuse what cannot be
+    # ------------------------------------------------------------------
+    - name: Render the declarations for WAS traditional
+      ansible.builtin.set_fact:
+        jdbc_render: >-
+          {{ datasources | wasevo.websphere.jdbc_groups(
+               jdbc_vendors, jdbc_scope, was_cluster_name, was_cell_name,
+               was_jdbc_provider_name_suffix) }}
+
+    # Every error at once. Refusing on the first would make a declaration with
+    # three mistakes take three runs to correct.
+    - name: Every datasource must render for WAS traditional
+      ansible.builtin.assert:
+        that:
+          - jdbc_render.errors | length == 0
+        fail_msg: >-
+          {{ jdbc_render.errors | length }} datasource declaration problem(s):
+          {{ jdbc_render.errors | join(' | ') }}
+        success_msg: >-
+          {{ jdbc_render.groups | map(attribute='datasources') | flatten | length }}
+          datasource(s) in {{ jdbc_render.groups | length }} scope(s)
+
+    # A cluster scope on a standalone server is a scope that cannot exist.
+    # topology.yml published was_can_cluster, so this is refused before
+    # wsadmin, with the setting that fixes it.
+    - name: A cluster scope needs a cluster
+      ansible.builtin.assert:
+        that:
+          - was_can_cluster | bool
+            or (jdbc_render.groups | map(attribute='scope') | selectattr('type', 'equalto', 'cluster') | list | length == 0)
+        fail_msg: >-
+          was_topology is "{{ was_topology }}", which has no cluster, and at
+          least one datasource would be created at cluster scope - the default.
+          On a standalone server set jdbc_scope to the server:
+          {type: server, node: <node>, server: <server>}.
+        success_msg: "every scope can exist in this topology"
+
+    - name: Administrative credentials must be supplied to reach the cell
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Reaching a cell with administrative security enabled needs
+          was_admin_user and was_admin_password - the deployment manager's
+          administrator, not a local account. Supply them from an AWX
+          credential or a vault.
+        success_msg: "administrative credentials supplied"
+
+    # ------------------------------------------------------------------
+    # The driver, then the profile it runs in
+    # ------------------------------------------------------------------
+    - name: Stage the Jython driver on the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    - name: The deployment manager profile must exist on this host
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+      register: jdbc_wsadmin
+      check_mode: false
+
+    - name: Refuse clearly when it does not
+      ansible.builtin.fail:
+        msg: >-
+          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+          {{ inventory_hostname }}. Datasources live in the master
+          configuration repository, which is the deployment manager profile -
+          created by the profile job. A check run needs it too: reading the
+          cell is how a dry run tells the truth.
+      when: not (jdbc_wsadmin.stat.exists | default(false))
+
+    - name: Report what will be reconciled
+      ansible.builtin.debug:
+        msg: >-
+          {% for group in jdbc_render.groups %}{{ group.scope.type }}
+          {{ group.scope[group.scope.type] | default(group.scope.server | default('')) }}:
+          providers {{ group.providers | map(attribute='name') | join(', ') }};
+          datasources {{ group.datasources | map(attribute='name') | join(', ') }}{{ ' || ' if not loop.last }}{% endfor %}
+
+    # ------------------------------------------------------------------
+    # One pass per scope: providers and datasources, in the right order
+    # ------------------------------------------------------------------
+    - name: Reconcile each scope
+      ansible.builtin.include_tasks: reconcile.yml
+      loop: "{{ jdbc_render.groups }}"
+      loop_control:
+        loop_var: jdbc_group
+        label: "{{ jdbc_group.scope.type }} {{ jdbc_group.scope[jdbc_group.scope.type] | default('') }}"

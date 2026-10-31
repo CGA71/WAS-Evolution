@@ -173,6 +173,95 @@ payload j2c_absent <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# --------------------------------------------------------------------------
+# JDBC providers and datasources, at the cluster's scope
+# --------------------------------------------------------------------------
+# Arguments as the role renders them from the shared model - the vendor table
+# already applied, the pool already in WAS attributes and seconds.
+payload jdbc_prov_unknown <<'JSON'
+{"resource":"jdbc_provider","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "providers":[{"name":"stubProv","database_type":"DB2","provider_type":"DB2 For Mainframes On Mars",
+                         "implementation_type":"Connection pool data source","classpath":"/drv/jt400.jar","native_path":"","description":""}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload jdbc_prov <<'JSON'
+{"resource":"jdbc_provider","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "providers":[{"name":"stubProv","database_type":"DB2","provider_type":"DB2 UDB for iSeries (Toolbox)",
+                         "implementation_type":"Connection pool data source","classpath":"/drv/jt400.jar","native_path":"","description":"stub"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# A new driver jar. modify on a list attribute APPENDS in WAS, so a handler
+# that did not unset first would leave the old jar ahead of the new one.
+payload jdbc_prov_newjar <<'JSON'
+{"resource":"jdbc_provider","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "providers":[{"name":"stubProv","database_type":"DB2","provider_type":"DB2 UDB for iSeries (Toolbox)",
+                         "implementation_type":"Connection pool data source","classpath":"/drv/jt400-11.jar","native_path":"","description":"stub"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload jdbc_prov_absent <<'JSON'
+{"resource":"jdbc_provider","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "providers":[{"name":"stubProv","database_type":"DB2","provider_type":"DB2 UDB for iSeries (Toolbox)",
+                         "implementation_type":"Connection pool data source"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload ds_alias <<'JSON'
+{"resource":"j2c_alias","state":"present",
+ "params":{"password_policy":"on_create",
+           "aliases":[{"name":"stubDsAlias","user":"app","password":"MARKER-pw-3","description":""}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload ds_alias_absent <<'JSON'
+{"resource":"j2c_alias","state":"absent",
+ "params":{"aliases":[{"name":"stubDsAlias","user":"app"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload ds <<'JSON'
+{"resource":"datasource","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "datasources":[{"name":"stubDs","provider":"stubProv","jndi_name":"jdbc/stub",
+                           "helper":"com.ibm.websphere.rsadapter.DB2AS400DataStoreHelper","auth_alias":"stubDsAlias",
+                           "statement_cache_size":20,
+                           "properties":{"databaseName":"STUB","serverName":"as400.stub"},
+                           "pool":{"maxConnections":30,"minConnections":5,"connectionTimeout":30,"unusedTimeout":1800}}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload ds_pool <<'JSON'
+{"resource":"datasource","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "datasources":[{"name":"stubDs","provider":"stubProv","jndi_name":"jdbc/stub",
+                           "helper":"com.ibm.websphere.rsadapter.DB2AS400DataStoreHelper","auth_alias":"stubDsAlias",
+                           "statement_cache_size":20,
+                           "properties":{"databaseName":"STUB","serverName":"as400.stub"},
+                           "pool":{"maxConnections":50,"minConnections":5,"connectionTimeout":30,"unusedTimeout":1800}}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload ds_check_new <<'JSON'
+{"resource":"datasource","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "datasources":[{"name":"stubDs2","provider":"stubProv","jndi_name":"jdbc/stub2",
+                           "helper":"com.ibm.websphere.rsadapter.DB2AS400DataStoreHelper","auth_alias":"stubDsAlias"}]},
+ "check_mode":true,"save_config":true,"sync_nodes":true}
+JSON
+
+payload ds_absent <<'JSON'
+{"resource":"datasource","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "datasources":[{"name":"stubDs","provider":"stubProv","jndi_name":"jdbc/stub","helper":"x"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 # Run one payload through the driver and print the resulting `changed`, or an
 # error. Deliberately goes through the sentinel extraction the module uses, so
 # a change to the framing breaks here too.
@@ -355,6 +444,85 @@ expect "delete"                                 j2c_absent           true
 expect "replay delete"                          j2c_absent           false
 
 echo
+echo "=== JDBC providers and datasources ==="
+# Read a value back from the fake cell: a provider's classpath, a datasource's
+# pool attribute or custom property, how many datasources exist.
+cell_value() {
+    "$PY" -c '
+import json, os, sys
+objs = json.load(open(os.environ["WAS_SIM_STATE"])).get("objects", {})
+kind, name, key = sys.argv[1], sys.argv[2], sys.argv[3]
+def find(t, n):
+    for i, o in objs.items():
+        if o["type"] == t and o["attrs"].get("name") == n:
+            return i, o
+    return None, None
+if kind == "count":
+    print(sum(1 for o in objs.values() if o["type"] == name)); sys.exit(0)
+if kind == "provider":
+    _, o = find("JDBCProvider", name); print(o["attrs"][key] if o else "absent"); sys.exit(0)
+_, ds = find("DataSource", name)
+if ds is None:
+    print("absent"); sys.exit(0)
+if kind == "pool":
+    print(objs[ds["attrs"]["connectionPool"]]["attrs"][key]); sys.exit(0)
+if kind == "property":
+    for p in objs[ds["attrs"]["propertySet"]]["attrs"]["resourceProperties"]:
+        if objs[p]["attrs"]["name"] == key:
+            print(objs[p]["attrs"]["value"]); sys.exit(0)
+    print("absent")
+' "$1" "$2" "$3"
+}
+
+expect_refusal "a provider type the cell does not offer" \
+    jdbc_prov_unknown "is not offered by this cell"
+expect "create a provider"                      jdbc_prov            true
+expect "replay (idempotency)"                   jdbc_prov            false
+expect "a new driver jar"                       jdbc_prov_newjar     true
+expect_value "the jar was replaced, not appended" \
+    "$(cell_value provider stubProv classpath)" "/drv/jt400-11.jar"
+
+expect_refusal "a datasource whose J2C alias does not exist" \
+    ds "does not exist in the cell"
+expect "the alias it needs"                     ds_alias             true
+expect "create a datasource"                    ds                   true
+expect "replay (idempotency)"                   ds                   false
+expect_value "pool maxConnections set"      "$(cell_value pool stubDs maxConnections)" "30"
+expect_value "pool reapTime left at default" "$(cell_value pool stubDs reapTime)" "180"
+expect_value "custom property set"          "$(cell_value property stubDs databaseName)" "STUB"
+expect "pool maxConnections 30 -> 50"           ds_pool              true
+expect "replay (idempotency)"                   ds_pool              false
+expect "--check a new datasource"               ds_check_new         true
+expect_value "the check created nothing" "$(cell_value count DataSource -)" "1"
+expect "delete the datasource"                  ds_absent            true
+expect "replay the delete"                      ds_absent            false
+expect "delete the provider"                    jdbc_prov_absent     true
+expect "replay the delete"                      jdbc_prov_absent     false
+expect "delete the alias"                       ds_alias_absent      true
+
+echo
+echo "=== the shared model, rendered for WAS traditional ==="
+# plugins/filter/traditional.py turns the layer-1 declaration into the module
+# arguments above. Asserted against the real example model, so a change to the
+# vendor table or the pool translation shows up here, not on a cell.
+render="$("$PY" -c '
+import io, json, sys, yaml
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+model = yaml.safe_load(io.open(sys.argv[2]))
+vendors = yaml.safe_load(io.open(sys.argv[3]))["jdbc_vendors"]
+r = T.jdbc_groups(model["datasources"], vendors, {"type": "cluster"}, "ClusterEXT01", "Cell")
+g = r["groups"][0]
+p, d = g["providers"][0], g["datasources"][0]
+print("|".join([str(len(r["errors"])), g["scope"]["cluster"], p["provider_type"],
+                d["helper"].rsplit(".", 1)[1], str(d["pool"]["unusedTimeout"]),
+                str(d["pool"]["connectionTimeout"]), p["name"]]))
+' "$COLLECTION/plugins/filter" "$ROOT/model/example/common.yml" \
+  "$COLLECTION/roles/model/vars/jdbc_vendors.yml")"
+expect_value "example model -> WAS arguments" "$render" \
+    "0|ClusterEXT01|DB2 UDB for iSeries (Toolbox)|DB2AS400DataStoreHelper|1800|30|as400ExtranetProvider"
+
+echo
 echo "=== the cluster, deleted with its members ==="
 expect "delete"                             absent      true
 expect "replay delete"                      absent      false
@@ -401,17 +569,19 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Nine effective changes above: the cluster created, its members created, a
-# port pinned, a member drained, a member deleted, an alias created, its
-# password rotated, the alias deleted, the cluster deleted. Every replay, every
-# check run, the password left alone under on_create and the refusals must add
-# none - a node synchronisation on a cell that did not change is a ripple
-# through the estate for nothing.
-if [ "$syncs" = "9" ]; then
-    echo "  ok     9 syncs for 9 effective changes, none for the replays,"
+# Seventeen effective changes above. The cluster: created, members created, a
+# port pinned, a member drained, a member deleted, the cluster deleted (6). The
+# aliases: created, password rotated, deleted (3). JDBC: provider created, its
+# jar replaced, an alias created, a datasource created, its pool changed, the
+# datasource deleted, the provider deleted, the alias deleted (8). Every
+# replay, every check run, the password left alone under on_create and every
+# refusal must add none - a node synchronisation on a cell that did not change
+# is a ripple through the estate for nothing.
+if [ "$syncs" = "17" ]; then
+    echo "  ok     17 syncs for 17 effective changes, none for the replays,"
     echo "         the check runs, the untouched password or the refusals"
 else
-    echo "  FAIL   expected 9 syncs, state reports $syncs"
+    echo "  FAIL   expected 17 syncs, state reports $syncs"
     fail=1
 fi
 

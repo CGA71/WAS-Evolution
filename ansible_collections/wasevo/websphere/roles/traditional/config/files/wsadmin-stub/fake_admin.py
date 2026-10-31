@@ -44,7 +44,39 @@ TEMPLATE_ENDPOINTS = [
 # no fake implements, rather than answering "none" and hiding a handler bug.
 GENERIC_TYPES = (
     "JAASAuthData",
+    "JDBCProvider",
+    "DataSource",
+    "ConnectionPool",
+    "J2EEResourcePropertySet",
+    "J2EEResourceProperty",
 )
+
+# The JDBC provider templates this fake cell offers, as AdminConfig.listTemplates
+# names them. The four provider types of roles/model/vars/jdbc_vendors.yml are
+# here, plus their XA variants, so the handler's "does the cell offer this
+# type" check is exercised both ways: a known type passes, and a test asks for
+# one that is not listed to see the refusal name the alternatives.
+JDBC_TEMPLATES = (
+    "DB2 UDB for iSeries (Toolbox)",
+    "DB2 UDB for iSeries (Toolbox XA)",
+    "DB2 Using IBM JCC Driver",
+    "DB2 Using IBM JCC Driver (XA)",
+    "Oracle JDBC Driver",
+    "Oracle JDBC Driver (XA)",
+    "Microsoft SQL Server JDBC Driver",
+    "Microsoft SQL Server JDBC Driver (XA)",
+)
+
+# What a new connection pool holds before anything is set: WAS's defaults, so a
+# test can tell "set by the role" from "left at the default".
+POOL_DEFAULTS = {
+    "maxConnections": "10",
+    "minConnections": "1",
+    "connectionTimeout": "180",
+    "reapTime": "180",
+    "unusedTimeout": "1800",
+    "agedTimeout": "0",
+}
 
 EMPTY = {
     "clusters": {},
@@ -93,6 +125,23 @@ def _store(state):
     # runs on Linux where rename would have worked, which is exactly the kind
     # of bug that only shows up once someone runs the simulation on a laptop.
     os.replace(tmp, STATE_PATH)
+
+
+def scope_id(kind, name):
+    """A stable config id for a node, server or cell scope.
+
+    Stable, because a resource stores its scope as its parent, and the fake
+    cell lives across many processes - one per driver run.
+    """
+    return "%s:%s(cells/TestCell|scope.xml#%s_%s)" % (
+        kind, name, kind, name.replace("/", "_"),
+    )
+
+
+def _parse_triples(raw):
+    """[[name type value] [name type value]] -> [(name, type, value), ...]."""
+    import re
+    return [tuple(group.split(None, 2)) for group in re.findall(r"\[([^\[\]]+)\]", raw or "")]
 
 
 def _parse_step(raw):
@@ -166,19 +215,73 @@ class FakeAdminConfig(object):
         return False
 
     def getid(self, pattern):
-        """Containment path lookup. Only /Node:<node>/ServerIndex:/ is needed."""
+        """Containment path lookup, for the paths the handlers use.
+
+        /Node:<n>/ServerIndex:/   the node's serverindex, or ""
+        /ServerCluster:<c>/       the cluster, or "" when it does not exist
+        /Node:<n>/  /Node:<n>/Server:<s>/  /Cell:<c>/
+                                  scopes. A real cell has these objects once
+                                  the node is federated; this fake answers for
+                                  any name, with an id that is stable across
+                                  runs so a resource's parent survives them.
+        The real getid returns "" for a path that matches nothing, and the
+        handlers treat that as "absent" - so does this one.
+        """
         parts = [p for p in pattern.strip("/").split("/") if p]
-        if len(parts) != 2 or not parts[0].startswith("Node:") or parts[1] != "ServerIndex:":
-            raise NotImplementedError(
-                "fake AdminConfig.getid does not know pattern %r" % pattern
-            )
-        node = parts[0].split(":", 1)[1]
-        for index_id, index in self.state["indexes"].items():
-            if index["node"] == node:
-                return index_id
-        # The real getid returns an empty string for a path that matches
-        # nothing, and the handler treats that as "no ports to read".
-        return ""
+        if len(parts) == 2 and parts[0].startswith("Node:") and parts[1] == "ServerIndex:":
+            node = parts[0].split(":", 1)[1]
+            for index_id, index in self.state["indexes"].items():
+                if index["node"] == node:
+                    return index_id
+            return ""
+        if len(parts) == 1 and parts[0].startswith("ServerCluster:"):
+            name = parts[0].split(":", 1)[1]
+            for config_id, cluster in self.state["clusters"].items():
+                if cluster["name"] == name:
+                    return config_id
+            return ""
+        if len(parts) == 1 and parts[0].split(":", 1)[0] in ("Node", "Cell"):
+            kind, name = parts[0].split(":", 1)
+            return scope_id(kind, name)
+        if len(parts) == 2 and parts[0].startswith("Node:") and parts[1].startswith("Server:"):
+            return scope_id("Server", "%s/%s" % (parts[0][5:], parts[1][7:]))
+        raise NotImplementedError(
+            "fake AdminConfig.getid does not know pattern %r" % pattern
+        )
+
+    def listTemplates(self, config_type):
+        if config_type != "JDBCProvider":
+            raise NotImplementedError("fake listTemplates does not know %r" % config_type)
+        return "\n".join(
+            "%s(templates/system|jdbc-resource-provider-templates.xml#JDBCProvider_%d)"
+            % (name, index) for index, name in enumerate(JDBC_TEMPLATES, 1)
+        )
+
+    def unsetAttributes(self, config_id, attributes):
+        obj = self.state["objects"].get(config_id)
+        if obj is None:
+            raise KeyError("no such config id: %r" % config_id)
+        for attribute in attributes:
+            obj["attrs"][attribute] = ""
+        self.state["saved"] = False
+        _store(self.state)
+
+    def create(self, config_type, parent, attributes):
+        """AdminConfig.create for generic objects.
+
+        A J2EEResourceProperty is also appended to its property set's list,
+        which is how the real repository links them.
+        """
+        if config_type not in GENERIC_TYPES:
+            raise NotImplementedError("fake AdminConfig.create does not know %r" % config_type)
+        if parent not in self.state["objects"]:
+            raise KeyError("no such parent: %r" % parent)
+        attrs = dict((pair[0], pair[1]) for pair in attributes)
+        config_id = self._create_object(config_type, attrs.get("name", config_type), attrs, parent)
+        if config_type == "J2EEResourceProperty":
+            self.state["objects"][parent]["attrs"].setdefault("resourceProperties", []).append(config_id)
+            _store(self.state)
+        return config_id
 
     def showAttribute(self, config_id, attribute):
         for store, reader in (
@@ -610,6 +713,93 @@ class FakeAdminTask(object):
         if config_id is None:
             raise KeyError("no alias %r to delete" % alias)
         self.config.remove(config_id)
+
+    # -- JDBC providers and datasources -------------------------------------
+
+    def _scope_parent(self, raw):
+        """-scope Cluster=X | Node=X | Node=X,Server=Y | Cell=X -> parent id."""
+        fields = dict(part.split("=", 1) for part in raw.split(","))
+        if "Cluster" in fields:
+            found = self.config.getid("/ServerCluster:%s/" % fields["Cluster"])
+            if not found:
+                raise RuntimeError("no cluster %r for -scope %r" % (fields["Cluster"], raw))
+            return found
+        if "Server" in fields:
+            return scope_id("Server", "%s/%s" % (fields["Node"], fields["Server"]))
+        if "Node" in fields:
+            return scope_id("Node", fields["Node"])
+        if "Cell" in fields:
+            return scope_id("Cell", fields["Cell"])
+        raise ValueError("unreadable -scope %r" % raw)
+
+    def createJDBCProvider(self, args):
+        parent = self._scope_parent(self._named(args, "-scope"))
+        provider_type = self._named(args, "-providerType")
+        # WAS refuses a provider type it has no template for. The handler is
+        # supposed to have checked first; if it did not, this is where CI says so.
+        if provider_type not in JDBC_TEMPLATES:
+            raise RuntimeError(
+                "no JDBC provider template %r - the handler should have "
+                "refused before creating" % provider_type
+            )
+        name = self._named(args, "-name")
+        for config_id in self.config.list("JDBCProvider", parent).splitlines():
+            if self.config.showAttribute(config_id, "name") == name:
+                raise RuntimeError(
+                    "JDBC provider %r already exists in that scope - the "
+                    "handler should have planned an update" % name
+                )
+        return self.config._create_object("JDBCProvider", name, {
+            "name": name,
+            "providerType": provider_type,
+            "databaseType": self._named(args, "-databaseType"),
+            "implementationType": self._named(args, "-implementationType"),
+            "classpath": self._named(args, "-classpath", ""),
+            "nativepath": self._named(args, "-nativePath", ""),
+            "description": self._named(args, "-description", ""),
+        }, parent)
+
+    def createDatasource(self, provider_id, args):
+        provider = self.config.state["objects"].get(provider_id)
+        if provider is None or provider["type"] != "JDBCProvider":
+            raise KeyError("no JDBC provider %r" % provider_id)
+        name = self._named(args, "-name")
+        for config_id in self.config.list("DataSource", provider["parent"]).splitlines():
+            if self.config.showAttribute(config_id, "name") == name:
+                raise RuntimeError(
+                    "datasource %r already exists in that scope - the handler "
+                    "should have planned an update" % name
+                )
+        alias = self._named(args, "-componentManagedAuthenticationAlias", "")
+        # Stricter than WAS, on purpose: WAS accepts an alias that does not
+        # exist and the datasource fails at its first connection. The handler
+        # is meant to refuse it first, so reaching this point is its bug.
+        if alias and not self.config._find("JAASAuthData", alias=alias):
+            raise RuntimeError(
+                "J2C alias %r does not exist - the handler should have "
+                "refused the datasource before creating it" % alias
+            )
+        ds_id = self.config._create_object("DataSource", name, {
+            "name": name,
+            "jndiName": self._named(args, "-jndiName"),
+            "datasourceHelperClassname": self._named(args, "-dataStoreHelperClassName"),
+            "authDataAlias": alias,
+            "statementCacheSize": "10",
+            "provider": provider_id,
+        }, provider_id)
+        pool_id = self.config._create_object("ConnectionPool", name + "Pool", POOL_DEFAULTS, ds_id)
+        set_id = self.config._create_object(
+            "J2EEResourcePropertySet", name + "Props", {"resourceProperties": []}, ds_id,
+        )
+        self.config.state["objects"][ds_id]["attrs"]["connectionPool"] = pool_id
+        self.config.state["objects"][ds_id]["attrs"]["propertySet"] = set_id
+        _store(self.config.state)
+        for prop_name, prop_type, prop_value in _parse_triples(
+                self._named(args, "-configureResourceProperties", "")):
+            self.config.create("J2EEResourceProperty", set_id, [
+                ["name", prop_name], ["type", prop_type], ["value", prop_value],
+            ])
+        return ds_id
 
     def modifyServerPort(self, args):
         # modifyServerPort(<server>, '-nodeName n -endPointName e -host * -port p')
