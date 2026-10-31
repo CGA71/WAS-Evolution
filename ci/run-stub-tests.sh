@@ -331,6 +331,63 @@ payload sib_bad_exception <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# JMS on StubBus, while it exists: the four kinds a message-driven bean needs.
+payload jms <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"sib","known_destinations":{},
+           "connection_factories":[{"name":"StubCF","jndi_name":"jms/stubCF","bus":"StubBus"}],
+           "queues":[{"name":"StubJmsQ","jndi_name":"jms/stubQ","queue":"StubQ","bus":"StubBus"}],
+           "topics":[{"name":"StubJmsT","jndi_name":"jms/stubT","topic_space":"StubT","topic_name":"eur","bus":"StubBus"}],
+           "activation_specs":[{"name":"StubAS","jndi_name":"jms/stubAS","destination_jndi":"jms/stubQ","bus":"StubBus"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload jms_cf_change <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"sib","known_destinations":{},
+           "connection_factories":[{"name":"StubCF","jndi_name":"jms/stubCF","bus":"StubBus","description":"orders"}],
+           "queues":[{"name":"StubJmsQ","jndi_name":"jms/stubQ","queue":"StubQ","bus":"StubBus"}],
+           "topics":[{"name":"StubJmsT","jndi_name":"jms/stubT","topic_space":"StubT","topic_name":"eur","bus":"StubBus"}],
+           "activation_specs":[{"name":"StubAS","jndi_name":"jms/stubAS","destination_jndi":"jms/stubQ","bus":"StubBus"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# A JMS queue on a topic space: WAS saves it, the first send fails.
+payload jms_queue_on_topic <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"sib","known_destinations":{},
+           "queues":[{"name":"WrongQ","jndi_name":"jms/wrongQ","queue":"StubT","bus":"StubBus"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# An activation spec on a JNDI nothing carries: the bean deploys and starves.
+payload jms_as_unknown <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"sib","known_destinations":{},
+           "activation_specs":[{"name":"LostAS","jndi_name":"jms/lostAS","destination_jndi":"jms/nowhere","bus":"StubBus"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# The same activation spec, its queue declared at ANOTHER scope: WAS resolves
+# JNDI names through the scopes, so this is valid and must not be refused.
+payload jms_as_other_scope <<'JSON'
+{"resource":"jms","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"sib",
+           "known_destinations":{"jms/cellQueue":"javax.jms.Queue"},
+           "activation_specs":[{"name":"CellAS","jndi_name":"jms/cellAS","destination_jndi":"jms/cellQueue","bus":"StubBus"}]},
+ "check_mode":true,"save_config":true,"sync_nodes":true}
+JSON
+
+payload jms_absent <<'JSON'
+{"resource":"jms","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},"provider":"sib","known_destinations":{},
+           "connection_factories":[{"name":"StubCF","jndi_name":"jms/stubCF"}],
+           "queues":[{"name":"StubJmsQ","jndi_name":"jms/stubQ"}],
+           "topics":[{"name":"StubJmsT","jndi_name":"jms/stubT"}],
+           "activation_specs":[{"name":"StubAS","jndi_name":"jms/stubAS","destination_jndi":"jms/stubQ"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload sib_absent <<'JSON'
 {"resource":"sibus","state":"absent",
  "params":{"bus":"StubBus","members":[],"destinations":[]},
@@ -615,6 +672,26 @@ expect "declared store data, engine has file"   sib_store_drift      false
 expect_value "the engine was not recreated" "$(engine_store)" "file"
 expect_refusal "an exception destination that is not on the bus" \
     sib_bad_exception "is not a destination of bus"
+
+echo
+echo "=== JMS on the default messaging provider ==="
+expect "create factory, queue, topic, spec"     jms                  true
+expect "replay (idempotency)"                   jms                  false
+expect_value "four JMS resources" \
+    "$(cell_value count SIBJMSConnectionFactory -)$(cell_value count SIBJMSQueue -)$(cell_value count SIBJMSTopic -)$(cell_value count SIBJMSActivationSpec -)" "1111"
+expect "connection factory description"         jms_cf_change        true
+expect "replay (idempotency)"                   jms_cf_change        false
+expect_refusal "a JMS queue on a topic space" \
+    jms_queue_on_topic "which is a topic space"
+expect_refusal "an activation spec on a JNDI nothing carries" \
+    jms_as_unknown "never receive a message"
+expect "an activation spec on another scope's queue" \
+                                                jms_as_other_scope   true
+expect "delete the four"                        jms_absent           true
+expect "replay delete"                          jms_absent           false
+
+echo
+echo "=== the bus, deleted ==="
 expect "delete the bus"                         sib_absent           true
 expect "replay delete"                          sib_absent           false
 expect_value "it took its members and destinations" \
@@ -635,6 +712,23 @@ print("|".join([str(len(r["errors"])), ",".join(b["bus"] for b in r["buses"]),
                 r["buses"][0]["members"][0]["cluster"]]))
 ' "$COLLECTION/plugins/filter")"
 expect_value "bus rendering rules" "$buses" "1|A|ClusterEXT01"
+# The JMS grouping: one group per scope and provider, every group told about
+# every declared destination (an activation spec may listen across scopes),
+# and a default messaging resource with no bus refused.
+groups="$("$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+r = T.jms_groups({
+    "queues": [{"name": "Q", "jndi_name": "jms/q", "queue": "Q", "bus": "B", "scope": "cell"}],
+    "activation_specs": [{"name": "AS", "jndi_name": "jms/as", "destination_jndi": "jms/q", "bus": "B"},
+                         {"name": "NoBus", "jndi_name": "jms/nb", "destination_jndi": "jms/q"}]},
+    {"type": "cluster"}, "C", "Cell")
+print("|".join([str(len(r["errors"])), str(len(r["groups"])),
+                ",".join(sorted(g["scope"]["type"] for g in r["groups"])),
+                str(all("jms/q" in g["known_destinations"] for g in r["groups"]))]))
+' "$COLLECTION/plugins/filter")"
+expect_value "JMS grouping rules" "$groups" "1|2|cell,cluster|True"
 # The library rendering's rules, on their own: a pattern that matched nothing
 # is refused, an explicit list is kept in its order, an expansion is sorted -
 # find returns files in filesystem order, and a class path that reshuffles
@@ -722,21 +816,22 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Twenty-three effective changes above. The cluster: created, members created,
+# Twenty-six effective changes above. The cluster: created, members created,
 # a port pinned, a member drained, a member deleted, the cluster deleted (6).
 # The aliases: created, password rotated, deleted (3). JDBC: provider created,
 # its jar replaced, an alias created, a datasource created, its pool changed,
 # the datasource deleted, the provider deleted, the alias deleted (8).
 # Libraries: created, a jar added, deleted (3). The bus: created, a redelivery
-# limit changed, deleted (3). Every replay, every check run, the password left
-# alone under on_create, the store drift left alone and every refusal must add
-# none - a node synchronisation on a cell that did not change is a ripple
-# through the estate for nothing.
-if [ "$syncs" = "23" ]; then
-    echo "  ok     23 syncs for 23 effective changes, none for the replays, the"
+# limit changed, deleted (3). JMS: created, a factory changed, deleted (3).
+# Every replay, every check run, the password left alone under on_create, the
+# store drift left alone and every refusal must add none - a node
+# synchronisation on a cell that did not change is a ripple through the estate
+# for nothing.
+if [ "$syncs" = "26" ]; then
+    echo "  ok     26 syncs for 26 effective changes, none for the replays, the"
     echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 23 syncs, state reports $syncs"
+    echo "  FAIL   expected 26 syncs, state reports $syncs"
     fail=1
 fi
 

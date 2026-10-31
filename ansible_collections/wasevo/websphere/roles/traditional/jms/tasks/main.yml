@@ -1,0 +1,131 @@
+---
+# JMS resources, on the deployment manager.
+#
+# plugins/filter/traditional.py groups the declarations by scope and provider
+# - one module call per group, one wsadmin session per call - and hands every
+# group the full list of declared queues and topics, because an activation
+# spec may listen on a destination declared at another scope.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names the job that produces what is missing.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [jms, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [jms, always]
+
+- name: Nothing declared, nothing to do
+  ansible.builtin.debug:
+    msg: >-
+      jms declares no resource for this run. JMS resources are declared in the
+      model or the inventory - see roles/traditional/jms/defaults/main.yml for
+      the shape.
+  when: >-
+    (jms.connection_factories | default([]) + jms.queues | default([])
+     + jms.topics | default([]) + jms.activation_specs | default([])) | length == 0
+  tags: [jms]
+
+- name: Reconcile the JMS resources
+  when: >-
+    (jms.connection_factories | default([]) + jms.queues | default([])
+     + jms.topics | default([]) + jms.activation_specs | default([])) | length > 0
+  tags: [jms]
+  block:
+
+    - name: Group the declarations by scope and provider
+      ansible.builtin.set_fact:
+        jms_render: >-
+          {{ jms | wasevo.websphere.jms_groups(
+               jms_scope, was_cluster_name, was_cell_name, jms_default_provider) }}
+
+    # Every error at once: a JNDI name declared twice, a default messaging
+    # resource with no bus, a provider that does not exist.
+    - name: Every JMS resource must be one WAS can build
+      ansible.builtin.assert:
+        that:
+          - jms_render.errors | length == 0
+        fail_msg: >-
+          {{ jms_render.errors | length }} JMS declaration problem(s):
+          {{ jms_render.errors | join(' | ') }}
+        success_msg: "{{ jms_render.groups | length }} scope and provider group(s)"
+
+    - name: A cluster scope needs a cluster
+      ansible.builtin.assert:
+        that:
+          - was_can_cluster | bool
+            or (jms_render.groups | map(attribute='scope') | selectattr('type', 'equalto', 'cluster') | list | length == 0)
+        fail_msg: >-
+          was_topology is "{{ was_topology }}", which has no cluster, and at
+          least one JMS resource would be created at cluster scope - the
+          default. On a standalone server set jms_scope to the server.
+        success_msg: "every scope can exist in this topology"
+
+    - name: Administrative credentials must be supplied to reach the cell
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Reaching a cell with administrative security enabled needs
+          was_admin_user and was_admin_password - the deployment manager's
+          administrator, not a local account. Supply them from an AWX
+          credential or a vault.
+        success_msg: "administrative credentials supplied"
+
+    - name: Stage the Jython driver on the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    - name: The deployment manager profile must exist on this host
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/bin/wsadmin.sh"
+      register: jms_wsadmin
+      check_mode: false
+
+    - name: Refuse clearly when it does not
+      ansible.builtin.fail:
+        msg: >-
+          No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+          {{ inventory_hostname }}. JMS resources live in the master
+          configuration repository, which is the deployment manager profile -
+          created by the profile job. A check run needs it too: reading the
+          cell is how a dry run tells the truth.
+      when: not (jms_wsadmin.stat.exists | default(false))
+
+    # ------------------------------------------------------------------
+    # One wsadmin session per scope and provider
+    # ------------------------------------------------------------------
+    - name: Reconcile each scope and provider
+      wasevo.websphere.was_jms:
+        scope: "{{ item.scope }}"
+        provider: "{{ item.provider }}"
+        connection_factories: "{{ item.connection_factories }}"
+        queues: "{{ item.queues }}"
+        topics: "{{ item.topics }}"
+        activation_specs: "{{ item.activation_specs }}"
+        known_destinations: "{{ item.known_destinations }}"
+        state: "{{ jms_state }}"
+        profile_path: "{{ was_profile_path }}"
+        admin_user: "{{ was_admin_user }}"
+        admin_password: "{{ was_admin_password }}"
+        jython_dir: "{{ was_jython_dir }}"
+      loop: "{{ jms_render.groups }}"
+      loop_control:
+        label: "{{ item.provider }} at {{ item.scope.type }} {{ item.scope[item.scope.type] | default('') }}"
+      register: jms_result
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {% for r in jms_result.results %}{{ r.item.provider }} at
+          {{ r.item.scope.type }} {{ r.item.scope[r.item.scope.type] | default('') }}:
+          {{ r.item.connection_factories | length }} connection factory(ies),
+          {{ r.item.queues | length }} queue(s), {{ r.item.topics | length }} topic(s),
+          {{ r.item.activation_specs | length }} activation spec(s), changed
+          {{ r.changed }}{{ ' || ' if not loop.last }}{% endfor %}
