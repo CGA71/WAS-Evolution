@@ -154,6 +154,7 @@ STEPS=(
   "WAS lab - 9. JDBC providers and datasources|$COL/traditional_jdbc.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 10. Shared libraries|$COL/traditional_shared_libraries.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 11. Service integration buses|$COL/traditional_sibus.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 12. JMS resources|$COL/traditional_jms.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------

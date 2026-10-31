@@ -54,6 +54,13 @@ Wave 0, the foundation. Nothing in production changes.
   engine's is reported as a warning and never changed, because changing it
   recreates the engine and discards its messages. Refuses a bus with no
   member and an exception destination that is not on the bus.
+- `was_jms`, with its handler, and `roles/traditional/jms`: connection
+  factories, queues, topics and activation specifications on the default
+  messaging provider, grouped by scope and provider. One table per provider,
+  so IBM MQ is a table. Refuses a JMS queue on a missing destination or a topic
+  space, an activation spec on a JNDI nothing carries or of the wrong type, a
+  missing alias, a JNDI name used twice; accepts an activation spec listening
+  across scopes, as WAS does.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.

@@ -104,3 +104,32 @@ sibuses:
       - name: SimPricesTopic
         type: topic_space
         reliability: RELIABLE_NONPERSISTENT
+
+# --------------------------------------------------------------------------
+# JMS on the default messaging provider
+# --------------------------------------------------------------------------
+# On SimOrdersBus, declared above: a connection factory, a JMS queue on the
+# bus queue, a JMS topic on the topic space, and an activation spec listening
+# on the queue - the shape a message-driven bean needs.
+jms:
+  connection_factories:
+    - name: SimOrdersCF
+      jndi_name: jms/sim/ordersCF
+      bus: SimOrdersBus
+  queues:
+    - name: SimOrdersJmsQueue
+      jndi_name: jms/sim/orders
+      queue: SimOrdersQueue
+      bus: SimOrdersBus
+  topics:
+    - name: SimPricesJmsTopic
+      jndi_name: jms/sim/prices
+      topic_space: SimPricesTopic
+      topic_name: eur
+      bus: SimOrdersBus
+  activation_specs:
+    - name: SimOrdersAS
+      jndi_name: jms/sim/ordersAS
+      destination_jndi: jms/sim/orders
+      bus: SimOrdersBus
+      max_concurrency: 5

@@ -1,0 +1,40 @@
+---
+# JMS resources: connection factories, queues, topics, activation
+# specifications. Family 4, messaging and integration.
+#
+# REPLAYABLE ON ITS OWN. A queue added, a connection factory pointed elsewhere,
+# an activation spec's concurrency raised - one replay of this role, no bus
+# touched, no application redeployed.
+#
+# Traditional only for now: phase 1 finishes the WAS traditional back-end, and
+# the Liberty rendering of the same resources comes with phase 2.
+#
+#   jms:
+#     connection_factories:
+#       - { name: OrdersCF, jndi_name: jms/ordersCF, bus: OrdersBus }
+#     queues:
+#       - { name: OrdersQueue, jndi_name: jms/orders, queue: OrdersQueue, bus: OrdersBus }
+#     topics:
+#       - { name: PricesTopic, jndi_name: jms/prices, topic_space: PricesTopic,
+#           topic_name: eur, bus: OrdersBus }
+#     activation_specs:
+#       - { name: OrdersAS, jndi_name: jms/ordersAS, destination_jndi: jms/orders,
+#           bus: OrdersBus, max_concurrency: 10 }
+#
+# Each resource takes `provider:` - sib, the default messaging provider, is the
+# default - and `scope:` to leave the default below. A default messaging
+# resource names its bus, which the bus job creates first.
+jms: {}
+
+# Where a resource lives when it does not say: the cluster, so every member
+# sees it. Short forms as for the datasources - `cell`, or a server dict.
+jms_scope:
+  type: cluster
+
+# The provider of a resource that does not name one.
+jms_default_provider: sib
+
+# present creates and updates - destinations before what refers to them.
+# absent removes exactly what is declared - what listens before what it
+# listens on.
+jms_state: present

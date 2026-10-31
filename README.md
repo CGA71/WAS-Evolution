@@ -1019,6 +1019,7 @@ names another scope when it needs one.
 | 9 | `traditional_jdbc.yml` | JDBC providers and datasources |
 | 10 | `traditional_shared_libraries.yml` | shared libraries |
 | 11 | `traditional_sibus.yml` | service integration buses |
+| 12 | `traditional_jms.yml` | JMS resources |
 
 ### J2C authentication aliases
 
@@ -1231,6 +1232,46 @@ only ever explicit.
 **Not yet verified on a real cell**: the `addSIBusMember` and
 `createSIBDestination` arguments, and reading the store through the member's
 engine. They follow the AdminTask reference; the lab run is what proves them.
+
+### JMS resources
+
+Connection factories, queues, topics and activation specifications - the four
+kinds a message-driven bean needs - on the default messaging provider, whose
+resources run on the bus of the previous step.
+
+```yaml
+jms:
+  connection_factories: [{ name: OrdersCF, jndi_name: jms/ordersCF, bus: OrdersBus }]
+  queues:               [{ name: OrdersQueue, jndi_name: jms/orders, queue: OrdersQueue, bus: OrdersBus }]
+  topics:               [{ name: PricesTopic, jndi_name: jms/prices, topic_space: PricesTopic, topic_name: eur, bus: OrdersBus }]
+  activation_specs:     [{ name: OrdersAS, jndi_name: jms/ordersAS, destination_jndi: jms/orders, bus: OrdersBus }]
+```
+
+**One handler, one table per provider.** The four kinds are the same idea on
+the default messaging provider and on IBM MQ; what differs is the AdminTask
+verbs and the attributes. `was_jms` carries a table per provider, so IBM MQ,
+the next step, is a table and not a second handler. Resources are grouped by
+scope and provider, one wsadmin session per group, read back through the
+`show*` verbs - which flatten what a JMS resource keeps in property sets - and
+compared on the fields the declaration names.
+
+**What WAS accepts and should not**, refused before anything is written:
+
+| Mistake | What WAS does with it |
+|---|---|
+| a JMS queue whose bus destination is missing, or is a topic space | saves it; the first send fails |
+| a JMS topic on something that is not a topic space | saves it; the first publish fails |
+| an activation spec listening on a JNDI no queue or topic carries, or of the wrong type | the message-driven bean deploys, starts, and never receives a message |
+| a J2C alias that does not exist | the first connection fails |
+| two resources on one JNDI name | the lookup returns whichever bound last |
+
+An activation spec at cluster scope may listen on a queue declared at cell
+scope - WAS resolves JNDI names through the scopes - so the role hands every
+group the full list of declared queues and topics, and that configuration is
+accepted; a stub test asserts it is. In a check run the bus and its
+destinations may not exist yet, since the bus step ran in check mode too, and
+the bus checks stand down. Creating, destinations go before what refers to
+them; removing, what listens goes before what it listens on.
 
 ## 20. AWX
 
@@ -2345,6 +2386,7 @@ elle en a besoin.
 | 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources |
 | 10 | `traditional_shared_libraries.yml` | bibliothèques partagées |
 | 11 | `traditional_sibus.yml` | bus d'intégration de services |
+| 12 | `traditional_jms.yml` | ressources JMS |
 
 ### Alias d'authentification J2C
 
@@ -2573,6 +2615,48 @@ membres, leurs moteurs et leurs messages, et n'est jamais implicite.
 d'`addSIBusMember` et de `createSIBDestination`, et la lecture du magasin via
 le moteur du membre. Ils suivent la référence AdminTask ; c'est le run du lab
 qui les prouvera.
+
+### Ressources JMS
+
+Fabriques de connexions, files, sujets et activation specs - les quatre sortes
+dont un bean orienté message a besoin - sur le fournisseur de messagerie par
+défaut, dont les ressources tournent sur le bus de l'étape précédente.
+
+```yaml
+jms:
+  connection_factories: [{ name: OrdersCF, jndi_name: jms/ordersCF, bus: OrdersBus }]
+  queues:               [{ name: OrdersQueue, jndi_name: jms/orders, queue: OrdersQueue, bus: OrdersBus }]
+  topics:               [{ name: PricesTopic, jndi_name: jms/prices, topic_space: PricesTopic, topic_name: eur, bus: OrdersBus }]
+  activation_specs:     [{ name: OrdersAS, jndi_name: jms/ordersAS, destination_jndi: jms/orders, bus: OrdersBus }]
+```
+
+**Un handler, une table par fournisseur.** Les quatre sortes sont la même idée
+sur le fournisseur par défaut et sur IBM MQ ; ce qui diffère, ce sont les
+verbes AdminTask et les attributs. `was_jms` porte une table par fournisseur :
+IBM MQ, l'étape suivante, sera une table et non un second handler. Les
+ressources sont regroupées par portée et par fournisseur, une session wsadmin
+par groupe, relues par les verbes `show*` - qui aplatissent ce qu'une
+ressource JMS range dans des jeux de propriétés - et comparées sur les champs
+que la déclaration nomme.
+
+**Ce que WAS accepte et ne devrait pas**, refusé avant toute écriture :
+
+| Erreur | Ce qu'en fait WAS |
+|---|---|
+| une file JMS dont la destination de bus est absente, ou est un espace de sujets | l'enregistre ; le premier envoi échoue |
+| un sujet JMS sur autre chose qu'un espace de sujets | l'enregistre ; la première publication échoue |
+| une activation spec qui écoute un JNDI qu'aucune file ni aucun sujet ne porte, ou du mauvais type | le bean orienté message se déploie, démarre, et ne reçoit jamais rien |
+| un alias J2C inexistant | la première connexion échoue |
+| deux ressources sur le même JNDI | la recherche rend celle liée en dernier |
+
+Une activation spec à portée cluster peut écouter une file déclarée à portée
+cellule - WAS résout les noms JNDI à travers les portées - donc le rôle
+transmet à chaque groupe la liste complète des files et sujets déclarés, et
+cette configuration est acceptée ; un test de la fausse cellule le vérifie. En
+check run, le bus et ses destinations peuvent ne pas exister encore, puisque
+l'étape du bus a tourné en check elle aussi, et les contrôles du bus se
+retirent. À la création, les destinations passent avant ce qui y fait
+référence ; à la suppression, ce qui écoute passe avant ce qu'il écoute.
 
 ## 20. AWX
 
