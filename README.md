@@ -678,9 +678,9 @@ composed form is a fallback, never a rule.
 
 Precedence runs from strongest to weakest, and Ansible enforces it:
 
-1. **AWX survey answer**, or `-e` on the command line. Extra vars outrank
-   everything, so a survey question for the cluster name is honoured whatever
-   the inventory says.
+1. **AWX survey answer** (`survey_was_cluster_name`…), or `-e` on the command
+   line. A survey answer filled in is honoured whatever the inventory says; a
+   blank one is ignored.
 2. **`host_vars/<host>.yml`** for one machine — a node whose name does not
    follow the site rule.
 3. **`group_vars/<group>.yml`** for a rule — `nodeagents.yml` for every agent,
@@ -755,11 +755,12 @@ Where each name is written, for the lab:
 No environment code is written in any of them: `was_env_upper` and
 `was_channel_name` are published by the `model` role from the survey answers,
 and a `group_vars` template resolves when it is read, which is after that.
-**Mind the precedence**: a survey answer is an extra var and outranks these
-files, and an optional question left blank arrives as an empty string, which
-`default(..., true)` turns back into the **role pattern** — not into the
-inventory value. So a run launched from the survey either fills those questions
-with the same values, or accepts the patterns.
+**Why the survey's names are `survey_*`**: AWX sends every optional question
+left blank as an empty string, as an extra var - and an extra var named
+`was_cell_name` would outrank the model's `set_fact` and empty the name (the
+first launch of the cell workflow failed exactly so). Under `survey_was_cell_name`
+the answer outranks these files when it is filled in, and is ignored when it is
+blank: the inventory value, else the pattern, applies. CI checks both cases.
 
 ### Standalone or ND: the topology is answered, and it decides the profile
 
@@ -2392,9 +2393,9 @@ règle.
 
 La précédence va du plus fort au plus faible, et Ansible l'applique :
 
-1. **Réponse du survey AWX**, ou `-e` en ligne de commande. Les extra-vars
-   dominent tout, donc une question de survey pour le nom du cluster est
-   honorée quoi que dise l'inventaire.
+1. **Réponse du survey AWX** (`survey_was_cluster_name`…), ou `-e` en ligne
+   de commande. Une réponse remplie est honorée quoi que dise l'inventaire ;
+   une réponse vide est ignorée.
 2. **`host_vars/<hôte>.yml`** pour une machine — un nœud dont le nom ne suit
    pas la règle du site.
 3. **`group_vars/<groupe>.yml`** pour une règle — `nodeagents.yml` pour tous
@@ -2469,12 +2470,13 @@ Où chaque nom est écrit, pour le lab :
 Aucun code d'environnement n'y est écrit : `was_env_upper` et
 `was_channel_name` sont publiés par le rôle `model` d'après les réponses du
 formulaire, et un template de `group_vars` se résout au moment où il est lu,
-c'est-à-dire après. **Attention à la précédence** : une réponse de formulaire
-est une extra var et surclasse ces fichiers, et une question optionnelle
-laissée vide arrive comme chaîne vide, que `default(..., true)` ramène au
-**motif du rôle** — pas à la valeur de l'inventaire. Un run lancé depuis le
-formulaire remplit donc ces questions avec les mêmes valeurs, ou accepte les
-motifs.
+c'est-à-dire après. **Pourquoi les noms du formulaire sont `survey_*`** : AWX
+envoie chaque question optionnelle laissée vide comme une chaîne vide, en extra
+var - et une extra var nommée `was_cell_name` surclasserait le `set_fact` du
+modèle et viderait le nom (le premier lancement du workflow de la cellule a
+échoué exactement ainsi). Sous `survey_was_cell_name`, la réponse surclasse ces
+fichiers quand elle est remplie, et est ignorée quand elle est vide : la valeur
+de l'inventaire, sinon le motif, s'applique. La CI vérifie les deux cas.
 
 ### Standalone ou ND : la topologie est répondue, et c'est elle qui décide le profil
 

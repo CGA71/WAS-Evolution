@@ -38,7 +38,7 @@
     {
       "question_name": "Cell name",
       "question_description": "Leave blank to derive it as <Channel>_<ENVIRONMENT>. Fill it in to impose a name the pattern would not produce.",
-      "variable": "was_cell_name",
+      "variable": "survey_was_cell_name",
       "type": "text",
       "required": false,
       "min": 0,
@@ -49,7 +49,7 @@
     {
       "question_name": "Cluster name",
       "question_description": "Leave blank to derive it as Cluster<first three letters of the channel, upper case>. Fill it in for a cluster that does not follow that rule.",
-      "variable": "was_cluster_name",
+      "variable": "survey_was_cluster_name",
       "type": "text",
       "required": false,
       "min": 0,
@@ -71,7 +71,7 @@
     {
       "question_name": "Application server name",
       "question_description": "The cluster member, which is one JVM. Leave blank to derive it as <cluster>_<node>_<index>. A value here names the member on every host in the run, so a per-host name belongs in the inventory instead. It names ONE member: filling this in and answering more than one server per node is refused, because appending an index to a name you chose by hand would invent a convention you did not ask for - declare was_cluster_member_names as a list in the inventory for that.",
-      "variable": "was_cluster_member_name",
+      "variable": "survey_was_cluster_member_name",
       "type": "text",
       "required": false,
       "min": 0,
@@ -82,7 +82,7 @@
     {
       "question_name": "Node name",
       "question_description": "The WAS node: the deployment manager node on a dmgr host, the node agent node elsewhere. Leave blank to derive it. A value here applies to every host in the run - declare was_node_name per host in the inventory when the machines differ.",
-      "variable": "was_node_name",
+      "variable": "survey_was_node_name",
       "type": "text",
       "required": false,
       "min": 0,
@@ -93,7 +93,7 @@
     {
       "question_name": "Deployment manager profile name",
       "question_description": "Leave blank to derive it as Dmgr_<ENVIRONMENT>_<Channel>. One host can hold two cells during a migration, which is why this name carries both.",
-      "variable": "was_dmgr_profile_name",
+      "variable": "survey_was_dmgr_profile_name",
       "type": "text",
       "required": false,
       "min": 0,
