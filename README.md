@@ -1677,12 +1677,29 @@ one.
 > - the job role already grants `pods/attach: create`, which WebSocket attach
 >   requires.
 >
-> The October failures (`EOF for pod awx/automation-job-33-...`, then AWX's
-> `Failed to JSON parse a line from worker stream ... b''`) were not
-> reproduced, and their cause is not known. If they return, read the
-> `awx-ee` container of the task pod
-> (`kubectl -n awx logs deploy/awx-task -c awx-ee`) before suspecting the
-> protocol. AWX stays pinned.
+> **The cause of the October failures, found on 31 October**
+> (`EOF for pod awx/automation-job-NN-...`, then AWX's `Failed to JSON parse
+> a line from worker stream ... b''`): the node had run out of **inotify
+> instances**. The job pod runs and exits 0, but receptor follows its output
+> with `pods/log?follow=true`, and the kubelet answers that request with
+> `failed to create fsnotify watcher: too many open files` and closes it -
+> receptor reads EOF and AWX marks the job in error. The limit,
+> `fs.inotify.max_user_instances`, is 128 by default; KubeVirt, AWX and every
+> pod draw on it, so jobs work or fail depending on what else runs.
+>
+> To see it: `kubectl logs -f <any pod>` returns at once instead of following,
+> and prints that line. The fix, on the node, as root - immediate and kept
+> across reboots:
+>
+> ```sh
+> sudo tee /etc/sysctl.d/90-inotify.conf <<'END'
+> fs.inotify.max_user_instances = 8192
+> fs.inotify.max_user_watches = 524288
+> END
+> sudo sysctl --system
+> ```
+>
+> AWX stays pinned.
 
 ## 21. Sources
 
@@ -3417,12 +3434,30 @@ chemin et n'en est pas une.
 > - le rôle des jobs accorde déjà `pods/attach: create`, que l'attache en
 >   WebSocket exige.
 >
-> Les échecs d'octobre (`EOF for pod awx/automation-job-33-...`, puis
-> `Failed to JSON parse a line from worker stream ... b''` côté AWX) ne se
-> sont pas reproduits, et leur cause n'est pas connue. S'ils reviennent, lire
-> le conteneur `awx-ee` du pod de tâches
-> (`kubectl -n awx logs deploy/awx-task -c awx-ee`) avant de soupçonner le
-> protocole. AWX reste épinglé.
+> **La cause des échecs d'octobre, trouvée le 31 octobre**
+> (`EOF for pod awx/automation-job-NN-...`, puis `Failed to JSON parse a line
+> from worker stream ... b''` côté AWX) : le nœud avait épuisé ses
+> **instances inotify**. Le pod du job tourne et sort en 0, mais receptor suit
+> sa sortie par `pods/log?follow=true`, et le kubelet répond à cette requête
+> par `failed to create fsnotify watcher: too many open files` puis la ferme -
+> receptor lit EOF et AWX marque le job en erreur. La limite,
+> `fs.inotify.max_user_instances`, vaut 128 par défaut ; KubeVirt, AWX et
+> chaque pod y puisent, donc les jobs marchent ou échouent selon ce qui tourne
+> à côté.
+>
+> Pour le voir : `kubectl logs -f <n'importe quel pod>` rend la main tout de
+> suite au lieu de suivre, et affiche cette ligne. Le correctif, sur le nœud,
+> en root - immédiat et conservé au redémarrage :
+>
+> ```sh
+> sudo tee /etc/sysctl.d/90-inotify.conf <<'END'
+> fs.inotify.max_user_instances = 8192
+> fs.inotify.max_user_watches = 524288
+> END
+> sudo sysctl --system
+> ```
+>
+> AWX reste épinglé.
 
 ## 21. Sources
 
