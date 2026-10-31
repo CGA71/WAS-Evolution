@@ -280,6 +280,63 @@ payload lib_absent <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+payload sib <<'JSON'
+{"resource":"sibus","state":"present",
+ "params":{"bus":"StubBus","description":"stub","security":false,
+           "members":[{"cluster":"ClusterEXT","store":"file","policy":"HA"}],
+           "destinations":[{"name":"StubQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"StubDLQ","description":""},
+                           {"name":"StubDLQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"","description":""},
+                           {"name":"StubT","type":"topic_space","reliability":"RELIABLE_NONPERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"","description":""}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload sib_redelivery <<'JSON'
+{"resource":"sibus","state":"present",
+ "params":{"bus":"StubBus","description":"stub","security":false,
+           "members":[{"cluster":"ClusterEXT","store":"file","policy":"HA"}],
+           "destinations":[{"name":"StubQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":10,
+                            "exception_destination":"StubDLQ","description":""},
+                           {"name":"StubDLQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"","description":""},
+                           {"name":"StubT","type":"topic_space","reliability":"RELIABLE_NONPERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"","description":""}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# The member declared with a data store while its engine has a file store.
+# Changing it recreates the engine and discards its messages, so the run must
+# report it and change nothing.
+payload sib_store_drift <<'JSON'
+{"resource":"sibus","state":"present",
+ "params":{"bus":"StubBus","description":"stub","security":false,
+           "members":[{"cluster":"ClusterEXT","store":"data","policy":"HA"}],
+           "destinations":[{"name":"StubQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":10,
+                            "exception_destination":"StubDLQ","description":""},
+                           {"name":"StubDLQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"","description":""},
+                           {"name":"StubT","type":"topic_space","reliability":"RELIABLE_NONPERSISTENT","max_failed_deliveries":5,
+                            "exception_destination":"","description":""}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload sib_bad_exception <<'JSON'
+{"resource":"sibus","state":"present",
+ "params":{"bus":"StubBus","description":"stub","security":false,
+           "members":[{"cluster":"ClusterEXT","store":"file","policy":"HA"}],
+           "destinations":[{"name":"StubQ","type":"queue","reliability":"ASSURED_PERSISTENT","max_failed_deliveries":10,
+                            "exception_destination":"Nowhere","description":""}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload sib_absent <<'JSON'
+{"resource":"sibus","state":"absent",
+ "params":{"bus":"StubBus","members":[],"destinations":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload ds_absent <<'JSON'
 {"resource":"datasource","state":"absent",
  "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
@@ -539,7 +596,45 @@ expect "delete"                                 lib_absent           true
 expect "replay delete"                          lib_absent           false
 
 echo
+echo "=== service integration bus ==="
+engine_store() {
+    "$PY" -c '
+import json, os
+for o in json.load(open(os.environ["WAS_SIM_STATE"])).get("objects", {}).values():
+    if o["type"] == "SIBMessagingEngine":
+        print("data" if o["attrs"]["dataStore"] else "file")
+' | head -1
+}
+expect "create bus, member and destinations"    sib                  true
+expect "replay (idempotency)"                   sib                  false
+expect_value "three destinations" "$(cell_value count SIBQueue -)/$(cell_value count SIBTopicSpace -)" "2/1"
+expect "redelivery limit 5 -> 10"               sib_redelivery       true
+expect "replay (idempotency)"                   sib_redelivery       false
+# The safety property of this resource: a store change is reported, never done.
+expect "declared store data, engine has file"   sib_store_drift      false
+expect_value "the engine was not recreated" "$(engine_store)" "file"
+expect_refusal "an exception destination that is not on the bus" \
+    sib_bad_exception "is not a destination of bus"
+expect "delete the bus"                         sib_absent           true
+expect "replay delete"                          sib_absent           false
+expect_value "it took its members and destinations" \
+    "$(cell_value count SIBusMember -)/$(cell_value count SIBQueue -)/$(cell_value count SIBMessagingEngine -)" "0/0/0"
+
+echo
 echo "=== the shared model, rendered for WAS traditional ==="
+# The bus rendering's rules: no member means the run's cluster, and a value WAS
+# constrains is checked before any session - here a misspelt reliability.
+buses="$("$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+r = T.sibus_specs([
+    {"name": "A", "destinations": [{"name": "Q"}]},
+    {"name": "B", "destinations": [{"name": "Q", "reliability": "VERY_RELIABLE"}]}], "ClusterEXT01")
+print("|".join([str(len(r["errors"])), ",".join(b["bus"] for b in r["buses"]),
+                r["buses"][0]["members"][0]["cluster"]]))
+' "$COLLECTION/plugins/filter")"
+expect_value "bus rendering rules" "$buses" "1|A|ClusterEXT01"
 # The library rendering's rules, on their own: a pattern that matched nothing
 # is refused, an explicit list is kept in its order, an expansion is sorted -
 # find returns files in filesystem order, and a class path that reshuffles
@@ -627,20 +722,21 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Twenty effective changes above. The cluster: created, members created, a port
-# pinned, a member drained, a member deleted, the cluster deleted (6). The
-# aliases: created, password rotated, deleted (3). JDBC: provider created, its
-# jar replaced, an alias created, a datasource created, its pool changed, the
-# datasource deleted, the provider deleted, the alias deleted (8). Libraries:
-# created, a jar added, deleted (3). Every replay, every check run, the
-# password left alone under on_create and every refusal must add none - a node
-# synchronisation on a cell that did not change is a ripple through the estate
-# for nothing.
-if [ "$syncs" = "20" ]; then
-    echo "  ok     20 syncs for 20 effective changes, none for the replays,"
-    echo "         the check runs, the untouched password or the refusals"
+# Twenty-three effective changes above. The cluster: created, members created,
+# a port pinned, a member drained, a member deleted, the cluster deleted (6).
+# The aliases: created, password rotated, deleted (3). JDBC: provider created,
+# its jar replaced, an alias created, a datasource created, its pool changed,
+# the datasource deleted, the provider deleted, the alias deleted (8).
+# Libraries: created, a jar added, deleted (3). The bus: created, a redelivery
+# limit changed, deleted (3). Every replay, every check run, the password left
+# alone under on_create, the store drift left alone and every refusal must add
+# none - a node synchronisation on a cell that did not change is a ripple
+# through the estate for nothing.
+if [ "$syncs" = "23" ]; then
+    echo "  ok     23 syncs for 23 effective changes, none for the replays, the"
+    echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 20 syncs, state reports $syncs"
+    echo "  FAIL   expected 23 syncs, state reports $syncs"
     fail=1
 fi
 

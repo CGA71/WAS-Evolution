@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: traditional_sibus
+  author: neo
+  description: >-
+    Service integration buses - the bus, its members, its destinations - in
+    one wsadmin session per bus. Replayable on its own; never recreates an
+    engine, because that discards its messages.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model and traditional.config are included where they are
+# used, so this role stays runnable on its own.
+dependencies: []

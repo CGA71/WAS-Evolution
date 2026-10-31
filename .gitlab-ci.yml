@@ -84,6 +84,7 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_j2c.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_jdbc.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_shared_libraries.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_sibus.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/guard_target.yml -e was_environment=SYNTAX
 
 # The environment is a launch input, so the loop passes it as one - exactly as

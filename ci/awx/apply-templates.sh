@@ -153,6 +153,7 @@ STEPS=(
   "WAS lab - 8. J2C authentication aliases|$COL/traditional_j2c.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 9. JDBC providers and datasources|$COL/traditional_jdbc.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 10. Shared libraries|$COL/traditional_shared_libraries.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 11. Service integration buses|$COL/traditional_sibus.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------
