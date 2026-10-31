@@ -101,6 +101,7 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_0_foundation.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_2_persistence.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_3_enterprise.yml -e was_environment=SYNTAX
+    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_prerequisites.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_machines.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_media.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/traditional_start.yml -e was_environment=SYNTAX

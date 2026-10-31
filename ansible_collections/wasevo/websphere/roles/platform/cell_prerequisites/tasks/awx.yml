@@ -1,0 +1,93 @@
+---
+# The two credentials, created or patched by name, then attached to the
+# workflow's templates.
+
+- name: The organization and the credential types
+  ansible.builtin.uri:
+    url: "{{ prereq_awx_api }}/{{ item }}"
+    url_username: admin
+    url_password: "{{ _prereq_awx_password }}"
+    force_basic_auth: true
+  loop:
+    - organizations/
+    - credential_types/?namespace=kubernetes_bearer_token
+    - "credential_types/?name={{ prereq_was_credential_type | urlencode }}"
+  register: _prereq_lookup
+  no_log: true
+
+- name: All three must exist
+  ansible.builtin.assert:
+    that:
+      - _prereq_lookup.results | map(attribute='json') | map(attribute='results') | map('length') | min > 0
+    fail_msg: >-
+      AWX lacks the organization, the Kubernetes bearer token credential type,
+      or the credential type "{{ prereq_was_credential_type }}" (made by
+      ci/awx/apply-templates.sh).
+    success_msg: organization and credential types found
+
+- name: Upsert the credentials
+  ansible.builtin.include_tasks: credential.yml
+  vars:
+    _prereq_org: "{{ _prereq_lookup.results[0].json.results[0].id }}"
+  loop:
+    - name: "{{ prereq_k8s_credential }}"
+      credential_type: "{{ _prereq_lookup.results[1].json.results[0].id }}"
+      description: "Token of ServiceAccount {{ prereq_awx_namespace }}/{{ prereq_platform_account }}"
+      inputs:
+        host: "{{ prereq_k8s_host }}"
+        bearer_token: "{{ _prereq_k8s.token | b64decode }}"
+        verify_ssl: true
+        ssl_ca_cert: "{{ _prereq_k8s['ca.crt'] | b64decode }}"
+    - name: "{{ prereq_was_credential }}"
+      credential_type: "{{ _prereq_lookup.results[2].json.results[0].id }}"
+      description: "From Secret {{ prereq_awx_namespace }}/{{ prereq_was_admin_secret }}"
+      inputs:
+        was_admin_user: "{{ _prereq_admin.user | b64decode }}"
+        was_admin_password: "{{ _prereq_admin.password | b64decode }}"
+  loop_control:
+    loop_var: _prereq_cred
+    label: "{{ _prereq_cred.name }}"
+
+- name: The workflow's templates
+  ansible.builtin.uri:
+    url: "{{ prereq_awx_api }}/job_templates/?name__startswith={{ prereq_template_prefix | urlencode }}&page_size=100"
+    url_username: admin
+    url_password: "{{ _prereq_awx_password }}"
+    force_basic_auth: true
+  register: _prereq_templates
+  no_log: true
+
+# The WAS administrator on every template but this one; the Kubernetes token
+# on those whose playbook talks to the cluster. A credential already attached
+# is left alone.
+- name: Attach the credentials
+  ansible.builtin.uri:
+    url: "{{ prereq_awx_api }}/job_templates/{{ item.0.id }}/credentials/"
+    method: POST
+    url_username: admin
+    url_password: "{{ _prereq_awx_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      id: "{{ _prereq_credential_ids[item.1] | int }}"
+    status_code: [204]
+  loop: >-
+    {{ (_prereq_templates.json.results
+        | rejectattr('playbook', 'search', 'cell_prerequisites')
+        | product([prereq_was_credential]) | list)
+     + (_prereq_templates.json.results
+        | selectattr('playbook', 'search', prereq_k8s_playbooks | map('regex_escape') | join('|'))
+        | product([prereq_k8s_credential]) | list) }}
+  loop_control:
+    label: "{{ item.0.name }} <- {{ item.1 }}"
+  when: >-
+    (_prereq_credential_ids[item.1] | int) not in
+    (item.0.summary_fields.credentials | default([]) | map(attribute='id') | list)
+  changed_when: true
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "cluster rights : ServiceAccount {{ prereq_awx_namespace }}/{{ prereq_platform_account }}"
+      - "WAS admin      : {{ prereq_was_admin_user }}, password in Secret {{ prereq_awx_namespace }}/{{ prereq_was_admin_secret }}"
+      - "credentials    : {{ _prereq_credential_ids | dict2items | map(attribute='key') | join(', ') }}"

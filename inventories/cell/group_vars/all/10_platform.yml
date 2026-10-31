@@ -8,3 +8,6 @@ platform_vm_group: was_install
 #   http://lab.example.com:30000/ibm/console
 console_address: lab.example.com
 console_node_port: 30000
+
+# The AWX API, as the k3s node reaches it - job 0 makes the credentials there.
+prereq_awx_api: http://awx.lab.example.com/api/v2

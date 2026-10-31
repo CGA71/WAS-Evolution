@@ -1,0 +1,37 @@
+---
+# What the cell workflow needs before its first machine, prepared by job 0 -
+# "WAS cell - 0. Prerequisites" - on the k3s node, as its administrator:
+#
+#   1. the rights of the platform jobs on the cluster: ServiceAccount
+#      awx/awx-cell-platform, create, read and patch - no delete
+#      (templates/rbac.yml.j2);
+#   2. the WAS administrator: user wasadmin, its password generated once into
+#      the Secret awx/was-cell-admin and kept on every later run;
+#   3. the two AWX credentials made from them - "k3s API - cell platform" and
+#      "WAS cell administrator" - attached to the workflow's templates.
+#
+# Replayable: nothing is regenerated, everything is found and patched.
+
+# Where AWX runs, and its API. The URL comes from the inventory.
+prereq_awx_namespace: awx
+prereq_awx_api: ""
+prereq_awx_admin_secret: awx-admin-password
+
+# The ServiceAccount of the platform jobs, and the API address the job pods see.
+prereq_platform_account: awx-cell-platform
+prereq_k8s_host: https://kubernetes.default.svc
+
+# The WAS administrator.
+prereq_was_admin_user: wasadmin
+prereq_was_admin_secret: was-cell-admin
+
+# The AWX objects.
+prereq_template_prefix: "WAS cell - "
+prereq_k8s_credential: "k3s API - cell platform"
+prereq_was_credential: "WAS cell administrator"
+prereq_was_credential_type: "WAS administrative user"
+# The templates whose playbook talks to the Kubernetes API.
+prereq_k8s_playbooks: [cell_machines.yml, cell_media.yml, cell_console.yml]
+
+# The administrator's kubeconfig on the node.
+prereq_kubeconfig: "{{ ansible_env.HOME }}/.kube/config"

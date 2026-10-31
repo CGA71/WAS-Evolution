@@ -1,12 +1,11 @@
 ---
-# What the AWX cell workflow may do on the cluster, and nothing more.
+# What the AWX cell workflow may do on the cluster, and nothing more. Applied
+# by job 0, "WAS cell - 0. Prerequisites", on the k3s node.
 #
-# Job 1 of "WAS cell - deployment manager and two federated nodes" creates the
-# cell's virtual machines through the Kubernetes API; job 2 reads the install
-# lab VM's address; the console job publishes two Services. They authenticate
-# with the token of this ServiceAccount, which AWX holds as a "Kubernetes API
-# Bearer Token" credential - created by ci/awx/apply-cell-workflow.sh, never
-# typed into a template.
+# Job 1 creates the cell's virtual machines through the Kubernetes API; job 2
+# reads the install lab VM's address; the console job publishes two Services.
+# They authenticate with the token of this ServiceAccount, which AWX holds as a
+# "Kubernetes API Bearer Token" credential made by the same job 0.
 #
 # Cluster-wide because the job creates the cell's namespace. The verbs stop at
 # create, read and patch: nothing here can delete a machine or a disk.
@@ -14,23 +13,23 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: awx-cell-platform
-  namespace: awx
+  name: {{ prereq_platform_account }}
+  namespace: {{ prereq_awx_namespace }}
 ---
 # A long-lived token for the AWX credential. Kubernetes fills it in.
 apiVersion: v1
 kind: Secret
 metadata:
-  name: awx-cell-platform-token
-  namespace: awx
+  name: {{ prereq_platform_account }}-token
+  namespace: {{ prereq_awx_namespace }}
   annotations:
-    kubernetes.io/service-account.name: awx-cell-platform
+    kubernetes.io/service-account.name: {{ prereq_platform_account }}
 type: kubernetes.io/service-account-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: awx-cell-platform
+  name: {{ prereq_platform_account }}
 rules:
   - apiGroups: [""]
     resources: [namespaces]
@@ -51,12 +50,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: awx-cell-platform
+  name: {{ prereq_platform_account }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: awx-cell-platform
+  name: {{ prereq_platform_account }}
 subjects:
   - kind: ServiceAccount
-    name: awx-cell-platform
-    namespace: awx
+    name: {{ prereq_platform_account }}
+    namespace: {{ prereq_awx_namespace }}

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: platform_cell_prerequisites
+  author: neo
+  description: >-
+    Prepare the cell workflow on the k3s node: the platform jobs' cluster rights,
+    the WAS administrator, and the AWX credentials made from them.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+dependencies: []
