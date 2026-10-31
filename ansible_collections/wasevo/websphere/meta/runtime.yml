@@ -10,6 +10,7 @@ action_groups:
     - was_datasource
     - was_jdbc_provider
     - was_j2c_alias
+    - was_shared_library
     - was_jvm_property
     - was_jvm_env_var
     - was_keystore

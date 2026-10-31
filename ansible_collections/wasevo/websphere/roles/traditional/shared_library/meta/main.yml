@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: traditional_shared_library
+  author: neo
+  description: >-
+    Shared libraries, rendered from the shared model with each pattern
+    expanded on the deployment manager. Replayable on its own.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model and traditional.config are included where they are
+# used, so this role stays runnable on its own.
+dependencies: []

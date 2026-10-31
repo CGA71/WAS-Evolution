@@ -43,6 +43,11 @@ Wave 0, the foundation. Nothing in production changes.
   offer, a datasource whose J2C alias or provider does not exist, and a pool
   setting with no WAS equivalent. Replaces a classpath instead of appending to
   it, and compares only the settings a declaration names.
+- `was_shared_library`, with its handler, and `roles/traditional/shared_library`:
+  shared libraries from the shared model, in its two forms - a directory and a
+  pattern, expanded on the deployment manager because WAS has no wildcard in a
+  library class path, or an explicit list of jars. A pattern that matches
+  nothing is refused. The Liberty template renders the explicit form too.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.

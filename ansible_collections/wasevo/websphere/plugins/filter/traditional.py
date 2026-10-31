@@ -181,9 +181,67 @@ def jdbc_groups(datasources, vendors, default_scope, cluster_name, cell_name,
     return {"groups": groups, "errors": errors}
 
 
+def library_groups(libraries, expanded, default_scope, cluster_name, cell_name):
+    """Group the declared shared libraries by scope, as module arguments.
+
+    `expanded` maps a library name to the jars its dir + includes matched on
+    the deployment manager - the role fills it with the find module, because
+    WAS traditional has no wildcard in a library class path. A library that
+    lists its `jars` explicitly is taken as written, in its order.
+
+    Returns {"groups": [{"scope", "libraries"}], "errors": [...]}.
+    """
+    groups = []
+    by_key = {}
+    errors = []
+
+    for library in libraries or []:
+        name = library.get("name", "<unnamed>")
+
+        if library.get("jars"):
+            class_path = [str(j) for j in library["jars"]]
+        elif library.get("dir"):
+            # Sorted: the order find returns files in is the filesystem's, and
+            # a class path that reshuffles between runs would read as a change
+            # every time.
+            class_path = sorted((expanded or {}).get(name) or [])
+            if not class_path:
+                errors.append(
+                    "%s: %s/%s matched no file on the deployment manager. A "
+                    "library with an empty class path provides nothing, and the "
+                    "applications using it would fail on their first class "
+                    "load. Deploy the jars first, or list them under `jars`."
+                    % (name, str(library["dir"]).rstrip("/"), library.get("includes", "*.jar"))
+                )
+                continue
+        else:
+            errors.append("%s: declares neither `dir` nor `jars`" % name)
+            continue
+
+        scope = resolve_scope(library.get("scope"), default_scope, cluster_name, cell_name)
+        if scope.get("type") not in ("cluster", "node", "server", "cell"):
+            errors.append("%s: scope %r is not cluster, node, server or cell" % (name, scope))
+            continue
+
+        key = _scope_key(scope)
+        if key not in by_key:
+            by_key[key] = {"scope": scope, "libraries": []}
+            groups.append(by_key[key])
+        by_key[key]["libraries"].append({
+            "name": name,
+            "class_path": class_path,
+            "native_path": [str(p) for p in library.get("native_path") or []],
+            "description": library.get("description", ""),
+            "isolated": bool(library.get("isolated", False)),
+        })
+
+    return {"groups": groups, "errors": errors}
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "jdbc_groups": jdbc_groups,
+            "library_groups": library_groups,
             "to_seconds": to_seconds,
         }

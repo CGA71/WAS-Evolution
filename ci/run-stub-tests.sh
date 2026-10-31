@@ -255,6 +255,31 @@ payload ds_check_new <<'JSON'
  "check_mode":true,"save_config":true,"sync_nodes":true}
 JSON
 
+payload lib <<'JSON'
+{"resource":"shared_library","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "libraries":[{"name":"stubLib","class_path":["/s/a.jar","/s/b.jar"],"native_path":[],
+                         "description":"stub","isolated":false}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# A jar dropped into the library directory: the role expands the pattern again
+# and hands over one more entry. Unset-then-write, as for a JDBC classpath.
+payload lib_more <<'JSON'
+{"resource":"shared_library","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "libraries":[{"name":"stubLib","class_path":["/s/a.jar","/s/b.jar","/s/c.jar"],"native_path":[],
+                         "description":"stub","isolated":false}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload lib_absent <<'JSON'
+{"resource":"shared_library","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "libraries":[{"name":"stubLib","class_path":[]}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload ds_absent <<'JSON'
 {"resource":"datasource","state":"absent",
  "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
@@ -461,6 +486,8 @@ if kind == "count":
     print(sum(1 for o in objs.values() if o["type"] == name)); sys.exit(0)
 if kind == "provider":
     _, o = find("JDBCProvider", name); print(o["attrs"][key] if o else "absent"); sys.exit(0)
+if kind == "library":
+    _, o = find("Library", name); print(o["attrs"].get(key, "") if o else "absent"); sys.exit(0)
 _, ds = find("DataSource", name)
 if ds is None:
     print("absent"); sys.exit(0)
@@ -501,7 +528,38 @@ expect "replay the delete"                      jdbc_prov_absent     false
 expect "delete the alias"                       ds_alias_absent      true
 
 echo
+echo "=== shared libraries ==="
+expect "create a library"                       lib                  true
+expect "replay (idempotency)"                   lib                  false
+expect "a jar added to its directory"           lib_more             true
+expect_value "the class path was replaced, not appended" \
+    "$(cell_value library stubLib classPath)" "/s/a.jar;/s/b.jar;/s/c.jar"
+expect "replay (idempotency)"                   lib_more             false
+expect "delete"                                 lib_absent           true
+expect "replay delete"                          lib_absent           false
+
+echo
 echo "=== the shared model, rendered for WAS traditional ==="
+# The library rendering's rules, on their own: a pattern that matched nothing
+# is refused, an explicit list is kept in its order, an expansion is sorted -
+# find returns files in filesystem order, and a class path that reshuffles
+# between runs would read as a change every time.
+libs="$("$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+r = T.library_groups(
+    [{"name": "empty", "dir": "/nowhere"},
+     {"name": "explicit", "jars": ["/z/zz.jar", "/a/aa.jar"]},
+     {"name": "pattern", "dir": "/s"}],
+    {"empty": [], "pattern": ["/s/b.jar", "/s/a.jar"]},
+    {"type": "cluster"}, "C", "Cell")
+libs = dict((l["name"], l["class_path"]) for g in r["groups"] for l in g["libraries"])
+print("|".join([str(len(r["errors"])), "empty" if "empty" not in libs else "kept",
+                ",".join(libs["explicit"]), ",".join(libs["pattern"])]))
+' "$COLLECTION/plugins/filter")"
+expect_value "library rendering rules" "$libs" \
+    "1|empty|/z/zz.jar,/a/aa.jar|/s/a.jar,/s/b.jar"
 # plugins/filter/traditional.py turns the layer-1 declaration into the module
 # arguments above. Asserted against the real example model, so a change to the
 # vendor table or the pool translation shows up here, not on a cell.
@@ -569,19 +627,20 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Seventeen effective changes above. The cluster: created, members created, a
-# port pinned, a member drained, a member deleted, the cluster deleted (6). The
+# Twenty effective changes above. The cluster: created, members created, a port
+# pinned, a member drained, a member deleted, the cluster deleted (6). The
 # aliases: created, password rotated, deleted (3). JDBC: provider created, its
 # jar replaced, an alias created, a datasource created, its pool changed, the
-# datasource deleted, the provider deleted, the alias deleted (8). Every
-# replay, every check run, the password left alone under on_create and every
-# refusal must add none - a node synchronisation on a cell that did not change
-# is a ripple through the estate for nothing.
-if [ "$syncs" = "17" ]; then
-    echo "  ok     17 syncs for 17 effective changes, none for the replays,"
+# datasource deleted, the provider deleted, the alias deleted (8). Libraries:
+# created, a jar added, deleted (3). Every replay, every check run, the
+# password left alone under on_create and every refusal must add none - a node
+# synchronisation on a cell that did not change is a ripple through the estate
+# for nothing.
+if [ "$syncs" = "20" ]; then
+    echo "  ok     20 syncs for 20 effective changes, none for the replays,"
     echo "         the check runs, the untouched password or the refusals"
 else
-    echo "  FAIL   expected 17 syncs, state reports $syncs"
+    echo "  FAIL   expected 20 syncs, state reports $syncs"
     fail=1
 fi
 

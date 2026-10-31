@@ -49,6 +49,7 @@ GENERIC_TYPES = (
     "ConnectionPool",
     "J2EEResourcePropertySet",
     "J2EEResourceProperty",
+    "Library",
 )
 
 # The JDBC provider templates this fake cell offers, as AdminConfig.listTemplates
@@ -66,6 +67,19 @@ JDBC_TEMPLATES = (
     "Microsoft SQL Server JDBC Driver",
     "Microsoft SQL Server JDBC Driver (XA)",
 )
+
+# Attributes a type HAS, with what the real AdminConfig shows when nobody set
+# them. An attribute listed here and unset reads as its default, as on a real
+# cell; an attribute not listed raises, so a handler that asks for a misspelt
+# attribute fails in CI rather than reading an empty string forever.
+ATTRIBUTE_DEFAULTS = {
+    "Library": {
+        "classPath": "",
+        "nativePath": "",
+        "description": "",
+        "isolatedClassLoader": "false",
+    },
+}
 
 # What a new connection pool holds before anything is set: WAS's defaults, so a
 # test can tell "set by the role" from "left at the default".
@@ -274,7 +288,10 @@ class FakeAdminConfig(object):
         """
         if config_type not in GENERIC_TYPES:
             raise NotImplementedError("fake AdminConfig.create does not know %r" % config_type)
-        if parent not in self.state["objects"]:
+        # A parent is another object, or a scope: an existing cluster, or the
+        # stable id getid hands out for a node, a server or a cell.
+        is_scope = parent in self.state["clusters"] or "|scope.xml#" in str(parent)
+        if parent not in self.state["objects"] and not is_scope:
             raise KeyError("no such parent: %r" % parent)
         attrs = dict((pair[0], pair[1]) for pair in attributes)
         config_id = self._create_object(config_type, attrs.get("name", config_type), attrs, parent)
@@ -297,6 +314,9 @@ class FakeAdminConfig(object):
         obj = self.state["objects"].get(config_id)
         if obj is not None:
             if attribute not in obj["attrs"]:
+                defaults = ATTRIBUTE_DEFAULTS.get(obj["type"], {})
+                if attribute in defaults:
+                    return defaults[attribute]
                 raise KeyError("no attribute %r on %r" % (attribute, config_id))
             value = obj["attrs"][attribute]
             # A list attribute is a list of config ids, rendered the way the
