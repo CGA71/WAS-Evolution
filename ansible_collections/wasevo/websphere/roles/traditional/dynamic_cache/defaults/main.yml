@@ -1,0 +1,29 @@
+---
+# The dynamic cache service - the cache WAS keeps for servlets, JSP fragments,
+# commands and the DistributedMap an application looks up - and servlet
+# caching. Family 5, proprietary and extended APIs.
+#
+# REPLAYABLE ON ITS OWN. One replay, one wsadmin session; the module lists the
+# servers to restart, since these settings apply at server start.
+#
+#   dynamic_cache:
+#     enabled: true                  # DynamicCache.enable
+#     cache_size: 3000               # entries kept in memory - cacheSize
+#     default_priority: 1            # 1..255
+#     disk_offload: true             # spill what memory evicts to disk
+#     disk_offload_root: /var/was/dynacache   # one directory per server under it
+#     flush_to_disk_on_stop: false   # keep the memory cache across a restart
+#     servlet_caching: true          # WebContainer.enableServletCaching
+#
+# DISK OFFLOAD. Each server offloads to <disk_offload_root>/<node>/<server>:
+# members sharing one directory would overwrite each other's cache files, and
+# WAS accepts the shared path. A disk setting without disk_offload: true is
+# refused - WAS keeps it and never uses it.
+#
+# SERVLET CACHING caches nothing until an application ships a cachespec.xml;
+# the role says so.
+dynamic_cache: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+dynamic_cache_target: {}

@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: traditional_logging
+  author: neo
+  description: >-
+    Basic logging or HPEL, the trace specification, the HPEL repository and its purge, on every server of the target. Replayable on its own.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model and traditional.config are included where they are
+# used, so this role stays runnable on its own.
+dependencies: []

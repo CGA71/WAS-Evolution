@@ -159,6 +159,12 @@ STEPS=(
   "WAS lab - 14. EJB container and timers|$COL/traditional_ejb_container.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 15. CDI|$COL/traditional_cdi.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 16. JPA level and defaults|$COL/traditional_jpa.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 17. SSL configurations and signers|$COL/traditional_ssl.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 18. Global security and user registry|$COL/traditional_security.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 19. Web services policy sets|$COL/traditional_policy_sets.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 20. Dynamic cache|$COL/traditional_dynamic_cache.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 21. Logging, trace and HPEL|$COL/traditional_logging.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 22. PMI|$COL/traditional_pmi.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------

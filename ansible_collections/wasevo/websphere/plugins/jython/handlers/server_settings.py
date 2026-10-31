@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Handler for the settings every application server of a target carries:
-its transaction service, its EJB container, its JPA defaults, its JVM custom
-properties - and the cluster-wide settings that go with them.
+its transaction service, its EJB container, its JPA defaults, its dynamic
+cache, its logging and trace, its PMI service, its JVM custom properties -
+and the cluster-wide settings that go with them.
 
-ONE HANDLER FOR SEVERAL ROLES. The transactions, EJB container, CDI and JPA
-roles all set attributes on objects every server already has. What differs
+ONE HANDLER FOR SEVERAL ROLES. The transactions, EJB container, CDI, JPA,
+dynamic cache, logging and PMI roles all set attributes on objects every
+server already has. What differs
 is which objects and which attributes, and that is the role's business: the
 role translates an intent ("peer recovery", "no implicit bean archives") into
 WAS attributes, and this handler applies them, the same way, to every server
@@ -41,15 +43,31 @@ Five callables, same contract as every other handler - see cluster.py.
 """
 
 # type -> (parent type, created under the parent when missing)
-# Every server has the first four as soon as it exists. The JPA service is
+# Every server has all of them as soon as it exists, except the JPA service,
 # created on first use, which is what the IBM procedure for a default
-# persistence provider does.
+# persistence provider does. The parent of a service is the Server itself,
+# not its ApplicationServer component, as server.xml nests them.
 COMPONENTS = {
     "TransactionService": ("ApplicationServer", False),
     "EJBContainer": ("ApplicationServer", False),
     "EJBCache": ("EJBContainer", False),
     "EJBTimer": ("EJBContainer", False),
     "JavaPersistenceAPIService": ("ApplicationServer", True),
+    # Dynamic cache and servlet caching - family 5.
+    "DynamicCache": ("ApplicationServer", False),
+    "WebContainer": ("ApplicationServer", False),
+    # Logging and trace, in both modes - family 5. A server holds the basic
+    # mode's services and the HPEL ones at once; the enable flags say which
+    # one runs.
+    "RASLoggingService": ("Server", False),
+    "TraceService": ("Server", False),
+    "TraceLog": ("TraceService", False),
+    "HighPerformanceExtensibleLogging": ("Server", False),
+    "HPELLog": ("HighPerformanceExtensibleLogging", False),
+    "HPELTrace": ("HighPerformanceExtensibleLogging", False),
+    "HPELTextLog": ("HighPerformanceExtensibleLogging", False),
+    # Performance Monitoring Infrastructure - family 6.
+    "PMIService": ("Server", False),
 }
 
 

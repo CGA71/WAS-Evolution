@@ -1,0 +1,28 @@
+---
+# Global security and the active user registry, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Family 5, proprietary and extended APIs.
+# A registry change applies when the whole cell restarts - the deployment
+# manager, the node agents, the servers. The result says so; nothing here
+# restarts them. An LDAP over TLS needs its issuer in the trust store: run the
+# SSL job first.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: Global security and the active user registry, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: Global security and the active user registry
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.security

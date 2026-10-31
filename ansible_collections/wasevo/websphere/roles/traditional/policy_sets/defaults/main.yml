@@ -1,0 +1,28 @@
+---
+# Web services policy sets. Family 1, web services and REST.
+#
+# REPLAYABLE ON ITS OWN. A policy adjusted on the corporate copy is one replay
+# of this role.
+#
+#   policy_sets:
+#     - name: WSHTTPS default            # a product default, imported as it is
+#       from_default: WSHTTPS default
+#     - name: Corporate HTTPS            # a copy, adjusted
+#       copy_of: WSHTTPS default
+#       description: HTTPS for every partner service
+#       policies:                        # policy type -> attributes to set
+#         WSAddressing: {enabled: true}
+#     - name: Old partner set
+#       state: absent
+#
+# TWO WAYS IN. from_default imports a product default under its own name, and
+# it is never adjusted: the next import of it would put the product's version
+# back, and the adjustment would be gone without a word. copy_of copies a set
+# the cell holds - or one imported earlier in this list - and the copy is the
+# one adjusted. Only the attributes declared are compared and set.
+#
+# ATTACHMENTS are not here. A policy set is attached to an application's
+# services, which exist once it is deployed: that is the application
+# deployment, the last step. A set still attached to an application is refused
+# deletion, and the applications are named.
+policy_sets: []

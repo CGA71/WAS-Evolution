@@ -1,0 +1,33 @@
+---
+# Logging and trace: basic mode (SystemOut.log, trace.log) or HPEL - High
+# Performance Extensible Logging, a binary repository read with logViewer.
+# Family 5, proprietary and extended APIs.
+#
+# REPLAYABLE ON ITS OWN. Raising a trace level on a cluster is one replay of
+# this role; it applies at the next start of each server, which the module
+# lists. (A trace level changed at run time, without a restart, is an
+# operation, not configuration - this role writes what survives a restart.)
+#
+#   logging:
+#     mode: hpel                     # basic | hpel - required
+#     trace_spec: "*=info:com.example.*=fine"
+#     # hpel only
+#     repository_root: /var/was/logs   # one directory per server under it
+#     log_max_size: 500              # MB, then the oldest is purged
+#     log_max_age: 72h               # purged after - whole hours
+#     trace_max_size: 200            # MB
+#     text_log: true                 # also write the TextLog a human reads
+#     # basic only
+#     trace_file_size: 20            # MB per trace file
+#     trace_backups: 5               # trace files kept
+#
+# hpel turns the HPEL service on and the basic logging service off, in one
+# change - IBM's procedure. A setting of the other mode is refused: WAS keeps
+# it and never uses it. A trace specification that is not <component>=<level>
+# is refused before it reaches a server; *=all, *=finest, *=finer, *=fine are
+# accepted with a warning - every component of every member, traced.
+logging: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+logging_target: {}

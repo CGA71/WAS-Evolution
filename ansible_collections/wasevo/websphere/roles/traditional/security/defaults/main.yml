@@ -1,0 +1,58 @@
+---
+# Global security and the user registry. Family 5, proprietary and extended
+# APIs.
+#
+# REPLAYABLE ON ITS OWN. Moving the cell from its file registry to the
+# corporate LDAP is one replay of this role, then one restart of the cell -
+# which the module asks for, and does not do.
+#
+#   security:
+#     app_security: true             # application security
+#     java2_security: false          # Java 2 security - see the warning
+#     registry:
+#       type: ldap                   # federated | ldap | localos | custom
+#       primary_admin_id: wasadm     # must exist in the registry
+#       # federated only
+#       realm: defaultWIMFileBasedRealm
+#       # ldap only
+#       ldap:
+#         server_type: ACTIVE_DIRECTORY   # IBM_DIRECTORY_SERVER, IPLANET, NETSCAPE, NDS, ...
+#         hosts: [ad1.example.com:636, ad2.example.com:636]   # failover order
+#         base_dn: dc=example,dc=com
+#         bind_dn: cn=was-bind,ou=services,dc=example,dc=com
+#         bind_password_env: LDAP_BIND_PASSWORD   # the NAME of the variable
+#         ssl: true
+#         ssl_config: CellDefaultSSLSettings
+#         search_timeout: 2m
+#         reuse_connection: true
+#       # custom only
+#       custom:
+#         class: com.example.security.Registry
+#         properties: {usersFile: /etc/was/users}
+#
+# THE FOUR REGISTRIES. federated is the profile's own - a file repository, the
+# realm WAS calls defaultWIMFileBasedRealm. ldap is a standalone LDAP; its
+# issuer must be a signer of the trust store, which the ssl role retrieves
+# (run it first). localos checks passwords against the operating system, and
+# is refused on a cell whose nodes run on more than one host. custom is a
+# class of yours, which must be on the class path of every process.
+#
+# WHAT WAS ACCEPTS AND SHOULD NOT, refused before any session: administrative
+# security off; a registry made active without its administrator; an LDAP
+# without TLS (unless allow_plaintext: true says it is deliberate); a bind DN
+# without the variable that carries its password; settings of another registry
+# type, which WAS would keep and ignore.
+#
+# THE ADMINISTRATOR. After a registry change, wsadmin authenticates against
+# the new registry once the cell restarts: was_admin_user must then be a user
+# of it - usually primary_admin_id.
+security: {}
+
+# on_create: the bind password is written when the LDAP configuration is.
+# always:    on every run - how it is rotated. Every run then reports changed.
+security_password_policy: on_create
+
+# Have WAS check that primary_admin_id exists in the registry before saving -
+# for an LDAP, a bind and a search from the deployment manager. Turn it off
+# only for a registry the deployment manager cannot reach yet.
+security_verify_registry: true

@@ -10,19 +10,21 @@ __metaclass__ = type
 DOCUMENTATION = r"""
 ---
 module: was_server_settings
-short_description: Set the transaction, EJB container, JPA and JVM settings of every server of a target
+short_description: Set the settings every server of a target carries - transactions, EJB, JPA, cache, logging, PMI, JVM
 version_added: "0.4.0"
 description:
   - Sets attributes on the objects every application server carries - its
     transaction service, EJB container, EJB cache, EJB timer service, JPA
-    service - and JVM custom properties, on every server of a target, in one
-    C(wsadmin) session.
+    service, dynamic cache, web container, logging and trace services in
+    both modes, PMI service - and JVM custom properties, on every server of
+    a target, in one C(wsadmin) session.
   - A cluster target means the members the cell holds now, read from the
     cell, so a member added since the last run is caught up by a replay.
   - Also sets cluster attributes, such as transaction peer recovery, and the
     JPA specification level of the target.
-  - The transactions, EJB container, CDI and JPA roles drive it; each
-    translates an intent into the WAS attributes this module applies.
+  - The transactions, EJB container, CDI, JPA, dynamic cache, logging and
+    PMI roles drive it; each translates an intent into the WAS attributes
+    this module applies.
 notes:
   - Every declared attribute is checked against C(AdminConfig.attributes) for
     its type before anything is written; an unknown name is refused with the
@@ -53,7 +55,10 @@ options:
   components:
     description:
       - Configuration type to attributes. Types are C(TransactionService),
-        C(EJBContainer), C(EJBCache), C(EJBTimer), C(JavaPersistenceAPIService).
+        C(EJBContainer), C(EJBCache), C(EJBTimer), C(JavaPersistenceAPIService),
+        C(DynamicCache), C(WebContainer), C(RASLoggingService), C(TraceService),
+        C(TraceLog), C(HighPerformanceExtensibleLogging), C(HPELLog),
+        C(HPELTrace), C(HPELTextLog), C(PMIService).
       - Only the attributes named are compared and set.
     type: dict
     default: {}

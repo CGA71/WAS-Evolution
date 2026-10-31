@@ -9,15 +9,27 @@
 # a change is still one wsadmin session. Running this is the same work as
 # running its playbooks in order.
 #
-# Security and authentication - the J2C aliases today; the user registry
-# (federated repositories, standalone LDAP, local OS, custom), SSL and
-# keystores join them - and the shared libraries. Dynamic cache, logging and
-# HPEL join this family too.
+# Security and authentication - SSL first, since an LDAP over TLS is trusted
+# through a signer it retrieves; then global security and the user registry
+# (federated repositories, standalone LDAP, local OS, custom); then the J2C
+# aliases - and the shared libraries, the dynamic cache, logging and HPEL.
 #
 # The whole plane, every family in dependency order, is traditional_config.yml.
+
+- name: SSL configurations and signer certificates
+  import_playbook: traditional_ssl.yml
+
+- name: Global security and the active user registry
+  import_playbook: traditional_security.yml
 
 - name: The J2C authentication aliases
   import_playbook: traditional_j2c.yml
 
 - name: The shared libraries
   import_playbook: traditional_shared_libraries.yml
+
+- name: The dynamic cache service and servlet caching of every server
+  import_playbook: traditional_dynamic_cache.yml
+
+- name: The log and trace mode of every server
+  import_playbook: traditional_logging.yml

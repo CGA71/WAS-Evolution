@@ -1016,16 +1016,16 @@ playbook imports its roles' playbooks in order.
 | # | Family | Roles today | Family playbook | Next |
 |---|---|---|---|---|
 | 0 | Cell foundation | cluster, members (section 18) | `family_0_foundation.yml` | - |
-| 1 | Web services and REST - JAX-RS, JAX-WS, JAX-RPC | - | - | policy sets and bindings |
+| 1 | Web services and REST - JAX-RS, JAX-WS, JAX-RPC | policy sets | `family_1_web_services.yml` | attachments, with the application deployment |
 | 2 | Persistence and data - JPA, JDBC | JDBC, JPA | `family_2_persistence.yml` | - |
 | 3 | Enterprise components - EJB, CDI, JTA/JTS | transactions and peer recovery, EJB container and timers, CDI | `family_3_enterprise.yml` | - |
 | 4 | Messaging and integration - JMS | SIBus, JMS on the bus and on IBM MQ | `family_4_messaging.yml` | - |
-| 5 | Proprietary and extended APIs | J2C aliases, shared libraries | `family_5_extended.yml` | user registry (all four types), SSL, dynamic cache, logging and HPEL |
-| 6 | JMX and management - PMI, MBeans | - | - | PMI |
+| 5 | Proprietary and extended APIs | SSL and signers, security and the user registry (all four types), J2C aliases, shared libraries, dynamic cache, logging and HPEL | `family_5_extended.yml` | - |
+| 6 | JMX and management - PMI, MBeans | PMI | `family_6_management.yml` | - |
 | 7 | MicroProfile | - | - | phase 2, the Liberty back-end |
 
-Application deployment comes after all of them. A family with no role yet has
-no playbook: it gets one with its first role.
+Application deployment comes after all of them. Phase 1 has a role in every
+family but MicroProfile, which is phase 2.
 
 **Dependency order, not family order.** A datasource (family 2) presents a J2C
 alias (family 5), so `traditional_config.yml` runs the steps in the order they
@@ -1050,6 +1050,12 @@ names another scope when it needs one.
 | 14 | `traditional_ejb_container.yml` | EJB container, cache and timers | 3 |
 | 15 | `traditional_cdi.yml` | CDI | 3 |
 | 16 | `traditional_jpa.yml` | JPA level and defaults | 2 |
+| 17 | `traditional_ssl.yml` | SSL configurations and signers | 5 |
+| 18 | `traditional_security.yml` | global security and the user registry | 5 |
+| 19 | `traditional_policy_sets.yml` | web services policy sets | 1 |
+| 20 | `traditional_dynamic_cache.yml` | dynamic cache and servlet caching | 5 |
+| 21 | `traditional_logging.yml` | logging, trace and HPEL | 5 |
+| 22 | `traditional_pmi.yml` | PMI | 6 |
 
 ### J2C authentication aliases
 
@@ -1395,6 +1401,148 @@ replaces `{node}` and `{server}` for each server. Moving the log of a server
 holding in-doubt transactions loses them: change `log_root` with the cluster
 stopped or drained.
 
+### Security: the four user registries
+
+`security` configures one of the four registries WAS offers, makes it the
+active one, and sets administrative, application and Java 2 security - one
+role, one module, `was_security`, one wsadmin session.
+
+```yaml
+security:
+  app_security: true
+  registry:
+    type: ldap                      # federated | ldap | localos | custom
+    primary_admin_id: wasadm
+    ldap:
+      server_type: ACTIVE_DIRECTORY
+      hosts: [ad1.example.com:636, ad2.example.com:636]
+      base_dn: dc=example,dc=com
+      bind_dn: cn=was-bind,ou=services,dc=example,dc=com
+      bind_password_env: LDAP_BIND_PASSWORD
+      ssl: true
+```
+
+| Type | What it is | What it needs |
+|---|---|---|
+| `federated` | the profile's own: a file repository, realm `defaultWIMFileBasedRealm` | the administrator, the realm |
+| `ldap` | a standalone LDAP, hosts in failover order | server type, base DN, hosts; a bind DN with the variable carrying its password; TLS |
+| `localos` | the operating system's users | a cell on one host |
+| `custom` | a class of yours implementing `UserRegistry` | the class, on every process's class path; its properties |
+
+**Written with IBM's verbs, read from the configuration.**
+`configureAdmin<type>UserRegistry` configures the registry and, with
+`-verifyRegistry`, makes WAS check that the administrator exists in it before
+saving; `setAdminActiveSecuritySettings` activates it. What they wrote is read
+back from `security.xml` with AdminConfig, which is what a replay compares.
+The LDAP failover hosts and the custom registry's properties are made to
+match with AdminConfig, since the verbs set one host and no list.
+
+**The bind password** comes from a credential, by the name of the variable
+that carries it, like a J2C alias password, and is never in a result:
+`security_password_policy: on_create` writes it with the LDAP configuration,
+`always` on every run - the rotation.
+
+**What WAS accepts and should not**, refused before any session:
+
+| Mistake | What WAS does with it |
+|---|---|
+| administrative security off | serves every administrative request unauthenticated |
+| a registry made active without its administrator | locks every administrator out at the next start |
+| an LDAP without TLS (unless `allow_plaintext: true`) | sends the bind password and every user's password in clear |
+| a bind DN without the variable that carries its password | binds with an empty password, and fails later |
+| settings of another registry type | keeps them, and ignores them |
+| `localos` on a cell whose nodes run on several hosts (read from the cell) | checks each password against the operating system of whichever server answers |
+
+**The whole cell restarts** for a security change to apply - the deployment
+manager, the node agents, the servers. The module says so and restarts
+nothing. After a registry change, `was_admin_user` must be a user of the new
+registry: the role warns when it is not the registry's administrator.
+
+### SSL configurations and signers
+
+`ssl` manages SSL configurations at the cell or a node scope - key store,
+trust store, protocol, cipher strength, client authentication - and the signer
+certificates their trust stores need. `was_ssl_config`, one session.
+
+```yaml
+ssl:
+  configs:
+    - alias: CellDefaultSSLSettings
+      scope: cell
+      keystore: CellDefaultKeyStore
+      truststore: CellDefaultTrustStore
+      protocol: TLSv1.2
+      security_level: HIGH
+  signers:
+    - alias: corp-ldap-ca
+      host: ad1.example.com
+      port: 636
+```
+
+**Before security**, in the chain: an LDAP over TLS is trusted through a
+signer this role retrieves with `retrieveSignerFromPort`. A signer is
+compared by alias; a peer whose issuer changed is a signer declared absent,
+then present.
+
+Refused before any session: a protocol that negotiates below TLS 1.2 -
+`SSL_TLS`, `SSL_TLSv2`, `TLS`, `TLSv1`, `TLSv1.1`, any SSL; the accepted ones
+are `TLSv1.2`, `TLSv1.3` and `TLSv1.2,TLSv1.3` - security level `LOW` or
+`CUSTOM`, and deleting a default configuration of the profile. Refused by the
+cell: a key store the scope does not have, since key stores come with the
+profile or a certificate procedure this role does not stand in for.
+
+When the cell's `dynamicallyUpdateSSLConfig` is off, the module lists the
+cell to restart.
+
+### Dynamic cache, logging and HPEL, PMI
+
+Three more intents on `was_server_settings`, applied to every server of the
+target read from the cell, with the servers to restart listed - the same
+mechanism as the transactions, see the section above.
+
+```yaml
+dynamic_cache: { enabled: true, cache_size: 3000, disk_offload: true, disk_offload_root: /var/was/dynacache }
+logging:       { mode: hpel, trace_spec: "*=info", repository_root: /var/was/logs, log_max_size: 500, log_max_age: 72h }
+pmi:           { enabled: true, statistic_set: extended }
+```
+
+| Mistake | What WAS does with it |
+|---|---|
+| members sharing one disk offload directory | each overwrites the others' cache files - the role appends `<node>/<server>` to the root |
+| a disk offload setting without `disk_offload: true` | keeps it, never uses it |
+| a setting of the other logging mode | keeps it, never uses it |
+| a trace specification that is not `<component>=<level>` | starts the server with it |
+| PMI `custom` | needs a counter-by-counter specification this role does not carry |
+
+`hpel` turns the HPEL service on and basic logging off in one change, as
+IBM's procedure does; `*=all`, `*=finest`, `*=finer` and `*=fine` are
+accepted with a warning. The HPEL trace specification attribute
+(`startupTraceSpec`) is taken from `server.xml`; the handler checks it, like
+every name, against `AdminConfig.attributes` before writing.
+
+### Web services policy sets
+
+`policy_sets` imports product default policy sets and copies them to adjust
+the copies - `was_policy_set`, the PolicySetManagement verbs, one session.
+
+```yaml
+policy_sets:
+  - { name: WSHTTPS default, from_default: WSHTTPS default }
+  - name: Corporate HTTPS
+    copy_of: WSHTTPS default
+    policies: { WSAddressing: { enabled: true } }
+```
+
+**A default is never adjusted in place**: the next import of it would put the
+product's version back. Policies on a `from_default` set are refused, and so
+is a copy declared before its source. **Attachments belong to the application
+deployment**, the last step: a set still attached to an application is
+refused deletion, and the applications are named.
+
+**Not yet confirmed on a real cell**: the format in which `getPolicySet` and
+`getPolicyType` return their properties. The handler reads them as
+`{key=value, ...}`, the way wsadmin prints a Java `Properties`.
+
 ## 20. AWX
 
 AWX runs inside k3s on the Ubuntu host, deployed by the AWX Operator, pinned.
@@ -1482,6 +1630,13 @@ one.
 - [Configuring the runtime transaction service using scripting](https://www.ibm.com/support/knowledgecenter/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/txml_transaction.html)
 - [Identifying and modifying the JPA specification level](https://www.ibm.com/docs/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/tejb_idmod_jpaspec.html)
 - [Custom properties for improving application startup](https://www.ibm.com/support/pages/custom-properties-improving-application-startup-websphere-application-server)
+- [SecurityConfigurationCommands command group for the AdminTask object](https://www.ibm.com/docs/en/SSEQTP_8.5.5/com.ibm.websphere.base.doc/ae/rxml_7securityconfig.html)
+- [SSLConfigCommands command group for the AdminTask object (9.0.5)](https://www.ibm.com/support/knowledgecenter/SSAW57_9.0.5/com.ibm.websphere.nd.multiplatform.doc/ae/rxml_atsslconfig.html)
+- [SignerCertificateCommands command group (9.0.5)](https://www.ibm.com/docs/en/SSAW57_9.0.5/com.ibm.websphere.nd.multiplatform.doc/ae/rxml_atsignercert.html)
+- [Configuring HPEL with wsadmin scripting](https://www.ibm.com/docs/en/SSAW57_8.5.5/com.ibm.websphere.nd.multiplatform.doc/ae/ttrb_confHPELwsadmin.html)
+- [Changing from basic mode to HPEL logging and tracing (9.0.5)](https://www.ibm.com/docs/en/SSAW57_9.0.5/com.ibm.websphere.nd.multiplatform.doc/ae/ttrb_compToHPEL.html)
+- [Importing and exporting policy sets using wsadmin scripting](https://www.setgetweb.com/p/WAS9/ae/was6091.html)
+- [Managing policy set attachments using wsadmin scripting](https://setgetweb.com/p/WAS9/ae/was6092.html)
 
 Source-repository findings come from direct inspection of the seven archives in `github.com/CGA71/WAS`.
 
@@ -2502,16 +2657,16 @@ et le playbook d'une famille importe ceux de ses rôles dans l'ordre.
 | # | Famille | Rôles aujourd'hui | Playbook de famille | Ensuite |
 |---|---|---|---|---|
 | 0 | Socle de la cellule | cluster, membres (section 18) | `family_0_foundation.yml` | - |
-| 1 | Services web et REST - JAX-RS, JAX-WS, JAX-RPC | - | - | policy sets et bindings |
+| 1 | Services web et REST - JAX-RS, JAX-WS, JAX-RPC | policy sets | `family_1_web_services.yml` | attachements, avec le déploiement d'application |
 | 2 | Persistance et données - JPA, JDBC | JDBC, JPA | `family_2_persistence.yml` | - |
 | 3 | Composants d'entreprise - EJB, CDI, JTA/JTS | transactions et reprise par un pair, conteneur EJB et minuteurs, CDI | `family_3_enterprise.yml` | - |
 | 4 | Messagerie et intégration - JMS | SIBus, JMS sur le bus et sur IBM MQ | `family_4_messaging.yml` | - |
-| 5 | API propriétaires et étendues | alias J2C, bibliothèques partagées | `family_5_extended.yml` | registre d'utilisateurs (les quatre types), SSL, cache dynamique, logging et HPEL |
-| 6 | JMX et administration - PMI, MBeans | - | - | PMI |
+| 5 | API propriétaires et étendues | SSL et signataires, sécurité et registre d'utilisateurs (les quatre types), alias J2C, bibliothèques partagées, cache dynamique, logging et HPEL | `family_5_extended.yml` | - |
+| 6 | JMX et administration - PMI, MBeans | PMI | `family_6_management.yml` | - |
 | 7 | MicroProfile | - | - | phase 2, le back-end Liberty |
 
-Le déploiement d'application vient après toutes. Une famille sans rôle n'a pas
-encore de playbook : elle en reçoit un avec son premier rôle.
+Le déploiement d'application vient après toutes. La phase 1 a un rôle dans
+chaque famille sauf MicroProfile, qui est la phase 2.
 
 **L'ordre des dépendances, pas celui des familles.** Une datasource (famille 2)
 présente un alias J2C (famille 5) : `traditional_config.yml` enchaîne donc les
@@ -2538,6 +2693,12 @@ elle en a besoin.
 | 14 | `traditional_ejb_container.yml` | conteneur EJB, cache et minuteurs | 3 |
 | 15 | `traditional_cdi.yml` | CDI | 3 |
 | 16 | `traditional_jpa.yml` | niveau et défauts JPA | 2 |
+| 17 | `traditional_ssl.yml` | configurations SSL et signataires | 5 |
+| 18 | `traditional_security.yml` | sécurité globale et registre d'utilisateurs | 5 |
+| 19 | `traditional_policy_sets.yml` | policy sets des services web | 1 |
+| 20 | `traditional_dynamic_cache.yml` | cache dynamique et cache de servlets | 5 |
+| 21 | `traditional_logging.yml` | logging, trace et HPEL | 5 |
+| 22 | `traditional_pmi.yml` | PMI | 6 |
 
 ### Alias d'authentification J2C
 
@@ -2904,6 +3065,153 @@ membres montent ; le journal de chaque serveur va dans
 `{server}` pour chaque serveur. Déplacer le journal d'un serveur qui porte des
 transactions en doute les perd : changer `log_root` cluster arrêté ou drainé.
 
+### Sécurité : les quatre registres d'utilisateurs
+
+`security` configure l'un des quatre registres que WAS propose, le rend actif,
+et règle la sécurité administrative, applicative et Java 2 - un rôle, un
+module, `was_security`, une session wsadmin.
+
+```yaml
+security:
+  app_security: true
+  registry:
+    type: ldap                      # federated | ldap | localos | custom
+    primary_admin_id: wasadm
+    ldap:
+      server_type: ACTIVE_DIRECTORY
+      hosts: [ad1.example.com:636, ad2.example.com:636]
+      base_dn: dc=example,dc=com
+      bind_dn: cn=was-bind,ou=services,dc=example,dc=com
+      bind_password_env: LDAP_BIND_PASSWORD
+      ssl: true
+```
+
+| Type | Ce que c'est | Ce qu'il demande |
+|---|---|---|
+| `federated` | celui du profil : un référentiel fichier, realm `defaultWIMFileBasedRealm` | l'administrateur, le realm |
+| `ldap` | un LDAP autonome, hôtes dans l'ordre de bascule | type de serveur, base DN, hôtes ; un bind DN avec la variable qui porte son mot de passe ; TLS |
+| `localos` | les utilisateurs du système d'exploitation | une cellule sur un seul hôte |
+| `custom` | une classe à vous qui implémente `UserRegistry` | la classe, dans le class path de chaque processus ; ses propriétés |
+
+**Écrit avec les verbes IBM, relu dans la configuration.**
+`configureAdmin<type>UserRegistry` configure le registre et, avec
+`-verifyRegistry`, fait vérifier par WAS que l'administrateur y existe avant
+d'enregistrer ; `setAdminActiveSecuritySettings` l'active. Ce qu'ils ont écrit
+est relu dans `security.xml` par AdminConfig, et c'est ce qu'un rejeu compare.
+Les hôtes de bascule LDAP et les propriétés du registre personnalisé sont mis
+en conformité par AdminConfig, les verbes ne posant qu'un hôte et aucune
+liste.
+
+**Le mot de passe de bind** vient d'un credential, par le nom de la variable
+qui le porte, comme celui d'un alias J2C, et n'apparaît dans aucun résultat :
+`security_password_policy: on_create` l'écrit avec la configuration LDAP,
+`always` à chaque run - la rotation.
+
+**Ce que WAS accepte et ne devrait pas**, refusé avant toute session :
+
+| Erreur | Ce qu'en fait WAS |
+|---|---|
+| la sécurité administrative coupée | sert toute requête d'administration sans authentification |
+| un registre rendu actif sans son administrateur | enferme dehors tous les administrateurs au démarrage suivant |
+| un LDAP sans TLS (sauf `allow_plaintext: true`) | envoie en clair le mot de passe de bind et celui de chaque utilisateur |
+| un bind DN sans la variable qui porte son mot de passe | se lie avec un mot de passe vide, et échoue plus tard |
+| des réglages d'un autre type de registre | les garde, et les ignore |
+| `localos` sur une cellule dont les nœuds tournent sur plusieurs hôtes (lu dans la cellule) | vérifie chaque mot de passe auprès du système du serveur qui répond |
+
+**Toute la cellule redémarre** pour qu'un changement de sécurité s'applique -
+le gestionnaire de déploiement, les agents de nœud, les serveurs. Le module le
+dit et ne redémarre rien. Après un changement de registre, `was_admin_user`
+doit être un utilisateur du nouveau registre : le rôle prévient quand ce n'est
+pas son administrateur.
+
+### Configurations SSL et signataires
+
+`ssl` gère les configurations SSL à la portée cellule ou nœud - magasin de
+clés, magasin de confiance, protocole, force de chiffrement, authentification
+du client - et les certificats signataires dont leurs magasins de confiance
+ont besoin. `was_ssl_config`, une session.
+
+```yaml
+ssl:
+  configs:
+    - alias: CellDefaultSSLSettings
+      scope: cell
+      keystore: CellDefaultKeyStore
+      truststore: CellDefaultTrustStore
+      protocol: TLSv1.2
+      security_level: HIGH
+  signers:
+    - alias: corp-ldap-ca
+      host: ad1.example.com
+      port: 636
+```
+
+**Avant la sécurité**, dans la chaîne : un LDAP sur TLS est approuvé par un
+signataire que ce rôle récupère avec `retrieveSignerFromPort`. Un signataire
+se compare par son alias ; un pair qui a changé d'émetteur est un signataire
+déclaré absent, puis présent.
+
+Refusé avant toute session : un protocole qui négocie sous TLS 1.2 -
+`SSL_TLS`, `SSL_TLSv2`, `TLS`, `TLSv1`, `TLSv1.1`, tout SSL ; ceux acceptés
+sont `TLSv1.2`, `TLSv1.3` et `TLSv1.2,TLSv1.3` - le niveau de sécurité `LOW`
+ou `CUSTOM`, et la suppression d'une configuration par défaut du profil.
+Refusé par la cellule : un magasin de clés que la portée n'a pas, les magasins
+venant du profil ou d'une procédure de certificats que ce rôle ne remplace
+pas.
+
+Quand `dynamicallyUpdateSSLConfig` est coupé dans la cellule, le module liste
+la cellule à redémarrer.
+
+### Cache dynamique, logging et HPEL, PMI
+
+Trois intentions de plus sur `was_server_settings`, appliquées à chaque
+serveur de la cible lue dans la cellule, avec les serveurs à redémarrer
+listés - le même mécanisme que les transactions, voir la section précédente.
+
+```yaml
+dynamic_cache: { enabled: true, cache_size: 3000, disk_offload: true, disk_offload_root: /var/was/dynacache }
+logging:       { mode: hpel, trace_spec: "*=info", repository_root: /var/was/logs, log_max_size: 500, log_max_age: 72h }
+pmi:           { enabled: true, statistic_set: extended }
+```
+
+| Erreur | Ce qu'en fait WAS |
+|---|---|
+| des membres partageant un répertoire de déchargement disque | chacun écrase les fichiers de cache des autres - le rôle ajoute `<nœud>/<serveur>` à la racine |
+| un réglage de déchargement disque sans `disk_offload: true` | le garde, ne s'en sert jamais |
+| un réglage de l'autre mode de logging | le garde, ne s'en sert jamais |
+| une spécification de trace qui n'est pas `<composant>=<niveau>` | démarre le serveur avec |
+| PMI `custom` | demande une spécification compteur par compteur que ce rôle ne porte pas |
+
+`hpel` allume le service HPEL et éteint le logging basique en un seul
+changement, comme la procédure IBM ; `*=all`, `*=finest`, `*=finer` et
+`*=fine` sont acceptés avec un avertissement. L'attribut de spécification de
+trace HPEL (`startupTraceSpec`) est pris dans `server.xml` ; le handler le
+vérifie, comme chaque nom, auprès d'`AdminConfig.attributes` avant d'écrire.
+
+### Policy sets des services web
+
+`policy_sets` importe des policy sets par défaut du produit et les copie pour
+ajuster les copies - `was_policy_set`, les verbes PolicySetManagement, une
+session.
+
+```yaml
+policy_sets:
+  - { name: WSHTTPS default, from_default: WSHTTPS default }
+  - name: Corporate HTTPS
+    copy_of: WSHTTPS default
+    policies: { WSAddressing: { enabled: true } }
+```
+
+**Un défaut ne s'ajuste jamais sur place** : le prochain import remettrait la
+version du produit. Des policies sur un set `from_default` sont refusées, de
+même qu'une copie déclarée avant sa source. **Les attachements relèvent du
+déploiement d'application**, la dernière étape : un set encore attaché à une
+application est refusé à la suppression, et les applications sont nommées.
+
+**Pas encore confirmé sur une vraie cellule** : le format dans lequel
+`getPolicySet` et `getPolicyType` rendent leurs propriétés. Le handler les lit
+comme `{clé=valeur, ...}`, la façon dont wsadmin imprime des `Properties` Java.
+
 ## 20. AWX
 
 AWX tourne dans k3s sur l'hôte Ubuntu, déployé par l'AWX Operator, en version
@@ -2992,5 +3300,12 @@ chemin et n'en est pas une.
 - [Configuring the runtime transaction service using scripting](https://www.ibm.com/support/knowledgecenter/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/txml_transaction.html)
 - [Identifying and modifying the JPA specification level](https://www.ibm.com/docs/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/tejb_idmod_jpaspec.html)
 - [Custom properties for improving application startup](https://www.ibm.com/support/pages/custom-properties-improving-application-startup-websphere-application-server)
+- [SecurityConfigurationCommands command group for the AdminTask object](https://www.ibm.com/docs/en/SSEQTP_8.5.5/com.ibm.websphere.base.doc/ae/rxml_7securityconfig.html)
+- [SSLConfigCommands command group for the AdminTask object (9.0.5)](https://www.ibm.com/support/knowledgecenter/SSAW57_9.0.5/com.ibm.websphere.nd.multiplatform.doc/ae/rxml_atsslconfig.html)
+- [SignerCertificateCommands command group (9.0.5)](https://www.ibm.com/docs/en/SSAW57_9.0.5/com.ibm.websphere.nd.multiplatform.doc/ae/rxml_atsignercert.html)
+- [Configuring HPEL with wsadmin scripting](https://www.ibm.com/docs/en/SSAW57_8.5.5/com.ibm.websphere.nd.multiplatform.doc/ae/ttrb_confHPELwsadmin.html)
+- [Changing from basic mode to HPEL logging and tracing (9.0.5)](https://www.ibm.com/docs/en/SSAW57_9.0.5/com.ibm.websphere.nd.multiplatform.doc/ae/ttrb_compToHPEL.html)
+- [Importing and exporting policy sets using wsadmin scripting](https://www.setgetweb.com/p/WAS9/ae/was6091.html)
+- [Managing policy set attachments using wsadmin scripting](https://setgetweb.com/p/WAS9/ae/was6092.html)
 
 Les relevés sur le dépôt source proviennent de l'inspection directe des sept archives de `github.com/CGA71/WAS`.

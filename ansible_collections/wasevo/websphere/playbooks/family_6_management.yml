@@ -1,0 +1,18 @@
+---
+# Family 6 - JMX and management: PMI, MBeans.
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# A FAMILY IS A CATALOGUE, NOT A ROLE. It imports the playbooks of its roles,
+# in the order they need each other, and defines none of them: each role keeps
+# its own playbook and its own AWX job template, and replaying one role after
+# a change is still one wsadmin session. Running this is the same work as
+# running its playbooks in order.
+#
+# PMI today - the counters every monitoring agent reads. Its settings apply
+# at server start: the job lists the servers to restart.
+
+# The whole plane, every family in dependency order, is traditional_config.yml.
+
+- name: The Performance Monitoring Infrastructure of every server
+  import_playbook: traditional_pmi.yml
