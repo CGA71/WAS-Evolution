@@ -61,6 +61,12 @@ Wave 0, the foundation. Nothing in production changes.
   space, an activation spec on a JNDI nothing carries or of the wrong type, a
   missing alias, a JNDI name used twice; accepts an activation spec listening
   across scopes, as WAS does.
+- `was_jms` on IBM MQ, `provider: mq`: the same four kinds through the
+  WMQAdminCommands verbs, a second table in the same handler. The queue
+  manager and its connection are declared once in `jms.mq_connection`.
+  Compares only the fields a resource declares, since WAS fills and shows the
+  MQ connection attributes nobody set. Refuses a CLIENT transport with no
+  host and no connection name list.
 - `handlers/_scope.py`: scope resolution shared by every resource handler.
 - `plugins/filter/traditional.py`: the traditional rendering of the shared
   model, as pure functions the stub tests call directly.

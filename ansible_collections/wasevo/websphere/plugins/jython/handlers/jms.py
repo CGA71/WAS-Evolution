@@ -21,6 +21,8 @@ WHAT WAS ACCEPTS AND SHOULD NOT, refused before anything is written:
     deploys, starts, and never receives anything
   - a J2C alias that does not exist
   - two resources on one JNDI name - the lookup returns whichever bound last
+  - on IBM MQ, a CLIENT transport with neither a host nor a connection name
+    list - WAS saves it, and the first connection fails
 
 In a check run the bus and its destinations may be a future, created by the
 bus step of the same run in check mode too; then those checks stand down.
@@ -34,7 +36,10 @@ KINDS = ("connection_factories", "queues", "topics", "activation_specs")
 
 # A field: (declaration key, WAS key, default, compared after creation).
 # Fields compared False are applied at creation only - a connection factory's
-# type, for instance, cannot be changed in place.
+# type, for instance, cannot be changed in place. A compared field with an
+# empty default is compared only when the resource declares it: WAS fills
+# such attributes with its own defaults (an MQ port, a channel), and comparing
+# them against nothing would report a change on every replay.
 PROVIDERS = {
     "sib": {
         "connection_factories": {
@@ -87,7 +92,77 @@ PROVIDERS = {
             ),
         },
     },
+    # IBM MQ. The verbs and parameter names are those of the WMQAdminCommands
+    # group (createWMQConnectionFactory, createWMQQueue, createWMQTopic,
+    # createWMQActivationSpec); the show* keys are assumed to be the parameter
+    # names, which the first run against a real cell confirms.
+    "mq": {
+        "connection_factories": {
+            "verbs": ("listWMQConnectionFactories", "showWMQConnectionFactory",
+                      "createWMQConnectionFactory", "modifyWMQConnectionFactory",
+                      "deleteWMQConnectionFactory"),
+            "fields": (
+                ("jndi_name", "jndiName", "", True),
+                ("type", "type", "CF", False),
+                ("qmgr", "qmgrName", "", True),
+                ("transport", "wmqTransportType", "BINDINGS_THEN_CLIENT", True),
+                ("host", "qmgrHostname", "", True),
+                ("port", "qmgrPortNumber", "", True),
+                ("channel", "qmgrSvrconnChannel", "", True),
+                ("connection_list", "connectionNameList", "", True),
+                ("auth_alias", "containerAuthAlias", "", True),
+                ("description", "description", "", True),
+            ),
+        },
+        "queues": {
+            "verbs": ("listWMQQueues", "showWMQQueue",
+                      "createWMQQueue", "modifyWMQQueue", "deleteWMQQueue"),
+            "fields": (
+                ("jndi_name", "jndiName", "", True),
+                ("queue", "queueName", "", True),
+                ("qmgr", "qmgr", "", True),
+                ("persistence", "persistence", "APP", True),
+                ("description", "description", "", True),
+            ),
+        },
+        "topics": {
+            "verbs": ("listWMQTopics", "showWMQTopic",
+                      "createWMQTopic", "modifyWMQTopic", "deleteWMQTopic"),
+            "fields": (
+                ("jndi_name", "jndiName", "", True),
+                ("topic_name", "topicName", "", True),
+                ("persistence", "persistence", "APP", True),
+                ("description", "description", "", True),
+            ),
+        },
+        "activation_specs": {
+            "verbs": ("listWMQActivationSpecs", "showWMQActivationSpec",
+                      "createWMQActivationSpec", "modifyWMQActivationSpec",
+                      "deleteWMQActivationSpec"),
+            "fields": (
+                ("jndi_name", "jndiName", "", True),
+                ("destination_jndi", "destinationJndiName", "", True),
+                ("destination_type", "destinationType", "javax.jms.Queue", True),
+                ("qmgr", "qmgrName", "", True),
+                ("transport", "wmqTransportType", "BINDINGS_THEN_CLIENT", True),
+                ("host", "qmgrHostname", "", True),
+                ("port", "qmgrPortNumber", "", True),
+                ("channel", "qmgrSvrconnChannel", "", True),
+                ("connection_list", "connectionNameList", "", True),
+                ("max_concurrency", "maxPoolSize", "10", True),
+                ("auth_alias", "authAlias", "", True),
+                ("description", "description", "", True),
+            ),
+        },
+    },
 }
+
+
+def _compared(table, kind, resource):
+    """The compared fields of a kind that apply to this resource."""
+    for key, was_key, default, compared in table[kind]["fields"]:
+        if compared and (default != "" or key in resource):
+            yield key, was_key, default
 
 
 def _parse_show(text):
@@ -130,17 +205,15 @@ def _live(admin, table, kind, scope_id):
 
 def _desired(table, kind, resource):
     out = {"name": resource["name"]}
-    for key, was_key, default, compared in table[kind]["fields"]:
-        if compared:
-            out[key] = str(resource.get(key, default) or default)
+    for key, was_key, default in _compared(table, kind, resource):
+        out[key] = str(resource.get(key, default) or default)
     return out
 
 
-def _seen(table, kind, name, shown):
-    out = {"name": name}
-    for key, was_key, default, compared in table[kind]["fields"]:
-        if compared:
-            out[key] = str(shown.get(was_key, "") or default)
+def _seen(table, kind, resource, shown):
+    out = {"name": resource["name"]}
+    for key, was_key, default in _compared(table, kind, resource):
+        out[key] = str(shown.get(was_key, "") or default)
     return out
 
 
@@ -153,7 +226,7 @@ def read(admin, params):
     for kind in KINDS:
         live = _live(admin, table, kind, scope_id)
         before[kind] = sorted(
-            [_seen(table, kind, r["name"], live[r["name"]][1])
+            [_seen(table, kind, r, live[r["name"]][1])
              for r in params.get(kind) or [] if r["name"] in live],
             key=lambda r: r["name"],
         )
@@ -229,6 +302,18 @@ def _refuse(admin, params, before):
                 "activation spec %s expects a %s at %s, which is a %s"
                 % (spec["name"], wanted, target, carried[target])
             )
+
+    # On IBM MQ, CLIENT goes over the network and needs somewhere to go.
+    for kind in ("connection_factories", "activation_specs"):
+        for resource in params.get(kind) or []:
+            if (params.get("provider", "sib") == "mq"
+                    and resource.get("transport") == "CLIENT"
+                    and not resource.get("host") and not resource.get("connection_list")):
+                raise ValueError(
+                    "%s uses the CLIENT transport with neither a host nor a "
+                    "connection_list. WAS would save it, and the first "
+                    "connection would fail." % resource["name"]
+                )
 
     if admin.get("check_mode"):
         return
@@ -349,7 +434,7 @@ def write_present(admin, params, before):
                 )
                 continue
             config_id, shown = live[resource["name"]]
-            current = _seen(table, kind, resource["name"], shown)
+            current = _seen(table, kind, resource, shown)
             wanted = _desired(table, kind, resource)
             different = [k for k in wanted if k != "name" and wanted[k] != current.get(k)]
             if different:

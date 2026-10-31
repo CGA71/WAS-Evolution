@@ -17,14 +17,16 @@ description:
     one scope - connection factories, queues, topics, activation
     specifications - in one C(wsadmin) session.
   - The provider is the default messaging provider, C(sib), whose resources
-    run on a service integration bus.
+    run on a service integration bus, or IBM MQ, C(mq), whose resources name a
+    queue manager.
 notes:
   - Refused before anything is written, because WAS accepts them and the
     application meets the mistake at runtime - a JMS queue whose bus
     destination does not exist or is a topic space; a JMS topic whose topic
     space is not one; an activation specification listening on a JNDI name no
     queue or topic carries, or carrying the wrong type; a J2C alias that does
-    not exist; two resources on one JNDI name.
+    not exist; two resources on one JNDI name; on IBM MQ, a CLIENT transport
+    with neither a host nor a connection name list.
   - In a check run the bus and its destinations may not exist yet - the bus
     step of the same run created nothing either - and those checks stand down.
   - Only the fields a resource declares are compared. A connection factory's
@@ -55,28 +57,40 @@ options:
   provider:
     description: The messaging provider.
     type: str
-    choices: [sib]
+    choices: [sib, mq]
     default: sib
   connection_factories:
-    description: Connection factories - C(name), C(jndi_name), C(bus), C(auth_alias), C(type) (queue, topic, or unified when omitted), C(description).
+    description:
+      - Connection factories - C(name), C(jndi_name), C(auth_alias), C(type), C(description).
+      - On C(sib), C(bus); C(type) is queue, topic, or unified when omitted.
+      - On C(mq), C(qmgr), C(transport) (BINDINGS, CLIENT, BINDINGS_THEN_CLIENT),
+        C(host), C(port), C(channel), C(connection_list); C(type) is CF, QCF or TCF.
     type: list
     elements: dict
     default: []
   queues:
-    description: JMS queues - C(name), C(jndi_name), C(queue) (the bus queue destination), C(bus), C(delivery_mode), C(description).
+    description:
+      - JMS queues - C(name), C(jndi_name), C(queue), C(description).
+      - On C(sib), C(queue) is the bus queue destination, with C(bus) and C(delivery_mode).
+      - On C(mq), C(queue) is the queue on the queue manager, with C(qmgr) and C(persistence).
     type: list
     elements: dict
     default: []
   topics:
-    description: JMS topics - C(name), C(jndi_name), C(topic_space), C(topic_name), C(bus), C(delivery_mode), C(description).
+    description:
+      - JMS topics - C(name), C(jndi_name), C(topic_name), C(description).
+      - On C(sib), C(topic_space), C(bus) and C(delivery_mode).
+      - On C(mq), C(persistence).
     type: list
     elements: dict
     default: []
   activation_specs:
     description:
       - Activation specifications - C(name), C(jndi_name), C(destination_jndi),
-        C(destination_type) (javax.jms.Queue or javax.jms.Topic), C(bus),
+        C(destination_type) (javax.jms.Queue or javax.jms.Topic),
         C(max_concurrency), C(auth_alias), C(description).
+      - On C(sib), C(bus). On C(mq), the connection keys of a connection
+        factory, and C(max_concurrency) is the server session pool size.
     type: list
     elements: dict
     default: []
@@ -181,7 +195,7 @@ def main():
     argument_spec = dict(WSADMIN_COMMON_ARGS)
     argument_spec.update(
         scope=dict(type="dict", required=True, options=SCOPE_SPEC),
-        provider=dict(type="str", default="sib", choices=["sib"]),
+        provider=dict(type="str", default="sib", choices=["sib", "mq"]),
         connection_factories=dict(type="list", elements="dict", default=[]),
         queues=dict(type="list", elements="dict", default=[]),
         topics=dict(type="list", elements="dict", default=[]),

@@ -310,7 +310,12 @@ def sibus_specs(sibuses, cluster_name):
 
 
 JMS_KINDS = ("connection_factories", "queues", "topics", "activation_specs")
-JMS_PROVIDERS = ("sib",)
+JMS_PROVIDERS = ("sib", "mq")
+
+# What every IBM MQ connection factory and activation spec of a run usually
+# shares - the queue manager and how to reach it. Declared once under
+# jms.mq_connection; a resource's own key wins.
+MQ_CONNECTION_KEYS = ("qmgr", "transport", "host", "port", "channel", "connection_list")
 
 
 def jms_groups(jms, default_scope, cluster_name, cell_name, default_provider="sib"):
@@ -323,6 +328,9 @@ def jms_groups(jms, default_scope, cluster_name, cell_name, default_provider="si
     scope: WAS resolves the JNDI name through the scopes, and a check confined
     to one group would refuse a valid configuration.
 
+    IBM MQ connection factories and activation specs take the keys of
+    jms.mq_connection they do not set themselves.
+
     Returns {"groups": [...], "errors": [...]}.
     """
     groups = []
@@ -330,6 +338,11 @@ def jms_groups(jms, default_scope, cluster_name, cell_name, default_provider="si
     errors = []
     known = {}
     jndi_owner = {}
+    mq_connection = dict((k, v) for k, v in ((jms or {}).get("mq_connection") or {}).items()
+                         if k in MQ_CONNECTION_KEYS)
+    for key in sorted(((jms or {}).get("mq_connection") or {})):
+        if key not in MQ_CONNECTION_KEYS:
+            errors.append("mq_connection: %s is not one of %s" % (key, ", ".join(MQ_CONNECTION_KEYS)))
 
     for kind in JMS_KINDS:
         for resource in (jms or {}).get(kind) or []:
@@ -361,6 +374,19 @@ def jms_groups(jms, default_scope, cluster_name, cell_name, default_provider="si
             if provider == "sib" and not resource.get("bus"):
                 errors.append("%s: a default messaging resource names its bus" % name)
                 continue
+            if provider == "mq":
+                if resource.get("bus"):
+                    errors.append("%s: an IBM MQ resource has no bus - it names a queue manager" % name)
+                    continue
+                if kind == "queues" and not resource.get("queue"):
+                    errors.append("%s: an IBM MQ queue names its queue on the queue manager" % name)
+                    continue
+                if kind == "topics" and not resource.get("topic_name"):
+                    errors.append("%s: an IBM MQ topic names its topic string" % name)
+                    continue
+                if kind in ("connection_factories", "activation_specs"):
+                    for key, value in mq_connection.items():
+                        resource.setdefault(key, value)
             scope = resolve_scope(resource.pop("scope", None), default_scope, cluster_name, cell_name)
             key = _scope_key(scope) + "|" + provider
             if key not in by_key:
