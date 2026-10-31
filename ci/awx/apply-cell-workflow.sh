@@ -17,9 +17,10 @@
 #
 # WHAT IT HOLDS AND WHERE IT COMES FROM
 #
-#   Kubernetes credential   the token of ServiceAccount awx-cell-platform
-#                           (ci/k3s/30-awx-cell-platform.yml), read from the
-#                           cluster - never from this repository.
+#   Kubernetes credential   the token of ServiceAccount awx-cell-platform,
+#                           read from the cluster once the operator has applied
+#                           ci/k3s/30-awx-cell-platform.yml - this script never
+#                           grants rights on the cluster itself.
 #   WAS administrator       user wasadmin, its password generated once into the
 #                           Secret awx/was-cell-admin and injected by an AWX
 #                           credential. Read it with:
@@ -109,15 +110,18 @@ fi
 # ---------------------------------------------------------------------------
 say "Cluster access for the platform jobs"
 # ---------------------------------------------------------------------------
-kubectl apply -f "$ROOT/ci/k3s/30-awx-cell-platform.yml" >/dev/null
-for _ in $(seq 1 30); do
-    TOKEN="$(kubectl -n awx get secret awx-cell-platform-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
-    [ -n "$TOKEN" ] && break
-    sleep 1
-done
-[ -n "${TOKEN:-}" ] || die "the ServiceAccount token was not issued"
-CA="$(kubectl -n awx get secret awx-cell-platform-token -o jsonpath='{.data.ca\.crt}' | base64 -d)"
-ok "ServiceAccount awx-cell-platform and its token"
+# Granting the jobs rights on the cluster is the operator's act, not this
+# script's: kubectl apply -f ci/k3s/30-awx-cell-platform.yml. Without it the
+# workflow is declared all the same; the Kubernetes credential is added on the
+# next run, once the token exists.
+TOKEN="$(kubectl -n awx get secret awx-cell-platform-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
+if [ -n "$TOKEN" ]; then
+    CA="$(kubectl -n awx get secret awx-cell-platform-token -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+    ok "ServiceAccount awx-cell-platform and its token"
+else
+    note "no token yet: kubectl apply -f ci/k3s/30-awx-cell-platform.yml, then run this again"
+    note "jobs 1, 2 and 9 cannot reach the cluster until then"
+fi
 
 # ---------------------------------------------------------------------------
 say "The WAS administrator"
@@ -170,8 +174,9 @@ print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]),
   "description": "Token of ServiceAccount awx/awx-cell-platform - ci/k3s/30-awx-cell-platform.yml",
   "inputs": {"host": "https://kubernetes.default.svc", "bearer_token": sys.argv[4],
              "verify_ssl": True, "ssl_ca_cert": sys.argv[5]}}))' \
-  "$K8S_CRED" "$ORG_ID" "$K8S_CT_ID" "$TOKEN" "$CA" > "$BODY"
-K8S_CRED_ID="$(upsert credentials "$K8S_CRED")"
+  "$K8S_CRED" "$ORG_ID" "$K8S_CT_ID" "$TOKEN" "${CA:-}" > "$BODY"
+K8S_CRED_ID=""
+[ -z "$TOKEN" ] || K8S_CRED_ID="$(upsert credentials "$K8S_CRED")"
 
 py 'import json,sys
 print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]),
@@ -232,7 +237,7 @@ print(json.dumps(b))' "$name" "$playbook" "$become" "$extra" "$INV_ID" "$PROJECT
     for cred in "$MACHINE_CRED_ID" "$WAS_CRED_ID"; do
         api POST "/job_templates/$jt/credentials/" -d "{\"id\": $cred}" >/dev/null || true
     done
-    if [ "$k8s" = "k8s" ]; then
+    if [ "$k8s" = "k8s" ] && [ -n "$K8S_CRED_ID" ]; then
         api POST "/job_templates/$jt/credentials/" -d "{\"id\": $K8S_CRED_ID}" >/dev/null || true
     fi
     JT_IDS+=("$jt")
