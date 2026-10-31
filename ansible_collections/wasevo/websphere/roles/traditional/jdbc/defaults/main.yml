@@ -1,0 +1,38 @@
+---
+# JDBC providers and datasources, rendered from the shared model.
+#
+# REPLAYABLE ON ITS OWN. Correcting a pool size, a JNDI name or a custom
+# property is one replay of this role: no cluster rebuilt, no alias touched,
+# no application redeployed.
+
+# The datasources - declared in the shared model, layer 1, the same
+# declaration the Liberty back-end renders into server.xml:
+#
+#   datasources:
+#     - name: as400Extranet
+#       jndi_name: jdbc/as400/extranet
+#       vendor: db2_i_toolbox            # roles/model/vars/jdbc_vendors.yml
+#       driver_dir: /app/binaries/was90/jdbcprovider
+#       driver_jar: jt400.jar
+#       auth_alias: as400ExtranetAlias   # created by the J2C job, before this
+#       statement_cache_size: 20
+#       properties: { databaseName: EXTRANET, serverName: as400.example.internal }
+#       pool: { maxPoolSize: 30, minPoolSize: 5, connectionTimeout: 30s, maxIdleTime: 1800s }
+#
+# Optional, traditional only: `scope:` to leave the default below, `provider:`
+# to share one provider between datasources, `helper:` and `provider_type:` to
+# override what jdbc_vendors.yml says for this datasource.
+datasources: []
+
+# Where a datasource lives when it does not say. The cluster, because every
+# member of it - vertical or horizontal, today's or tomorrow's - then sees the
+# datasource. A short form is accepted for a named-by-the-run scope:
+#   jdbc_scope: cell          the run's cell
+#   jdbc_scope: { type: server, node: EXTNode01, server: ClusterEXT01_EXTNode01_01 }
+jdbc_scope:
+  type: cluster
+
+# present creates and updates - providers first, then the datasources built on
+# them. absent removes exactly what is declared - datasources first, then the
+# providers, so nothing is left pointing at a driver that is gone.
+jdbc_state: present

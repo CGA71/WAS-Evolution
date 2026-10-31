@@ -1,0 +1,58 @@
+---
+# One scope: its providers and the datasources built on them.
+#
+# ORDER IS THE POINT OF THIS FILE. Creating, the providers come first, because
+# a datasource is created ON a provider. Removing, the datasources go first, so
+# nothing is ever left pointing at a driver that is gone - even though WAS
+# would take them with the provider, a run that stops between the two steps
+# must leave the cell coherent.
+
+- name: Create or update the JDBC providers of this scope
+  wasevo.websphere.was_jdbc_provider:
+    scope: "{{ jdbc_group.scope }}"
+    providers: "{{ jdbc_group.providers }}"
+    state: present
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  # Two register names, not one: a SKIPPED task with register still overwrites
+  # the variable, so the removal step - skipped when creating - would erase the
+  # result of the creation before the report reads it.
+  register: jdbc_providers_created
+  when: jdbc_state == 'present'
+
+- name: Reconcile the datasources of this scope
+  wasevo.websphere.was_datasource:
+    scope: "{{ jdbc_group.scope }}"
+    datasources: "{{ jdbc_group.datasources }}"
+    state: "{{ jdbc_state }}"
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: jdbc_datasources_result
+
+- name: Remove the JDBC providers of this scope
+  wasevo.websphere.was_jdbc_provider:
+    scope: "{{ jdbc_group.scope }}"
+    providers: "{{ jdbc_group.providers }}"
+    state: absent
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: jdbc_providers_removed
+  when: jdbc_state == 'absent'
+
+- name: Report this scope
+  ansible.builtin.debug:
+    msg:
+      - "scope       : {{ jdbc_group.scope }}"
+      - "providers   : {{ (_providers.providers | default([])) | map(attribute='name') | join(', ') | default('(none)', true) }}"
+      - "datasources : {{ (jdbc_datasources_result.datasources | default([]))
+                          | map(attribute='name') | join(', ') | default('(none)', true) }}"
+      - "changed     : providers {{ _providers.changed | default(false) }},
+                       datasources {{ jdbc_datasources_result.changed | default(false) }}"
+  vars:
+    _providers: "{{ jdbc_providers_created if jdbc_state == 'present' else jdbc_providers_removed }}"

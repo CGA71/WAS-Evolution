@@ -1,0 +1,30 @@
+---
+# JDBC providers and datasources, and nothing else.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e was_topology=nd -e config_dmgr_hosts=dmgr
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. Correcting a pool size or a JNDI
+# name is one replay of this - no cluster rebuilt, no alias touched, no
+# application redeployed.
+#
+# It comes after the J2C job because a datasource presents an alias, and
+# the handler refuses a datasource whose alias does not exist rather than let
+# WAS accept it and the first connection fail.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: JDBC providers and datasources, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The providers and the datasources
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.jdbc

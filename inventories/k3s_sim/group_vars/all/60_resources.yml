@@ -16,3 +16,56 @@ j2c_aliases:
     user: simapp
     password_env: SIM_J2C_PASSWORD
     description: CI simulation database
+
+# --------------------------------------------------------------------------
+# Datasources
+# --------------------------------------------------------------------------
+# Rendered for WAS traditional by plugins/filter/traditional.py - the vendor
+# through roles/model/vars/jdbc_vendors.yml, the Liberty-style pool settings
+# into WAS attributes in seconds. Cluster scope, the default.
+#
+# Two datasources sharing one provider, so the simulation exercises the case
+# where the provider is declared once and used twice - and a third at server
+# scope, so a run with more than one scope is exercised too.
+datasources:
+  - name: simOrders
+    jndi_name: jdbc/sim/orders
+    vendor: db2_i_toolbox
+    provider: simToolboxProvider
+    driver_dir: /app/binaries/was90/jdbcprovider
+    driver_jar: jt400.jar
+    auth_alias: simDbAlias
+    statement_cache_size: 20
+    properties:
+      databaseName: SIMORDERS
+      serverName: as400.sim.internal
+    pool:
+      maxPoolSize: 30
+      minPoolSize: 5
+      connectionTimeout: 30s
+      maxIdleTime: 30m
+
+  - name: simStock
+    jndi_name: jdbc/sim/stock
+    vendor: db2_i_toolbox
+    provider: simToolboxProvider
+    driver_dir: /app/binaries/was90/jdbcprovider
+    driver_jar: jt400.jar
+    auth_alias: simDbAlias
+    properties:
+      databaseName: SIMSTOCK
+      serverName: as400.sim.internal
+
+  - name: simReporting
+    jndi_name: jdbc/sim/reporting
+    vendor: oracle
+    driver_dir: /app/binaries/was90/jdbcprovider
+    driver_jar: ojdbc8.jar
+    auth_alias: simDbAlias
+    transactional: "false"
+    scope:
+      type: server
+      node: was-node-01Node
+      server: ClusterEXT_was-node-01Node_01
+    properties:
+      URL: "jdbc:oracle:thin:@//oracle.sim.internal:1521/REPORT"

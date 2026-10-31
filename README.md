@@ -1016,6 +1016,7 @@ names another scope when it needs one.
 | Step | Playbook | Family |
 |---|---|---|
 | 8 | `traditional_j2c.yml` | J2C authentication aliases |
+| 9 | `traditional_jdbc.yml` | JDBC providers and datasources |
 
 ### J2C authentication aliases
 
@@ -1060,6 +1061,83 @@ stub tests assert it: every driver answer about an alias, rotation included, is
 searched for the password and must not contain it. And the fake cell refuses
 to serve a stored password at all, because the real one returns it encoded - a
 handler that read it back would pass in CI and break on a cell.
+
+### JDBC providers and datasources
+
+**One declaration, two back-ends.** A datasource is declared once, in the
+shared model, and the Liberty back-end already renders it into `server.xml`.
+The traditional back-end now renders the **same** declaration into wsadmin
+arguments - that is layer 1 working, not two configurations kept in step.
+
+```yaml
+datasources:
+  - name: as400Extranet
+    jndi_name: jdbc/as400/extranet
+    vendor: db2_i_toolbox
+    driver_dir: /app/binaries/was90/jdbcprovider
+    driver_jar: jt400.jar
+    auth_alias: as400ExtranetAlias
+    properties: { databaseName: EXTRANET, serverName: as400.example.internal }
+    pool: { maxPoolSize: 30, minPoolSize: 5, connectionTimeout: 30s, maxIdleTime: 1800s }
+```
+
+**The vendor is an intent, translated by each back-end.** The model used to say
+`vendor: db2` and the Liberty template wrote `<properties.db2>`, which is not a
+Liberty element - for `jt400.jar` the element is `<properties.db2.i.toolbox>`.
+[`roles/model/vars/jdbc_vendors.yml`](ansible_collections/wasevo/websphere/roles/model/vars/jdbc_vendors.yml)
+now names the database and driver family once and gives each back-end its
+rendering: the Liberty element, and the provider type and data store helper
+`createJDBCProvider` and `createDatasource` need. The model refuses a vendor
+neither back-end knows, before any render.
+
+[`plugins/filter/traditional.py`](ansible_collections/wasevo/websphere/plugins/filter/traditional.py)
+does the traditional rendering - Python rather than a Jinja block, because the
+rules are worth testing on their own:
+
+| Shared model | WAS traditional |
+|---|---|
+| `vendor: db2_i_toolbox` | provider type `DB2 UDB for iSeries (Toolbox)`, helper `DB2AS400DataStoreHelper` |
+| `maxPoolSize`, `minPoolSize` | `maxConnections`, `minConnections` |
+| `connectionTimeout: 30s`, `maxIdleTime: 1800s` | `connectionTimeout: 30`, `unusedTimeout: 1800` - seconds |
+| `transactional: "false"` | custom property `nonTransactionalDataSource=true` |
+| a pool key with no equivalent | **refused**, not dropped |
+
+A setting that silently disappears on one back-end is a difference between the
+two that nobody chose, so a key the table does not know is refused. Every
+error of a declaration is reported at once.
+
+**What WAS allows and should not**, refused before anything is written:
+
+- a **provider type the cell does not offer**. The handler lists the cell's own
+  JDBC provider templates first; a wrong entry in the vendor table fails on its
+  first real run with the list of what the cell offers, rather than inside
+  `createJDBCProvider` with an exception that names neither;
+- a **datasource whose J2C alias does not exist**. WAS accepts it and the
+  datasource fails at its first connection;
+- a **datasource on a provider that does not exist** in that scope.
+
+In a check run the last two are a future, not an absence: the step that
+creates them ran in check mode too.
+
+**Two WAS behaviours the handlers absorb.** The classpath is a list attribute,
+and `AdminConfig.modify` **appends** to a list rather than replacing it - a new
+driver jar written with a plain modify would leave the old one ahead of it on
+the classpath, and the old driver would win. It is unset first, then written;
+a stub test asserts the jar was replaced, not appended. And only the pool
+settings and custom properties a declaration names are read back and compared:
+a datasource carries dozens at their WAS defaults, and resetting the ones
+nobody declared would overwrite tuning done in the console on purpose.
+
+**Scope.** Cluster by default; a datasource declares `scope:` for another one -
+`cell`, or `{type: server, node: ..., server: ...}`. The role groups by scope,
+one wsadmin session per module per scope. Creating, providers go first;
+removing, datasources go first, so nothing is left pointing at a driver that is
+gone.
+
+**Not yet verified on a real cell**: the provider types other than the IBM i
+Toolbox one, and the data store helper class names. They are recorded in the
+vendor table, which says so; the template check above is what turns a wrong
+one into a sentence on the first lab run.
 
 ## 20. AWX
 
@@ -2171,6 +2249,7 @@ elle en a besoin.
 | Étape | Playbook | Famille |
 |---|---|---|
 | 8 | `traditional_j2c.yml` | alias d'authentification J2C |
+| 9 | `traditional_jdbc.yml` | fournisseurs JDBC et datasources |
 
 ### Alias d'authentification J2C
 
@@ -2217,6 +2296,87 @@ du driver sur un alias, rotation comprise, est fouillée à la recherche du mot
 de passe et ne doit pas le contenir. Et la fausse cellule refuse tout
 simplement de servir un mot de passe stocké, parce que la vraie le rend encodé
 - un handler qui le relirait passerait en CI et casserait sur une cellule.
+
+### Fournisseurs JDBC et datasources
+
+**Une déclaration, deux back-ends.** Une datasource est déclarée une fois, dans
+le modèle partagé, et le back-end Liberty la rend déjà dans `server.xml`. Le
+back-end traditionnel rend maintenant **la même** déclaration en arguments
+wsadmin - c'est la couche 1 qui fonctionne, et non deux configurations tenues
+à jour en parallèle.
+
+```yaml
+datasources:
+  - name: as400Extranet
+    jndi_name: jdbc/as400/extranet
+    vendor: db2_i_toolbox
+    driver_dir: /app/binaries/was90/jdbcprovider
+    driver_jar: jt400.jar
+    auth_alias: as400ExtranetAlias
+    properties: { databaseName: EXTRANET, serverName: as400.example.internal }
+    pool: { maxPoolSize: 30, minPoolSize: 5, connectionTimeout: 30s, maxIdleTime: 1800s }
+```
+
+**Le vendor est une intention, traduite par chaque back-end.** Le modèle
+disait `vendor: db2` et le template Liberty écrivait `<properties.db2>`, qui
+n'est pas un élément Liberty - pour `jt400.jar`, l'élément est
+`<properties.db2.i.toolbox>`.
+[`roles/model/vars/jdbc_vendors.yml`](ansible_collections/wasevo/websphere/roles/model/vars/jdbc_vendors.yml)
+nomme désormais une fois la base et la famille de driver, et donne à chaque
+back-end son rendu : l'élément Liberty, et le type de fournisseur et la classe
+helper dont `createJDBCProvider` et `createDatasource` ont besoin. Le modèle
+refuse un vendor qu'aucun back-end ne connaît, avant tout rendu.
+
+[`plugins/filter/traditional.py`](ansible_collections/wasevo/websphere/plugins/filter/traditional.py)
+fait le rendu traditionnel - en Python plutôt qu'en bloc Jinja, parce que ces
+règles méritent d'être testées seules :
+
+| Modèle partagé | WAS traditionnel |
+|---|---|
+| `vendor: db2_i_toolbox` | type `DB2 UDB for iSeries (Toolbox)`, helper `DB2AS400DataStoreHelper` |
+| `maxPoolSize`, `minPoolSize` | `maxConnections`, `minConnections` |
+| `connectionTimeout: 30s`, `maxIdleTime: 1800s` | `connectionTimeout: 30`, `unusedTimeout: 1800` - en secondes |
+| `transactional: "false"` | propriété `nonTransactionalDataSource=true` |
+| une clé de pool sans équivalent | **refusée**, et non ignorée |
+
+Un réglage qui disparaît en silence d'un côté est une différence entre les deux
+back-ends que personne n'a choisie : une clé inconnue de la table est donc
+refusée. Toutes les erreurs d'une déclaration sont signalées en une fois.
+
+**Ce que WAS accepte et ne devrait pas**, refusé avant toute écriture :
+
+- un **type de fournisseur que la cellule ne propose pas**. Le handler liste
+  d'abord les modèles de fournisseurs JDBC de la cellule ; une entrée fausse
+  de la table échoue à son premier vrai run avec la liste de ce que la cellule
+  propose, plutôt que dans `createJDBCProvider` sur une exception qui ne nomme
+  ni l'un ni l'autre ;
+- une **datasource dont l'alias J2C n'existe pas**. WAS l'accepte, et la
+  datasource échoue à sa première connexion ;
+- une **datasource sur un fournisseur absent** de cette portée.
+
+En check run, les deux derniers sont un futur et non une absence : l'étape qui
+les crée a tourné en check elle aussi.
+
+**Deux comportements de WAS absorbés par les handlers.** Le classpath est un
+attribut liste, et `AdminConfig.modify` **ajoute** à une liste au lieu de la
+remplacer - un nouveau jar écrit par un simple modify laisserait l'ancien
+devant lui dans le classpath, et l'ancien driver gagnerait. Il est vidé
+d'abord, puis écrit ; un test de la fausse cellule vérifie que le jar a été
+remplacé et non ajouté. Et seuls les réglages de pool et les propriétés qu'une
+déclaration nomme sont relus et comparés : une datasource en porte des
+dizaines à leur valeur WAS, et réinitialiser ceux que personne n'a déclarés
+écraserait un réglage fait à dessein dans la console.
+
+**Portée.** Le cluster par défaut ; une datasource déclare `scope:` pour une
+autre - `cell`, ou `{type: server, node: ..., server: ...}`. Le rôle regroupe
+par portée, une session wsadmin par module et par portée. À la création, les
+fournisseurs passent d'abord ; à la suppression, les datasources d'abord, pour
+que rien ne pointe jamais vers un driver disparu.
+
+**Pas encore vérifié sur une vraie cellule** : les types de fournisseurs autres
+que celui d'IBM i Toolbox, et les noms de classes helper. Ils sont consignés
+dans la table des vendors, qui le dit ; c'est la vérification des modèles
+ci-dessus qui transforme une entrée fausse en phrase au premier run du lab.
 
 ## 20. AWX
 

@@ -81,6 +81,16 @@ was_cluster_member_name_pattern: >-
   | default(was_nodeagent_node_name_pattern) }}_{{ '%02d' | format(was_cluster_member_index | default(1) | int) }}
 
 # --------------------------------------------------------------------------
+# Resources
+# --------------------------------------------------------------------------
+# A JDBC provider is named after the datasource it serves, plus this suffix -
+# as400Extranet is built on as400ExtranetProvider - unless the datasource
+# names its provider itself (`provider:` in the declaration), which is how two
+# datasources share one. Liberty names the same object <ds>-driver; the suffix
+# differs because the two back-ends' conventions do, not the rule.
+was_jdbc_provider_name_suffix: "Provider"
+
+# --------------------------------------------------------------------------
 # JVM
 # --------------------------------------------------------------------------
 # -Xshareclasses:name=... The %g is J9's generation token and must survive

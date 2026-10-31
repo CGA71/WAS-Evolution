@@ -151,6 +151,7 @@ STEPS=(
   "WAS lab - 6. Create the cluster|$COL/traditional_cluster.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 7. Create the application servers|$COL/traditional_cluster_members.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 8. J2C authentication aliases|$COL/traditional_j2c.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 9. JDBC providers and datasources|$COL/traditional_jdbc.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------
