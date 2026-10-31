@@ -68,8 +68,8 @@
     url_password: "{{ _prereq_awx_password }}"
     force_basic_auth: true
     body_format: json
-    body:
-      id: "{{ _prereq_credential_ids[item.1] | int }}"
+    # One expression, so the id reaches AWX as an integer, not a string.
+    body: "{{ {'id': _prereq_credential_ids[item.1] | int} }}"
     status_code: [204]
   loop: >-
     {{ (_prereq_templates.json.results
