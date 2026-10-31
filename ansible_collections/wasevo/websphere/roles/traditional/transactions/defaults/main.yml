@@ -1,0 +1,36 @@
+---
+# The transaction service - JTA, and JTS for transactions that cross servers.
+# Family 3, enterprise components.
+#
+# REPLAYABLE ON ITS OWN. A timeout raised, peer recovery turned on - one replay
+# of this role, one wsadmin session, the cluster members restarted afterwards
+# (the module lists them: these settings apply at server start).
+#
+#   transactions:
+#     total_timeout: 2m              # totalTranLifetimeTimeout
+#     client_inactivity_timeout: 60  # clientInactivityTimeout
+#     maximum_timeout: 5m            # maximumTransactionTimeout - caps the others
+#     propagated_timeout: 5m         # propogatedOrBMTTranLifetimeTimeout
+#     heuristic_retry_limit: 0
+#     heuristic_retry_wait: 0
+#     log_root: /shared/tranlog      # one directory per server under it
+#     peer_recovery: true            # the cluster's enableHA
+#
+# Durations take 30, 30s, 5m or 1h. A lifetime above maximum_timeout is
+# refused: WAS would cap it without a word.
+#
+# PEER RECOVERY. In a cluster, a member that fails leaves in-doubt XA
+# transactions - the JDBC and JMS resources of this collection are XA - and
+# another member can complete them, if it can read the failed member's
+# recovery log. So peer_recovery needs log_root, on storage every member
+# mounts (NFS v4, a SAN file system); each server's log goes to
+# <log_root>/<cell>/<node>/<server>. Peer recovery with the logs under each
+# profile is refused: WAS accepts it, and recovery fails exactly when needed.
+#
+# Moving the log directory of a server that has in-doubt transactions loses
+# them: change log_root with the cluster stopped, or drained.
+transactions: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+transactions_target: {}

@@ -1,0 +1,22 @@
+---
+# JPA - the specification level and the defaults a persistence unit inherits
+# when it names none. Family 2, persistence and data.
+#
+# REPLAYABLE ON ITS OWN. The level or the provider changed - one replay of this
+# role; the module lists the servers to restart.
+#
+#   jpa:
+#     spec_level: "2.1"                  # 2.1 (EclipseLink) or 2.0 (WSJPA, OpenJPA)
+#     provider: eclipselink              # eclipselink, wsjpa, openjpa, or a class name
+#     jta_datasource: jdbc/orders        # a transactional datasource
+#     non_jta_datasource: jdbc/reporting # a non-transactional one
+#
+# Refused before anything is written: a provider that does not implement the
+# level (the server starts, every persistence unit fails); a JTA default that
+# the model declares non-transactional, or the reverse; a default datasource
+# the cell does not have - the JDBC job comes first.
+jpa: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+jpa_target: {}

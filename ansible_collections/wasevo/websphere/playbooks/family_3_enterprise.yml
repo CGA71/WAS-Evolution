@@ -1,0 +1,26 @@
+---
+# Family 3 - enterprise components: JTA/JTS, EJB, CDI.
+#
+#   ansible-playbook -i inventories/was <this> -e was_environment=RA
+#
+# A FAMILY IS A CATALOGUE, NOT A ROLE. It imports the playbooks of its roles,
+# in the order they need each other, and defines none of them: each role keeps
+# its own playbook and its own AWX job template, and replaying one role after
+# a change is still one wsadmin session. Running this is the same work as
+# running its playbooks in order.
+#
+# The transaction service first - the XA resources of families 2 and 4 need
+# its recovery log and, in a cluster, peer recovery - then the EJB container,
+# whose persistent timers name a datasource from family 2, then CDI. Every
+# setting here applies at server start: each job lists the servers to restart.
+#
+# The whole plane, every family in dependency order, is traditional_config.yml.
+
+- name: The transaction service of every server, and peer recovery
+  import_playbook: traditional_transactions.yml
+
+- name: The EJB container, its cache and its timer service
+  import_playbook: traditional_ejb_container.yml
+
+- name: CDI
+  import_playbook: traditional_cdi.yml

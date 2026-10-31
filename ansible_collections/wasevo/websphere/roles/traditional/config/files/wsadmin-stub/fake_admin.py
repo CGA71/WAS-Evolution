@@ -63,7 +63,78 @@ GENERIC_TYPES = (
     "MQQueue",
     "MQTopic",
     "J2CActivationSpec",
+    "ApplicationServer",
+    "TransactionService",
+    "EJBContainer",
+    "EJBCache",
+    "EJBTimer",
+    "JavaPersistenceAPIService",
+    "JavaVirtualMachine",
+    "Property",
 )
+
+# The objects every application server carries from its creation, with the
+# attributes this fake knows and WAS's defaults for them. AdminConfig.attributes
+# answers from this table, so a handler asking for an attribute WAS does not
+# have is refused here as it would be on a cell. The JPA service is not
+# created with the server: IBM's procedure creates it on first use.
+#
+# The names: TransactionService and EJBTimer from IBM's scripting reference;
+# enableHA from cluster.xml; the two JPA datasource names as server.xml spells
+# them - which the first run against a real cell confirms, since the handler
+# checks every name against the real AdminConfig.attributes before writing.
+SERVER_COMPONENTS = {
+    "TransactionService": {
+        "totalTranLifetimeTimeout": "120",
+        "clientInactivityTimeout": "60",
+        "maximumTransactionTimeout": "300",
+        "propogatedOrBMTTranLifetimeTimeout": "300",
+        "heuristicRetryLimit": "0",
+        "heuristicRetryWait": "0",
+        "transactionLogDirectory": "",
+        "enable": "true",
+    },
+    "EJBContainer": {
+        "passivationDirectory": "${USER_INSTALL_ROOT}/temp",
+        "inactivePoolCleanupInterval": "30000",
+        "defaultDatasourceJNDIName": "",
+        "enableSFSBFailover": "false",
+    },
+    "EJBCache": {
+        "cacheSize": "2053",
+        "cleanupInterval": "3000",
+    },
+    "EJBTimer": {
+        "datasourceJNDIName": "",
+        "datasourceAlias": "",
+        "tablePrefix": "EJBTIMER_",
+        "pollInterval": "300",
+        "numAlarmThreads": "1",
+        "schedulerJNDIName": "",
+        "numNPTimerThreads": "1",
+        "uniqueTimerManagerForNP": "false",
+    },
+    "JavaPersistenceAPIService": {
+        "defaultPersistenceProvider": "",
+        "defaultJtaDataSourceJndiName": "",
+        "defaultNonJtaDataSourceJndiName": "",
+    },
+    "ServerCluster": {
+        "name": "",
+        "preferLocal": "true",
+        "enableHA": "false",
+    },
+}
+# Parents, as server.xml nests them.
+COMPONENT_PARENTS = {
+    "ApplicationServer": "server",
+    "JavaVirtualMachine": "server",
+    "TransactionService": "ApplicationServer",
+    "EJBContainer": "ApplicationServer",
+    "EJBCache": "EJBContainer",
+    "EJBTimer": "EJBContainer",
+}
+JPA_SPEC_LEVELS = ("2.0", "2.1")
 
 # The JMS types of both providers, which share one JNDI namespace per scope.
 JMS_TYPES = (
@@ -102,6 +173,12 @@ JDBC_TEMPLATES = (
 # cell; an attribute not listed raises, so a handler that asks for a misspelt
 # attribute fails in CI rather than reading an empty string forever.
 ATTRIBUTE_DEFAULTS = {
+    "TransactionService": SERVER_COMPONENTS["TransactionService"],
+    "EJBContainer": SERVER_COMPONENTS["EJBContainer"],
+    "EJBCache": SERVER_COMPONENTS["EJBCache"],
+    "EJBTimer": SERVER_COMPONENTS["EJBTimer"],
+    "JavaPersistenceAPIService": SERVER_COMPONENTS["JavaPersistenceAPIService"],
+    "JavaVirtualMachine": {"systemProperties": ""},
     "Library": {
         "classPath": "",
         "nativePath": "",
@@ -138,6 +215,9 @@ EMPTY = {
     # providers, datasources, buses and the rest, so a new handler needs a
     # fake of its AdminTask verbs and nothing else.
     "objects": {},
+    # JPA specification level per cluster or server config id; 2.1 when unset,
+    # the default of a new WAS 9 profile.
+    "jpa_levels": {},
     "next_id": 1,
     "next_port": FIRST_GENERATED_PORT,
     "saved": True,
@@ -240,6 +320,8 @@ class FakeAdminConfig(object):
         if config_type == "ServerCluster":
             return "\n".join(sorted(self.state["clusters"].keys()))
         if config_type in GENERIC_TYPES:
+            if scope is not None:
+                self._materialise_server(scope)
             ids = [
                 config_id for config_id, obj in self.state["objects"].items()
                 if obj["type"] == config_type
@@ -251,6 +333,49 @@ class FakeAdminConfig(object):
         raise NotImplementedError(
             "fake AdminConfig.list does not know type %r" % config_type
         )
+
+    def _member_server(self, scope):
+        """(node, server) when a scope id is a server the cell holds as a member."""
+        prefix = "Server:"
+        if not str(scope).startswith(prefix) or "|scope.xml#" not in str(scope):
+            return None
+        node_server = str(scope)[len(prefix):].split("(", 1)[0]
+        node, _, server = node_server.partition("/")
+        for member in self.state["members"].values():
+            if member["nodeName"] == node and member["memberName"] == server:
+                return node, server
+        return None
+
+    def _materialise_server(self, scope):
+        """Give a member server the objects a real one has from its creation.
+
+        Created lazily, on the first read, because the member handler predates
+        them; the result is the same as if createClusterMember had made them.
+        """
+        if self._member_server(scope) is None:
+            return
+        if any(o["parent"] == scope and o["type"] == "ApplicationServer"
+               for o in self.state["objects"].values()):
+            return
+        app = self._create_object("ApplicationServer", "ApplicationServer", {}, scope)
+        self._create_object("JavaVirtualMachine", "JavaVirtualMachine", {"systemProperties": []}, scope)
+        self._create_object("TransactionService", "TransactionService", {}, app)
+        ejb = self._create_object("EJBContainer", "EJBContainer", {}, app)
+        self._create_object("EJBCache", "EJBCache", {}, ejb)
+        self._create_object("EJBTimer", "EJBTimer", {}, ejb)
+
+    def _drop_server_objects(self, node, server):
+        scope = scope_id("Server", "%s/%s" % (node, server))
+        for config_id in [c for c, o in self.state["objects"].items()
+                          if o["parent"] == scope and o["type"] in COMPONENT_PARENTS]:
+            self.remove(config_id)
+        self.state["jpa_levels"].pop(scope, None)
+
+    def attributes(self, config_type):
+        """AdminConfig.attributes: one "name type" line per attribute."""
+        if config_type not in SERVER_COMPONENTS:
+            raise NotImplementedError("fake AdminConfig.attributes does not know %r" % config_type)
+        return "\n".join("%s String" % name for name in sorted(SERVER_COMPONENTS[config_type]))
 
     def _within(self, config_id, scope):
         """Whether an object sits under a scope, following parents up."""
@@ -332,6 +457,19 @@ class FakeAdminConfig(object):
         if config_type == "J2EEResourceProperty":
             self.state["objects"][parent]["attrs"].setdefault("resourceProperties", []).append(config_id)
             _store(self.state)
+        if config_type == "Property":
+            if self.state["objects"][parent]["type"] != "JavaVirtualMachine":
+                raise ValueError("this fake creates a Property under a JavaVirtualMachine only")
+            props = self.state["objects"][parent]["attrs"].setdefault("systemProperties", [])
+            if any(self.state["objects"][p]["attrs"]["name"] == attrs.get("name") for p in props):
+                raise RuntimeError("JVM property %r already exists - the handler should have "
+                                   "modified it" % attrs.get("name"))
+            props.append(config_id)
+            _store(self.state)
+        if config_type == "JavaPersistenceAPIService":
+            if self.state["objects"][parent]["type"] != "ApplicationServer":
+                raise ValueError("a JavaPersistenceAPIService goes under an ApplicationServer")
+            self._check_component_attrs(config_type, attrs)
         return config_id
 
     def showAttribute(self, config_id, attribute):
@@ -371,6 +509,8 @@ class FakeAdminConfig(object):
             # The real AdminConfig returns a bracketed, space-separated list of
             # config ids. Reproduced so the handler parsing is exercised.
             return "[%s]" % " ".join(cluster.get("member_ids", []))
+        if attribute not in cluster and attribute in SERVER_COMPONENTS["ServerCluster"]:
+            return SERVER_COMPONENTS["ServerCluster"][attribute]
         return self._attribute(cluster, attribute, config_id)
 
     def _show_member(self, member, attribute, config_id):
@@ -399,9 +539,18 @@ class FakeAdminConfig(object):
 
     # -- writes -----------------------------------------------------------
 
+    def _check_component_attrs(self, config_type, attrs):
+        known = SERVER_COMPONENTS.get(config_type)
+        if known is None:
+            return
+        unknown = [a for a in attrs if a not in known]
+        if unknown:
+            raise ValueError("%s has no attribute %s" % (config_type, ", ".join(sorted(unknown))))
+
     def modify(self, config_id, attributes):
         obj = self.state["objects"].get(config_id)
         if obj is not None:
+            self._check_component_attrs(obj["type"], [pair[0] for pair in attributes])
             for pair in attributes:
                 obj["attrs"][pair[0]] = pair[1]
             self.state["saved"] = False
@@ -411,6 +560,8 @@ class FakeAdminConfig(object):
             obj = self.state[store].get(config_id)
             if obj is None:
                 continue
+            if store == "clusters":
+                self._check_component_attrs("ServerCluster", [pair[0] for pair in attributes])
             for pair in attributes:
                 key, value = pair[0], pair[1]
                 obj[key] = value
@@ -478,6 +629,8 @@ class FakeAdminConfig(object):
                     member = self.state["members"].pop(member_id, None)
                     if member:
                         self._drop_server_entry(member["nodeName"], member["memberName"])
+                        self._drop_server_objects(member["nodeName"], member["memberName"])
+                self.state["jpa_levels"].pop(config_id, None)
                 del self.state["clusters"][config_id]
                 self.state["saved"] = False
                 _store(self.state)
@@ -646,6 +799,7 @@ class FakeAdminConfig(object):
                 del self.state["members"][member_id]
                 cluster["member_ids"].remove(member_id)
                 self._drop_server_entry(node, name)
+                self._drop_server_objects(node, name)
                 self.state["saved"] = False
                 _store(self.state)
                 return
@@ -1221,6 +1375,25 @@ class FakeAdminTask(object):
 
     def deleteWMQActivationSpec(self, config_id):
         self.config.remove(config_id)
+
+    # -- JPA specification level -----------------------------------------
+
+    def _jpa_target(self, target):
+        if target in self.config.state["clusters"] or "|scope.xml#" in str(target):
+            return target
+        raise ValueError("showJPASpecLevel/modifyJPASpecLevel take a cluster or a server, got %r" % (target,))
+
+    def showJPASpecLevel(self, target):
+        return self.config.state["jpa_levels"].get(self._jpa_target(target), "2.1")
+
+    def modifyJPASpecLevel(self, target, args):
+        level = self._named(args, "-specLevel")
+        if level not in JPA_SPEC_LEVELS:
+            raise ValueError("specLevel %r is not one of %s" % (level, ", ".join(JPA_SPEC_LEVELS)))
+        self.config.state["jpa_levels"][self._jpa_target(target)] = level
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "CWWJP8813I: The JPA specification level is changed to %s." % level
 
     def modifyServerPort(self, args):
         # modifyServerPort(<server>, '-nodeName n -endPointName e -host * -port p')

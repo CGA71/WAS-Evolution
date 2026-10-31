@@ -155,6 +155,10 @@ STEPS=(
   "WAS lab - 10. Shared libraries|$COL/traditional_shared_libraries.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 11. Service integration buses|$COL/traditional_sibus.yml|config_dmgr_hosts: dmgr"
   "WAS lab - 12. JMS resources|$COL/traditional_jms.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 13. Transaction service and peer recovery|$COL/traditional_transactions.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 14. EJB container and timers|$COL/traditional_ejb_container.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 15. CDI|$COL/traditional_cdi.yml|config_dmgr_hosts: dmgr"
+  "WAS lab - 16. JPA level and defaults|$COL/traditional_jpa.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------

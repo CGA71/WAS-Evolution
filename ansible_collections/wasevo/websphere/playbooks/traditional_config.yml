@@ -17,12 +17,18 @@
 #   traditional_shared_libraries.yml the shared libraries                family 5
 #   traditional_sibus.yml            the service integration buses       family 4
 #   traditional_jms.yml              the JMS resources                   family 4
+#   traditional_transactions.yml     the transaction service             family 3
+#   traditional_ejb_container.yml    the EJB container and timers        family 3
+#   traditional_cdi.yml              CDI                                 family 3
+#   traditional_jpa.yml              the JPA level and defaults          family 2
 #
 # DEPENDENCY ORDER, NOT FAMILY ORDER. The roles are catalogued under API
 # families - family_<n>_<name>.yml imports one family's playbooks, README
-# section 19 - but a datasource (family 2) presents a J2C alias (family 5), so
-# this chain runs the steps in the order they need each other, whatever their
-# family.
+# section 19 - but a datasource (family 2) presents a J2C alias (family 5),
+# and the EJB timers and JPA defaults name datasources, so this chain runs the
+# steps in the order they need each other, whatever their family. The server
+# settings come last: they apply at server start, and one restart then takes
+# them all.
 #
 # So there is exactly one definition of each step, and this file cannot drift
 # from the step it used to carry inline - which is what happened to the legacy
@@ -63,3 +69,15 @@
 
 - name: The JMS resources
   import_playbook: traditional_jms.yml
+
+- name: The transaction service of every server, and peer recovery
+  import_playbook: traditional_transactions.yml
+
+- name: The EJB container, its cache and its timer service
+  import_playbook: traditional_ejb_container.yml
+
+- name: CDI
+  import_playbook: traditional_cdi.yml
+
+- name: The JPA level and defaults
+  import_playbook: traditional_jpa.yml

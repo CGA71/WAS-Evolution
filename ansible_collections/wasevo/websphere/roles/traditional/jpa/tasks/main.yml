@@ -1,0 +1,46 @@
+---
+# The JPA level and defaults of every server.
+#
+# The intent is translated by plugins/filter/traditional.py and applied by
+# traditional.config's server_settings.yml - one wsadmin session, every server
+# of the target, read from the cell.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names the job that produces what is missing.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [jpa, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [jpa, always]
+
+- name: Nothing declared, nothing to do
+  ansible.builtin.debug:
+    msg: >-
+      jpa declares nothing for this run - see
+      roles/traditional/jpa/defaults/main.yml for the shape.
+  when: jpa | default({}) | length == 0
+  tags: [jpa]
+
+- name: Apply jpa
+  when: jpa | default({}) | length > 0
+  tags: [jpa]
+  block:
+
+    - name: Translate the declaration into WAS settings
+      ansible.builtin.set_fact:
+        jpa_render: "{{ jpa | wasevo.websphere.jpa_settings(datasources | default([])) }}"
+
+    - name: Apply them to every server of the target
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+        tasks_from: server_settings.yml
+      vars:
+        settings_label: jpa
+        settings_render: "{{ jpa_render }}"
+        settings_target: "{{ jpa_target }}"

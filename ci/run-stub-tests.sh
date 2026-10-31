@@ -430,6 +430,72 @@ payload mq_absent <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# Server settings - transactions, EJB container, CDI, JPA - on every member of
+# ClusterEXT, read from the cell: three by now, the port-clash test having
+# added one, and the settings must reach all of them. {node} and {server} are replaced per server.
+payload tx <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"TransactionService":{"totalTranLifetimeTimeout":"300","transactionLogDirectory":"/shared/tranlog/TestCell/{node}/{server}"}},"jvm_properties":{},"cluster_attributes":{"enableHA":"true"},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# A misspelt attribute: refused with the valid names, before any write.
+payload tx_misspelt <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"TransactionService":{"totalTranLifeTimeout":"300"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# Persistent timers on several members with no shared database: each member
+# would fire every timer once.
+payload ejb_local_timers <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"EJBTimer":{"pollInterval":"60"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ejb <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"EJBCache":{"cacheSize":"3000"},"EJBTimer":{"datasourceJNDIName":"jdbc/stub","pollInterval":"60"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":["jdbc/stub"]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload ejb_missing_ds <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"EJBTimer":{"datasourceJNDIName":"jdbc/nowhere"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":["jdbc/nowhere"]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload cdi <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{},"jvm_properties":{"com.ibm.ws.cdi.enableImplicitBeanArchives":"false"},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload cdi_flip <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{},"jvm_properties":{"com.ibm.ws.cdi.enableImplicitBeanArchives":"true"},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# JPA: the service does not exist until first used, so this creates it.
+payload jpa <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"JavaPersistenceAPIService":{"defaultPersistenceProvider":"com.ibm.websphere.persistence.PersistenceProviderImpl","defaultJtaDataSourceJndiName":"jdbc/stub"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":"2.0","requires_datasources":["jdbc/stub"]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload settings_no_cluster <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"NoSuchCluster"},"components":{"TransactionService":{"totalTranLifetimeTimeout":"300"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+payload settings_future_check <<'JSON'
+{"resource":"server_settings","state":"present",
+ "params":{"target":{"cluster":"NoSuchCluster"},"components":{"TransactionService":{"totalTranLifetimeTimeout":"300"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":true,"save_config":true,"sync_nodes":true}
+JSON
+payload settings_absent <<'JSON'
+{"resource":"server_settings","state":"absent",
+ "params":{"target":{"cluster":"ClusterEXT"},"components":{"TransactionService":{"totalTranLifetimeTimeout":"300"}},"jvm_properties":{},"cluster_attributes":{},"jpa_spec_level":null,"requires_datasources":[]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload sib_absent <<'JSON'
 {"resource":"sibus","state":"absent",
  "params":{"bus":"StubBus","members":[],"destinations":[]},
@@ -677,6 +743,66 @@ expect "pool maxConnections 30 -> 50"           ds_pool              true
 expect "replay (idempotency)"                   ds_pool              false
 expect "--check a new datasource"               ds_check_new         true
 expect_value "the check created nothing" "$(cell_value count DataSource -)" "1"
+
+echo
+echo "=== server settings: transactions, EJB container, CDI, JPA ==="
+# Read every member's value of one attribute, the way the handler sets it.
+server_values() {
+    "$PY" -c '
+import json, os, sys
+state = json.load(open(os.environ["WAS_SIM_STATE"]))
+objs = state["objects"]
+kind, key = sys.argv[1], sys.argv[2]
+if kind == "jpa_level":
+    print(",".join(sorted(state.get("jpa_levels", {}).values()))); sys.exit(0)
+if kind == "enableHA":
+    print(",".join(c.get("enableHA", "false") for c in state["clusters"].values())); sys.exit(0)
+def server_of(i):
+    while i in objs:
+        i = objs[i]["parent"]
+    return i.split("(", 1)[0][len("Server:"):]
+out = []
+for i, o in sorted(objs.items()):
+    if kind == "property" and o["type"] == "Property" and o["attrs"]["name"] == key:
+        out.append(o["attrs"]["value"])
+    elif o["type"] == kind:
+        out.append(o["attrs"].get(key, "default"))
+if kind == "logdir":
+    for i, o in objs.items():
+        if o["type"] == "TransactionService":
+            out.append(str(o["attrs"].get("transactionLogDirectory", "").endswith(server_of(i))))
+print(",".join(sorted(out)))
+' "$1" "$2"
+}
+expect "timeouts, log directory, peer recovery"   tx                   true
+expect "replay (idempotency)"                     tx                   false
+expect_value "one log directory per member, its own" "$(server_values logdir -)" "True,True,True"
+expect_value "peer recovery on the cluster"       "$(server_values enableHA -)" "true"
+expect_refusal "a misspelt attribute" \
+    tx_misspelt "has no attribute totalTranLifeTimeout"
+expect_refusal "local persistent timers on three members" \
+    ejb_local_timers "fire once per member"
+expect "cache size and shared timer database"     ejb                  true
+expect "replay (idempotency)"                     ejb                  false
+expect_value "every member, the shared database" "$(server_values EJBTimer datasourceJNDIName)" "jdbc/stub,jdbc/stub,jdbc/stub"
+expect_refusal "a timer database the cell does not have" \
+    ejb_missing_ds "is not a datasource of this cell"
+expect "CDI implicit archives off"                cdi                  true
+expect "replay (idempotency)"                     cdi                  false
+expect "CDI implicit archives back on"            cdi_flip             true
+expect_value "one property per member, modified not duplicated" \
+    "$(server_values property com.ibm.ws.cdi.enableImplicitBeanArchives)" "true,true,true"
+expect "JPA 2.0, its provider, a JTA default"     jpa                  true
+expect "replay (idempotency)"                     jpa                  false
+expect_value "the JPA level of the cluster"       "$(server_values jpa_level -)" "2.0"
+expect_refusal "settings for a cluster that does not exist" \
+    settings_no_cluster "does not exist in this cell"
+expect "--check on a cluster not created yet"     settings_future_check true
+expect_refusal "state absent" \
+    settings_absent "no state absent"
+
+echo
+echo "=== JDBC, removed ==="
 expect "delete the datasource"                  ds_absent            true
 expect "replay the delete"                      ds_absent            false
 expect "delete the provider"                    jdbc_prov_absent     true
@@ -804,6 +930,28 @@ print("|".join([str(len(r["errors"])), g["provider"], cf["qmgr"], cf["host"], st
                 str("qmgr" in g["queues"][0])]))
 ' "$COLLECTION/plugins/filter")"
 expect_value "JMS grouping rules, IBM MQ" "$mqgroups" "2|mq|QM1|mq|1415|False"
+
+# The server settings intents: what WAS would accept and should not, refused
+# by the model before any session - a lifetime above the maximum, peer
+# recovery with the logs under each profile, a JPA provider of the wrong
+# level, a JTA default on a non-transactional datasource, a custom scheduler
+# with a datasource WAS would ignore - and the per-server log directory.
+settings="$("$PY" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import traditional as T
+a = T.transaction_settings({"total_timeout": "10m", "maximum_timeout": "5m", "peer_recovery": True}, "C", True)
+b = T.transaction_settings({"total_timeout": "2m", "log_root": "/shared/tx", "peer_recovery": True}, "C", True)
+c = T.jpa_settings({"spec_level": "2.0", "provider": "eclipselink", "jta_datasource": "jdbc/r"},
+                   [{"jndi_name": "jdbc/r", "transactional": "false"}])
+d = T.ejb_container_settings({"timers": {"scheduler_jndi": "s", "datasource_jndi": "jdbc/t"}, "cache_cleanup_interval": "3s"})
+e = T.cdi_settings({"implicit_bean_archives": False})
+print("|".join([str(len(a["errors"])), b["settings"]["components"]["TransactionService"]["transactionLogDirectory"],
+                b["settings"]["cluster_attributes"]["enableHA"], str(len(c["errors"])), str(len(d["errors"])),
+                d["settings"]["components"]["EJBCache"]["cleanupInterval"],
+                e["settings"]["jvm_properties"]["com.ibm.ws.cdi.enableImplicitBeanArchives"]]))
+' "$COLLECTION/plugins/filter")"
+expect_value "server settings rules" "$settings" "2|/shared/tx/C/{node}/{server}|true|2|1|3000|false"
 # The library rendering's rules, on their own: a pattern that matched nothing
 # is refused, an explicit list is kept in its order, an expansion is sorted -
 # find returns files in filesystem order, and a class path that reshuffles
@@ -849,6 +997,7 @@ echo "=== the cluster, deleted with its members ==="
 expect "delete"                             absent      true
 expect "replay delete"                      absent      false
 expect_value "deleting the cluster took its members" "$(cell_members)" "0"
+expect_value "and their server objects" "$(cell_value count TransactionService -)" "0"
 
 echo
 echo "=== guard: credentials on the command line must be refused ==="
@@ -891,7 +1040,7 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Twenty-nine effective changes above. The cluster: created, members created,
+# Thirty-four effective changes above. The cluster: created, members created,
 # a port pinned, a member drained, a member deleted, the cluster deleted (6).
 # The aliases: created, password rotated, deleted (3). JDBC: provider created,
 # its jar replaced, an alias created, a datasource created, its pool changed,
@@ -899,15 +1048,16 @@ print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 # Libraries: created, a jar added, deleted (3). The bus: created, a redelivery
 # limit changed, deleted (3). JMS: created, a factory changed, deleted (3).
 # JMS on IBM MQ: created, a factory moved to CLIENT, deleted (3).
+# Server settings: transactions, EJB, CDI on then back, JPA (5).
 # Every replay, every check run, the password left alone under on_create, the
 # store drift left alone and every refusal must add none - a node
 # synchronisation on a cell that did not change is a ripple through the estate
 # for nothing.
-if [ "$syncs" = "29" ]; then
-    echo "  ok     29 syncs for 29 effective changes, none for the replays, the"
+if [ "$syncs" = "34" ]; then
+    echo "  ok     34 syncs for 34 effective changes, none for the replays, the"
     echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 29 syncs, state reports $syncs"
+    echo "  FAIL   expected 34 syncs, state reports $syncs"
     fail=1
 fi
 

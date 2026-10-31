@@ -1017,8 +1017,8 @@ playbook imports its roles' playbooks in order.
 |---|---|---|---|---|
 | 0 | Cell foundation | cluster, members (section 18) | `family_0_foundation.yml` | - |
 | 1 | Web services and REST - JAX-RS, JAX-WS, JAX-RPC | - | - | policy sets and bindings |
-| 2 | Persistence and data - JPA, JDBC | JDBC | `family_2_persistence.yml` | JPA |
-| 3 | Enterprise components - EJB, CDI, JTA/JTS | - | - | transactions and peer recovery, EJB container and timers, CDI |
+| 2 | Persistence and data - JPA, JDBC | JDBC, JPA | `family_2_persistence.yml` | - |
+| 3 | Enterprise components - EJB, CDI, JTA/JTS | transactions and peer recovery, EJB container and timers, CDI | `family_3_enterprise.yml` | - |
 | 4 | Messaging and integration - JMS | SIBus, JMS on the bus and on IBM MQ | `family_4_messaging.yml` | - |
 | 5 | Proprietary and extended APIs | J2C aliases, shared libraries | `family_5_extended.yml` | user registry (all four types), SSL, dynamic cache, logging and HPEL |
 | 6 | JMX and management - PMI, MBeans | - | - | PMI |
@@ -1046,6 +1046,10 @@ names another scope when it needs one.
 | 10 | `traditional_shared_libraries.yml` | shared libraries | 5 |
 | 11 | `traditional_sibus.yml` | service integration buses | 4 |
 | 12 | `traditional_jms.yml` | JMS resources, on the bus and on IBM MQ | 4 |
+| 13 | `traditional_transactions.yml` | transaction service and peer recovery | 3 |
+| 14 | `traditional_ejb_container.yml` | EJB container, cache and timers | 3 |
+| 15 | `traditional_cdi.yml` | CDI | 3 |
+| 16 | `traditional_jpa.yml` | JPA level and defaults | 2 |
 
 ### J2C authentication aliases
 
@@ -1338,6 +1342,59 @@ first run against a real cell confirms it. The simulation declares an MQ
 queue at cell scope and an activation spec at cluster scope listening on it;
 no queue manager runs there, since configuring a resource connects nothing.
 
+### Server settings: transactions, EJB container, CDI, JPA
+
+Families 3 and 2 are not resources the cell holds once; they are settings
+every application server carries - its transaction service, its EJB
+container, its JVM, its JPA service. Four roles, one module,
+`was_server_settings`, and one handler: each role translates an intent into
+WAS attributes, the module applies them to every server of the target in one
+wsadmin session.
+
+```yaml
+transactions:   { total_timeout: 2m, maximum_timeout: 5m, log_root: /shared/tranlog, peer_recovery: true }
+ejb_container:  { cache_size: 3000, timers: { datasource_jndi: jdbc/ejbTimers, poll_interval: 5m } }
+cdi:            { implicit_bean_archives: false }
+jpa:            { spec_level: "2.1", provider: eclipselink, jta_datasource: jdbc/orders, non_jta_datasource: jdbc/reporting }
+```
+
+**The target is read from the cell.** A cluster target means the members the
+cell holds now, not a list the run computed: a member added since the last
+run is caught up by a replay, and none is left behind because the run did not
+know it. A topology without a cluster names its server, `<role>_target:
+{node, server}`.
+
+**Restart, listed, never done.** These settings apply at server start. The
+module returns `restart_required` - the servers whose configuration changed -
+and warns about them; it restarts nothing. The four roles run last in
+`traditional_config.yml`, so one restart takes them all.
+
+**Attribute names are checked against the cell.** Before anything is
+written, every declared attribute is looked up in `AdminConfig.attributes`
+for its type, and an unknown name is refused with the valid ones. That is
+also the safeguard for the names IBM's scripting reference does not show
+(`enableHA` on the cluster, the two JPA default datasource attributes, taken
+from `cluster.xml` and `server.xml`): the first run against a real cell
+confirms them, or refuses before writing.
+
+**What WAS accepts and should not**, refused before anything is written:
+
+| Mistake | What WAS does with it |
+|---|---|
+| a transaction lifetime above `maximum_timeout` | caps it without a word |
+| peer recovery with each recovery log under its own profile | accepts it; the surviving member cannot read the failed member's log, and recovery fails when it is needed |
+| persistent EJB timers on several members, with no shared datasource or custom scheduler | each member keeps its own timer database; a timer created at startup fires once per member |
+| a custom scheduler together with a timer datasource or table prefix | ignores the datasource |
+| a JPA provider that does not implement the declared level | the server starts, every persistence unit fails |
+| a JTA default on a datasource declared non-transactional, or the reverse | the persistence unit writes outside the transaction, or enlists what should stay out |
+| a timer or JPA datasource the cell does not have | binds the name; the first use fails |
+
+**Peer recovery** needs `log_root` on storage every member mounts; each
+server's log goes to `<log_root>/<cell>/<node>/<server>` - the handler
+replaces `{node}` and `{server}` for each server. Moving the log of a server
+holding in-doubt transactions loses them: change `log_root` with the cluster
+stopped or drained.
+
 ## 20. AWX
 
 AWX runs inside k3s on the Ubuntu host, deployed by the AWX Operator, pinned.
@@ -1430,6 +1487,10 @@ one.
 - [createWMQConnectionFactory command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmscf_create.html)
 - [createWMQQueue command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmswmqq_create.html)
 - [createWMQActivationSpec command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmsas_create.html)
+- [Configuring the timer service using scripting](https://ibm.com/support/knowledgecenter/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/txml_ejbTimer_config.html)
+- [Configuring the runtime transaction service using scripting](https://www.ibm.com/support/knowledgecenter/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/txml_transaction.html)
+- [Identifying and modifying the JPA specification level](https://www.ibm.com/docs/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/tejb_idmod_jpaspec.html)
+- [Custom properties for improving application startup](https://www.ibm.com/support/pages/custom-properties-improving-application-startup-websphere-application-server)
 
 Source-repository findings come from direct inspection of the seven archives in `github.com/CGA71/WAS`.
 
@@ -2451,8 +2512,8 @@ et le playbook d'une famille importe ceux de ses rôles dans l'ordre.
 |---|---|---|---|---|
 | 0 | Socle de la cellule | cluster, membres (section 18) | `family_0_foundation.yml` | - |
 | 1 | Services web et REST - JAX-RS, JAX-WS, JAX-RPC | - | - | policy sets et bindings |
-| 2 | Persistance et données - JPA, JDBC | JDBC | `family_2_persistence.yml` | JPA |
-| 3 | Composants d'entreprise - EJB, CDI, JTA/JTS | - | - | transactions et reprise par un pair, conteneur EJB et minuteurs, CDI |
+| 2 | Persistance et données - JPA, JDBC | JDBC, JPA | `family_2_persistence.yml` | - |
+| 3 | Composants d'entreprise - EJB, CDI, JTA/JTS | transactions et reprise par un pair, conteneur EJB et minuteurs, CDI | `family_3_enterprise.yml` | - |
 | 4 | Messagerie et intégration - JMS | SIBus, JMS sur le bus et sur IBM MQ | `family_4_messaging.yml` | - |
 | 5 | API propriétaires et étendues | alias J2C, bibliothèques partagées | `family_5_extended.yml` | registre d'utilisateurs (les quatre types), SSL, cache dynamique, logging et HPEL |
 | 6 | JMX et administration - PMI, MBeans | - | - | PMI |
@@ -2482,6 +2543,10 @@ elle en a besoin.
 | 10 | `traditional_shared_libraries.yml` | bibliothèques partagées | 5 |
 | 11 | `traditional_sibus.yml` | bus d'intégration de services | 4 |
 | 12 | `traditional_jms.yml` | ressources JMS, sur le bus et sur IBM MQ | 4 |
+| 13 | `traditional_transactions.yml` | service de transactions et reprise par un pair | 3 |
+| 14 | `traditional_ejb_container.yml` | conteneur EJB, cache et minuteurs | 3 |
+| 15 | `traditional_cdi.yml` | CDI | 3 |
+| 16 | `traditional_jpa.yml` | niveau et défauts JPA | 2 |
 
 ### Alias d'authentification J2C
 
@@ -2794,6 +2859,60 @@ déclare une file MQ à portée cellule et une activation spec à portée cluste
 qui l'écoute ; aucun gestionnaire de files n'y tourne, configurer une
 ressource ne connecte rien.
 
+### Réglages de serveur : transactions, conteneur EJB, CDI, JPA
+
+Les familles 3 et 2 ne sont pas des ressources que la cellule porte une fois ;
+ce sont des réglages que porte chaque serveur d'application - son service de
+transactions, son conteneur EJB, sa JVM, son service JPA. Quatre rôles, un
+module, `was_server_settings`, et un handler : chaque rôle traduit une
+intention en attributs WAS, le module les applique à chaque serveur de la
+cible en une session wsadmin.
+
+```yaml
+transactions:   { total_timeout: 2m, maximum_timeout: 5m, log_root: /shared/tranlog, peer_recovery: true }
+ejb_container:  { cache_size: 3000, timers: { datasource_jndi: jdbc/ejbTimers, poll_interval: 5m } }
+cdi:            { implicit_bean_archives: false }
+jpa:            { spec_level: "2.1", provider: eclipselink, jta_datasource: jdbc/orders, non_jta_datasource: jdbc/reporting }
+```
+
+**La cible est lue dans la cellule.** Une cible cluster désigne les membres
+que la cellule porte maintenant, pas une liste calculée par le run : un
+membre ajouté depuis le dernier run est rattrapé par un rejeu, et aucun n'est
+oublié parce que le run ne le connaissait pas. Une topologie sans cluster
+nomme son serveur, `<rôle>_target: {node, server}`.
+
+**Redémarrage listé, jamais effectué.** Ces réglages s'appliquent au démarrage
+du serveur. Le module rend `restart_required` - les serveurs dont la
+configuration a changé - et les signale ; il ne redémarre rien. Les quatre
+rôles passent en dernier dans `traditional_config.yml` : un seul redémarrage
+les prend tous.
+
+**Les noms d'attributs sont vérifiés auprès de la cellule.** Avant toute
+écriture, chaque attribut déclaré est cherché dans `AdminConfig.attributes`
+pour son type, et un nom inconnu est refusé avec la liste des noms valides.
+C'est aussi la garde pour les noms que la référence de scripting IBM ne
+montre pas (`enableHA` sur le cluster, les deux attributs de datasource par
+défaut JPA, pris dans `cluster.xml` et `server.xml`) : le premier run sur une
+vraie cellule les confirme, ou refuse avant d'écrire.
+
+**Ce que WAS accepte et ne devrait pas**, refusé avant toute écriture :
+
+| Erreur | Ce qu'en fait WAS |
+|---|---|
+| une durée de vie de transaction au-dessus de `maximum_timeout` | la plafonne sans rien dire |
+| la reprise par un pair avec chaque journal sous son propre profil | l'accepte ; le membre survivant ne peut pas lire le journal du membre tombé, et la reprise échoue quand on en a besoin |
+| des minuteurs EJB persistants sur plusieurs membres, sans datasource partagée ni ordonnanceur dédié | chaque membre garde sa propre base de minuteurs ; un minuteur créé au démarrage se déclenche une fois par membre |
+| un ordonnanceur dédié avec une datasource ou un préfixe de tables de minuteurs | ignore la datasource |
+| un fournisseur JPA qui n'implémente pas le niveau déclaré | le serveur démarre, chaque unité de persistance échoue |
+| un défaut JTA sur une datasource déclarée non transactionnelle, ou l'inverse | l'unité de persistance écrit hors de la transaction, ou y enrôle ce qui devait en rester dehors |
+| une datasource de minuteurs ou JPA que la cellule n'a pas | lie le nom ; le premier usage échoue |
+
+**La reprise par un pair** demande `log_root` sur un stockage que tous les
+membres montent ; le journal de chaque serveur va dans
+`<log_root>/<cellule>/<nœud>/<serveur>` - le handler remplace `{node}` et
+`{server}` pour chaque serveur. Déplacer le journal d'un serveur qui porte des
+transactions en doute les perd : changer `log_root` cluster arrêté ou drainé.
+
 ## 20. AWX
 
 AWX tourne dans k3s sur l'hôte Ubuntu, déployé par l'AWX Operator, en version
@@ -2888,5 +3007,9 @@ chemin et n'en est pas une.
 - [createWMQConnectionFactory command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmscf_create.html)
 - [createWMQQueue command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmswmqq_create.html)
 - [createWMQActivationSpec command](https://www.ibm.com/docs/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rmj_wmq_jmsas_create.html)
+- [Configuring the timer service using scripting](https://ibm.com/support/knowledgecenter/en/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/txml_ejbTimer_config.html)
+- [Configuring the runtime transaction service using scripting](https://www.ibm.com/support/knowledgecenter/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/txml_transaction.html)
+- [Identifying and modifying the JPA specification level](https://www.ibm.com/docs/SSEQTP_9.0.5/com.ibm.websphere.base.doc/ae/tejb_idmod_jpaspec.html)
+- [Custom properties for improving application startup](https://www.ibm.com/support/pages/custom-properties-improving-application-startup-websphere-application-server)
 
 Les relevés sur le dépôt source proviennent de l'inspection directe des sept archives de `github.com/CGA71/WAS`.

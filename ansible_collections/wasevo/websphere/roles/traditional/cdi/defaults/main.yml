@@ -1,0 +1,18 @@
+---
+# CDI. Family 3, enterprise components.
+#
+# WAS traditional configures CDI through JVM custom properties, not a
+# container object, so this role sets properties on every server's JVM.
+#
+#   cdi:
+#     implicit_bean_archives: false   # com.ibm.ws.cdi.enableImplicitBeanArchives
+#
+# false: an archive with no beans.xml is not scanned for bean-defining
+# annotations - the startup cost of CDI on WAS 9 for an application that does
+# not use it. An application can override it in its manifest
+# (Enable-Implicit-Bean-Archive). Applies at server start.
+cdi: {}
+
+# The servers: {} is every member of the run's cluster. A topology without a
+# cluster names its server - {node: <node>, server: <server>}.
+cdi_target: {}
