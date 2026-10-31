@@ -99,6 +99,30 @@
   tags: [model, validate]
 
 # ---------------------------------------------------------------------------
+# Datasources
+# ---------------------------------------------------------------------------
+
+# A vendor is an intent both back-ends translate - vars/jdbc_vendors.yml. One
+# neither can render is refused here, once, rather than surfacing as invalid
+# server.xml on one side and a wsadmin exception on the other.
+- name: Every datasource must declare a vendor both back-ends know
+  ansible.builtin.assert:
+    that:
+      - item.vendor is defined
+      - item.vendor in jdbc_vendors
+    fail_msg: >-
+      Datasource {{ item.name }} declares vendor
+      "{{ item.vendor | default('(none)') }}". A vendor is an abstract intent
+      that each back-end translates, and the known ones are:
+      {% for key, v in jdbc_vendors.items() %}{{ key }} ({{ v.description }}){{ '; ' if not loop.last }}{% endfor %}.
+      Add an entry to roles/model/vars/jdbc_vendors.yml for another database.
+    success_msg: "{{ item.name }}: {{ item.vendor }}"
+  loop: "{{ datasources | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  tags: [model, validate, jdbc]
+
+# ---------------------------------------------------------------------------
 # JVM intents
 # ---------------------------------------------------------------------------
 

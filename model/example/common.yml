@@ -19,7 +19,7 @@
 datasources:
   - name: as400Extranet
     jndi_name: jdbc/as400/extranet
-    vendor: db2
+    vendor: db2_i_toolbox
     driver_dir: /app/binaries/was90/jdbcprovider
     driver_jar: jt400.jar
     auth_alias: as400ExtranetAlias
