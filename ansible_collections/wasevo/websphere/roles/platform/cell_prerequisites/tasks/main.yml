@@ -1,0 +1,85 @@
+---
+# On the k3s node, as its administrator. kubectl reads the node's kubeconfig;
+# AWX is reached through its API with the admin password of its own Secret.
+
+- name: The AWX API must be declared
+  ansible.builtin.assert:
+    that:
+      - prereq_awx_api | length > 0
+    fail_msg: prereq_awx_api is empty. It is the AWX API URL, and it comes from the inventory.
+    success_msg: "AWX at {{ prereq_awx_api }}"
+
+- name: Prepare the cluster and the secrets
+  environment:
+    KUBECONFIG: "{{ prereq_kubeconfig }}"
+  block:
+    - name: The rights of the platform jobs on the cluster
+      ansible.builtin.command:
+        cmd: kubectl apply -f -
+        stdin: "{{ lookup('ansible.builtin.template', 'rbac.yml.j2') }}"
+      register: _prereq_rbac
+      changed_when: _prereq_rbac.stdout is search('created|configured')
+
+    - name: The token of the platform account
+      ansible.builtin.command:
+        cmd: >-
+          kubectl -n {{ prereq_awx_namespace }} get secret {{ prereq_platform_account }}-token
+          -o jsonpath={.data}
+      register: _prereq_token
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: (_prereq_token.stdout | default('{}', true) | from_json).token is defined
+      no_log: true
+
+    - name: Is the WAS administrator's password already there
+      ansible.builtin.command:
+        cmd: kubectl -n {{ prereq_awx_namespace }} get secret {{ prereq_was_admin_secret }} -o name
+      register: _prereq_was_secret
+      changed_when: false
+      failed_when: false
+
+    - name: Generate it, once
+      ansible.builtin.command:
+        cmd: kubectl apply -f -
+        stdin: "{{ _prereq_secret | to_json }}"
+      vars:
+        _prereq_secret:
+          apiVersion: v1
+          kind: Secret
+          type: Opaque
+          metadata:
+            name: "{{ prereq_was_admin_secret }}"
+            namespace: "{{ prereq_awx_namespace }}"
+          stringData:
+            user: "{{ prereq_was_admin_user }}"
+            password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=20) }}"
+      when: _prereq_was_secret.rc != 0
+      changed_when: true
+      no_log: true
+
+    - name: Read the WAS administrator
+      ansible.builtin.command:
+        cmd: kubectl -n {{ prereq_awx_namespace }} get secret {{ prereq_was_admin_secret }} -o jsonpath={.data}
+      register: _prereq_was
+      changed_when: false
+      no_log: true
+
+    - name: Read the AWX admin password
+      ansible.builtin.command:
+        cmd: >-
+          kubectl -n {{ prereq_awx_namespace }} get secret {{ prereq_awx_admin_secret }}
+          -o jsonpath={.data.password}
+      register: _prereq_awx_pw
+      changed_when: false
+      no_log: true
+
+- name: Keep what was read
+  ansible.builtin.set_fact:
+    _prereq_k8s: "{{ _prereq_token.stdout | from_json }}"
+    _prereq_admin: "{{ _prereq_was.stdout | from_json }}"
+    _prereq_awx_password: "{{ _prereq_awx_pw.stdout | b64decode }}"
+  no_log: true
+
+- name: The AWX credentials and their templates
+  ansible.builtin.include_tasks: awx.yml

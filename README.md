@@ -1576,6 +1576,7 @@ hand, and it stops at the cluster: no JDBC, no JMS, no security change.
 
 | Job | Playbook | What it does |
 |---|---|---|
+| 0 | `cell_prerequisites.yml` | on the k3s node: the platform jobs' cluster rights, the WAS administrator's password, the AWX credentials made from them |
 | 1 | `cell_machines.yml` | three KubeVirt virtual machines, through the Kubernetes API from the job pod |
 | 2 | `cell_media.yml` | the Installation Manager and WAS media, copied from the install lab VM |
 | 3 | `lab_install_im.yml` | Installation Manager on each machine |
@@ -1617,22 +1618,23 @@ are read from the profile, not assumed.
   gives no base port (`defaultPorts=true`): one profile per machine needs
   nothing else.
 
-**Cluster access** is a ServiceAccount, `awx/awx-cell-platform`
-(`ci/k3s/30-awx-cell-platform.yml`): create, read and patch on namespaces,
-virtual machines, disks, Secrets and Services - no delete. AWX holds its token
-as a Kubernetes credential. **The WAS administrator** is `wasadmin`, its
-password generated once into the Secret `awx/was-cell-admin`, never in the
-repository:
+**Prerequisites are a job too.** Job 0 runs on the k3s node as its
+administrator (`roles/platform/cell_prerequisites`): it grants the platform
+jobs a ServiceAccount, `awx/awx-cell-platform` - create, read and patch on
+namespaces, virtual machines, disks, Secrets and Services, no delete; it
+generates the WAS administrator's password once, user `wasadmin`, into the
+Secret `awx/was-cell-admin`; and it makes the AWX credentials "k3s API - cell
+platform" and "WAS cell administrator" and attaches them to jobs 1 to 9.
+Nothing of it is in the repository:
 
 ```sh
 kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64 -d
 ```
 
-Everything in AWX is declared by `ci/awx/apply-cell-workflow.sh`, run from
-the node. The script never grants rights on the cluster: that is the
-operator's act, `kubectl apply -f ci/k3s/30-awx-cell-platform.yml`. Without
-it the workflow is declared all the same, and the next run of the script adds
-the Kubernetes credential to jobs 1, 2 and 9.
+`ci/awx/apply-cell-workflow.sh` declares the inventory, the templates and the
+workflow - configuration only, no secret and no cluster right. Job 0 logs in
+to the node with one AWX machine credential, **k3s node administrator**: the
+only thing made by hand, in AWX, because it holds the node's key.
 
 ### What AWX holds is declared, not clicked
 
@@ -3312,6 +3314,7 @@ pas de changement de sécurité.
 
 | Job | Playbook | Ce qu'il fait |
 |---|---|---|
+| 0 | `cell_prerequisites.yml` | sur le nœud k3s : les droits des jobs plateforme sur le cluster, le mot de passe de l'administrateur WAS, les credentials AWX qui en découlent |
 | 1 | `cell_machines.yml` | trois machines virtuelles KubeVirt, par l'API Kubernetes depuis le pod du job |
 | 2 | `cell_media.yml` | le média Installation Manager et WAS, copié depuis la VM du lab |
 | 3 | `lab_install_im.yml` | Installation Manager sur chaque machine |
@@ -3353,22 +3356,24 @@ Les deux ports sont lus dans le profil, pas supposés.
   l'inventaire ne donne pas de port de base (`defaultPorts=true`) : un profil
   par machine n'a besoin de rien d'autre.
 
-**L'accès au cluster** est un ServiceAccount, `awx/awx-cell-platform`
-(`ci/k3s/30-awx-cell-platform.yml`) : créer, lire et modifier des namespaces,
-machines virtuelles, disques, Secrets et Services - pas de suppression. AWX
-tient son jeton comme credential Kubernetes. **L'administrateur WAS** est
-`wasadmin`, son mot de passe généré une fois dans le Secret
-`awx/was-cell-admin`, jamais dans le dépôt :
+**Les prérequis sont un job aussi.** Le job 0 tourne sur le nœud k3s en
+tant que son administrateur (`roles/platform/cell_prerequisites`) : il donne
+aux jobs plateforme un ServiceAccount, `awx/awx-cell-platform` - créer, lire
+et modifier namespaces, machines virtuelles, disques, Secrets et Services, pas
+de suppression ; il génère une fois le mot de passe de l'administrateur WAS,
+l'utilisateur `wasadmin`, dans le Secret `awx/was-cell-admin` ; et il crée les
+credentials AWX « k3s API - cell platform » et « WAS cell administrator » et
+les attache aux jobs 1 à 9. Rien de tout cela n'est dans le dépôt :
 
 ```sh
 kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64 -d
 ```
 
-Tout ce qu'AWX contient est déclaré par `ci/awx/apply-cell-workflow.sh`, lancé
-depuis le nœud. Le script n'accorde jamais de droits sur le cluster : c'est
-l'acte de l'opérateur, `kubectl apply -f ci/k3s/30-awx-cell-platform.yml`.
-Sans lui le workflow est déclaré quand même, et le passage suivant du script
-ajoute le credential Kubernetes aux jobs 1, 2 et 9.
+`ci/awx/apply-cell-workflow.sh` déclare l'inventaire, les templates et le
+workflow - de la configuration seulement, ni secret ni droit sur le cluster.
+Le job 0 se connecte au nœud avec un credential machine AWX, **k3s node
+administrator** : la seule chose faite à la main, dans AWX, parce qu'il
+contient la clé du nœud.
 
 ### Ce que contient AWX est déclaré, pas cliqué
 

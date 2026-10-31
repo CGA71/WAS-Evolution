@@ -1,0 +1,21 @@
+---
+# Job 0 of the cell workflow: what it needs before its first machine.
+#
+#   ansible-playbook -i inventories/cell <this>
+#
+# In AWX this is "WAS cell - 0. Prerequisites". It runs on the k3s node, as its
+# administrator, with the AWX machine credential that template carries:
+#
+#   - the rights of the platform jobs on the cluster (a ServiceAccount, create,
+#     read and patch, no delete);
+#   - the WAS administrator, its password generated once into a Secret;
+#   - the AWX credentials made from them, attached to jobs 1 to 9.
+#
+# Replayable: a replay finds everything and changes nothing.
+
+- name: Prerequisites of the cell workflow, on the k3s node
+  hosts: "{{ prereq_hosts | default('k3s_control') }}"
+  gather_facts: true
+
+  roles:
+    - wasevo.websphere.platform.cell_prerequisites

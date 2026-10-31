@@ -15,17 +15,20 @@
 # three machines and stops at the cluster: no JDBC, no JMS, no security
 # change. Separate, so launching one never runs the other's jobs.
 #
-# WHAT IT HOLDS AND WHERE IT COMES FROM
+# NOTHING SECRET, NO CLUSTER RIGHT. This script declares the inventory, the
+# templates and the workflow - configuration only. What carries a secret or a
+# right is job 0 of the workflow itself, "WAS cell - 0. Prerequisites"
+# (playbooks/cell_prerequisites.yml), run by AWX on the k3s node:
 #
 #   Kubernetes credential   the token of ServiceAccount awx-cell-platform,
-#                           read from the cluster once the operator has applied
-#                           ci/k3s/30-awx-cell-platform.yml - this script never
-#                           grants rights on the cluster itself.
-#   WAS administrator       user wasadmin, its password generated once into the
-#                           Secret awx/was-cell-admin and injected by an AWX
-#                           credential. Read it with:
+#                           which job 0 creates with its rights.
+#   WAS administrator       user wasadmin, its password generated once by job 0
+#                           into the Secret awx/was-cell-admin. Read it with:
 #                             kubectl -n awx get secret was-cell-admin \
 #                               -o jsonpath='{.data.password}' | base64 -d
+#   Node credential         the AWX machine credential job 0 logs in to the
+#                           node with ("k3s node administrator"). The one thing
+#                           made by hand, in AWX: it holds the node's key.
 #   Inventory               "WAS cell", sourced from inventories/cell/hosts.yml.
 #   Survey                  the same as the lab workflow's (environment,
 #                           channel, topology, names), by apply-survey.sh.
@@ -40,10 +43,7 @@ PROJECT="${AWX_PROJECT:-WAS Evolution}"
 INVENTORY="${AWX_CELL_INVENTORY:-WAS cell}"
 INVENTORY_FILE="inventories/cell/hosts.yml"
 MACHINE_CRED="${AWX_MACHINE_CRED:-WAS lab VM (ansible)}"
-WAS_CRED_TYPE="${AWX_WAS_CRED_TYPE:-WAS administrative user}"
-WAS_CRED="${AWX_CELL_WAS_CRED:-WAS cell administrator}"
-K8S_CRED="${AWX_CELL_K8S_CRED:-k3s API - cell platform}"
-WAS_ADMIN_USER="${CELL_WAS_ADMIN_USER:-wasadmin}"
+NODE_CRED="${AWX_CELL_NODE_CRED:-k3s node administrator}"
 COL=ansible_collections/wasevo/websphere/playbooks
 
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
@@ -108,36 +108,6 @@ for n in json.load(sys.stdin)["results"]:
 fi
 
 # ---------------------------------------------------------------------------
-say "Cluster access for the platform jobs"
-# ---------------------------------------------------------------------------
-# Granting the jobs rights on the cluster is the operator's act, not this
-# script's: kubectl apply -f ci/k3s/30-awx-cell-platform.yml. Without it the
-# workflow is declared all the same; the Kubernetes credential is added on the
-# next run, once the token exists.
-TOKEN="$(kubectl -n awx get secret awx-cell-platform-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
-if [ -n "$TOKEN" ]; then
-    CA="$(kubectl -n awx get secret awx-cell-platform-token -o jsonpath='{.data.ca\.crt}' | base64 -d)"
-    ok "ServiceAccount awx-cell-platform and its token"
-else
-    note "no token yet: kubectl apply -f ci/k3s/30-awx-cell-platform.yml, then run this again"
-    note "jobs 1, 2 and 9 cannot reach the cluster until then"
-fi
-
-# ---------------------------------------------------------------------------
-say "The WAS administrator"
-# ---------------------------------------------------------------------------
-if ! kubectl -n awx get secret was-cell-admin >/dev/null 2>&1; then
-    kubectl -n awx create secret generic was-cell-admin \
-        --from-literal=user="$WAS_ADMIN_USER" \
-        --from-literal=password="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)" >/dev/null
-    ok "password generated into Secret awx/was-cell-admin"
-else
-    ok "Secret awx/was-cell-admin already holds the password - kept"
-fi
-WAS_PW="$(kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64 -d)"
-WAS_USER="$(kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.user}' | base64 -d)"
-
-# ---------------------------------------------------------------------------
 say "AWX objects"
 # ---------------------------------------------------------------------------
 api GET /ping/ >/dev/null || die "cannot reach $API"
@@ -146,13 +116,8 @@ PROJECT_ID="$(id_of projects "$PROJECT")"
 [ -n "$PROJECT_ID" ] || die "no project named \"$PROJECT\""
 MACHINE_CRED_ID="$(id_of credentials "$MACHINE_CRED")"
 [ -n "$MACHINE_CRED_ID" ] || die "no credential named \"$MACHINE_CRED\""
-WAS_CT_ID="$(id_of credential_types "$WAS_CRED_TYPE")"
-[ -n "$WAS_CT_ID" ] || die "no credential type \"$WAS_CRED_TYPE\" - run apply-templates.sh first"
-K8S_CT_ID="$(api GET "/credential_types/?kind=kubernetes" | py 'import sys,json
-for c in json.load(sys.stdin)["results"]:
-    if c["namespace"] == "kubernetes_bearer_token":
-        print(c["id"]); break')"
-[ -n "$K8S_CT_ID" ] || die "AWX has no Kubernetes bearer token credential type"
+NODE_CRED_ID="$(id_of credentials "$NODE_CRED")"
+[ -n "$NODE_CRED_ID" ] || note "no credential \"$NODE_CRED\" yet - job 0 needs it to reach the node"
 EE_ID="$(api GET "/job_templates/?page_size=200" | py 'import sys,json
 for t in json.load(sys.stdin)["results"]:
     if t.get("execution_environment"):
@@ -170,25 +135,6 @@ ok "project updated"
 
 py 'import json,sys
 print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]),
-  "credential_type": int(sys.argv[3]),
-  "description": "Token of ServiceAccount awx/awx-cell-platform - ci/k3s/30-awx-cell-platform.yml",
-  "inputs": {"host": "https://kubernetes.default.svc", "bearer_token": sys.argv[4],
-             "verify_ssl": True, "ssl_ca_cert": sys.argv[5]}}))' \
-  "$K8S_CRED" "$ORG_ID" "$K8S_CT_ID" "$TOKEN" "${CA:-}" > "$BODY"
-K8S_CRED_ID=""
-[ -z "$TOKEN" ] || K8S_CRED_ID="$(upsert credentials "$K8S_CRED")"
-
-py 'import json,sys
-print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]),
-  "credential_type": int(sys.argv[3]),
-  "description": "From Secret awx/was-cell-admin",
-  "inputs": {"was_admin_user": sys.argv[4], "was_admin_password": sys.argv[5]}}))' \
-  "$WAS_CRED" "$ORG_ID" "$WAS_CT_ID" "$WAS_USER" "$WAS_PW" > "$BODY"
-WAS_CRED_ID="$(upsert credentials "$WAS_CRED")"
-unset WAS_PW TOKEN
-
-py 'import json,sys
-print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]),
   "description": "A deployment manager and two federated nodes on k3s - inventories/cell"}))' \
   "$INVENTORY" "$ORG_ID" > "$BODY"
 INV_ID="$(upsert inventories "$INVENTORY")"
@@ -203,27 +149,32 @@ SRC_ID="$(upsert inventory_sources "$INVENTORY from project")"
 # ---------------------------------------------------------------------------
 say "Job templates"
 # ---------------------------------------------------------------------------
-# name | playbook | become | kubernetes credential | extra vars
+# name | playbook | become | node | extra vars
+#
+# The node column marks job 0, which logs in to the k3s node with the node
+# credential instead of the cell machines' one. Job 0 attaches the WAS and
+# Kubernetes credentials to the others when it has made them.
 #
 # become is off on the jobs that run plays on the controller - the job pod has
 # no sudo - and their roles ask for root task by task where the machine needs
 # it. lab_hosts and profile_hosts point the reused install and profile
 # playbooks at this inventory's machines, and away from the media source.
 STEPS=(
-  "WAS cell - 1. Machines|$COL/cell_machines.yml|false|k8s|"
-  "WAS cell - 2. Media|$COL/cell_media.yml|false|k8s|"
+  "WAS cell - 0. Prerequisites|$COL/cell_prerequisites.yml|false|node|"
+  "WAS cell - 1. Machines|$COL/cell_machines.yml|false||"
+  "WAS cell - 2. Media|$COL/cell_media.yml|false||"
   "WAS cell - 3. Installation Manager|$COL/lab_install_im.yml|true||lab_hosts: was_install"
   "WAS cell - 4. WAS|$COL/lab_install_was.yml|true||lab_hosts: was_install"
   "WAS cell - 5. Profiles: deployment manager, federated nodes|$COL/lab_create_profiles.yml|true||profile_hosts: was_install"
   "WAS cell - 6. Cluster|$COL/traditional_cluster.yml|true||config_dmgr_hosts: dmgr"
   "WAS cell - 7. Cluster members|$COL/traditional_cluster_members.yml|true||config_dmgr_hosts: dmgr"
   "WAS cell - 8. Start|$COL/traditional_start.yml|true||"
-  "WAS cell - 9. Console|$COL/cell_console.yml|false|k8s|"
+  "WAS cell - 9. Console|$COL/cell_console.yml|false||"
 )
 
 JT_IDS=()
 for step in "${STEPS[@]}"; do
-    IFS='|' read -r name playbook become k8s extra <<<"$step"
+    IFS='|' read -r name playbook become node extra <<<"$step"
     py 'import json,sys
 name, playbook, become, extra, inv, proj, ee = sys.argv[1:8]
 b = {"name": name, "job_type": "run", "inventory": int(inv), "project": int(proj),
@@ -234,11 +185,10 @@ b = {"name": name, "job_type": "run", "inventory": int(inv), "project": int(proj
 b["extra_vars"] = ("---\n%s\n" % extra.strip()) if extra.strip() else ""
 print(json.dumps(b))' "$name" "$playbook" "$become" "$extra" "$INV_ID" "$PROJECT_ID" "$EE_ID" > "$BODY"
     jt="$(upsert job_templates "$name")"
-    for cred in "$MACHINE_CRED_ID" "$WAS_CRED_ID"; do
-        api POST "/job_templates/$jt/credentials/" -d "{\"id\": $cred}" >/dev/null || true
-    done
-    if [ "$k8s" = "k8s" ] && [ -n "$K8S_CRED_ID" ]; then
-        api POST "/job_templates/$jt/credentials/" -d "{\"id\": $K8S_CRED_ID}" >/dev/null || true
+    if [ "$node" = "node" ]; then
+        [ -z "$NODE_CRED_ID" ] || api POST "/job_templates/$jt/credentials/" -d "{\"id\": $NODE_CRED_ID}" >/dev/null || true
+    else
+        api POST "/job_templates/$jt/credentials/" -d "{\"id\": $MACHINE_CRED_ID}" >/dev/null || true
     fi
     JT_IDS+=("$jt")
 done
@@ -248,7 +198,7 @@ say "Workflow"
 # ---------------------------------------------------------------------------
 py 'import json,sys
 print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]), "inventory": int(sys.argv[3]),
-  "description": "Three KubeVirt machines, WAS, a deployment manager, two federated nodes, "
+  "description": "Prerequisites, three KubeVirt machines, WAS, a deployment manager, two federated nodes, "
                  "a cluster of two members, started; the console on the node address.",
   "ask_variables_on_launch": True}))' "$WORKFLOW" "$ORG_ID" "$INV_ID" > "$BODY"
 WF_ID="$(upsert workflow_job_templates "$WORKFLOW")"
