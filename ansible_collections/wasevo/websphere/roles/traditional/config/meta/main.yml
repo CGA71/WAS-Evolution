@@ -6,6 +6,6 @@ galaxy_info:
     Stage the Jython driver and its handlers on the target, where the
     target's own wsadmin runs them. Installs the wsadmin stand-in in
     simulation.
-  license: GPL-3.0-or-later
+  license: Apache-2.0
   min_ansible_version: "2.15"
 dependencies: []

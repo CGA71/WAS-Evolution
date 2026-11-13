@@ -5,7 +5,7 @@ galaxy_info:
   description: >-
     Shared libraries, rendered from the shared model with each pattern
     expanded on the deployment manager. Replayable on its own.
-  license: GPL-3.0-or-later
+  license: Apache-2.0
   min_ansible_version: "2.15"
 
 # Deliberately empty: model and traditional.config are included where they are

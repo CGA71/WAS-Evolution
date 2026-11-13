@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2026, neo
-# GNU General Public License v3.0+
+# Copyright (c) 2026, CGA
+# Apache License 2.0 (see LICENSE or https://www.apache.org/licenses/LICENSE-2.0)
 """Shared plumbing for every module that reaches a WAS cell through wsadmin.
 
 Design constraints this file exists to absorb:

@@ -6,6 +6,6 @@ galaxy_info:
     Render server.xml, jvm.options and server.env from the shared model.
     Touches no cluster: it runs offline, which is what makes it the GitOps
     boundary.
-  license: GPL-3.0-or-later
+  license: Apache-2.0
   min_ansible_version: "2.15"
 dependencies: []

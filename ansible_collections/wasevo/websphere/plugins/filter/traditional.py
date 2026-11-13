@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2026, neo
-# GNU General Public License v3.0+
+# Copyright (c) 2026, CGA
+# Apache License 2.0 (see LICENSE or https://www.apache.org/licenses/LICENSE-2.0)
 """Render shared-model declarations into WAS traditional module arguments.
 
 The shared model - layer 1 - says what a datasource is in terms neither
