@@ -9,7 +9,7 @@ description: >-
   Ansible automation for IBM WebSphere Application Server ND (traditional) and
   WebSphere Liberty, covering the three-phase trajectory to OpenShift.
 license:
-  - GPL-3.0-or-later
+  - Apache-2.0
 # The first two are from Galaxy's required list - a collection has to carry at
 # least one of them, and these are the two that describe it: middleware
 # infrastructure, and the applications it deploys. The rest are what someone

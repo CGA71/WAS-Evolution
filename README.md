@@ -1726,6 +1726,14 @@ one.
 
 Source-repository findings come from direct inspection of the seven archives in `github.com/CGA71/WAS`.
 
+## 22. Licence
+
+Copyright 2026 CGA. Licensed under the [Apache License, Version 2.0](LICENSE); attribution is in [NOTICE](NOTICE).
+
+- The whole repository is under this licence: the `wasevo.websphere` collection, its roles, modules and plugins, the inventories, the CI and the documentation.
+- The collection carries its own copy of `LICENSE` and `NOTICE`, so a collection tarball built with `ansible-galaxy collection build` stays licensed once it leaves the repository. `galaxy.yml` and every role's `meta/main.yml` declare `Apache-2.0`, and every plugin starts with the licence header.
+- The licence covers this automation, **not the IBM products it installs**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager and the IBM SDK stay under IBM's own terms — for the "for Developers" edition, the ILAN (section 16). Nothing IBM ships is redistributed here: the playbooks fetch the media from a repository the operator provides.
+
 ---
 
 <a name="français"></a>
@@ -3484,3 +3492,11 @@ chemin et n'en est pas une.
 - [Managing policy set attachments using wsadmin scripting](https://setgetweb.com/p/WAS9/ae/was6092.html)
 
 Les relevés sur le dépôt source proviennent de l'inspection directe des sept archives de `github.com/CGA71/WAS`.
+
+## 22. Licence
+
+Copyright 2026 CGA. Sous [licence Apache, version 2.0](LICENSE) ; l'attribution figure dans [NOTICE](NOTICE).
+
+- Tout le dépôt est sous cette licence : la collection `wasevo.websphere`, ses rôles, modules et plugins, les inventaires, la CI et la documentation.
+- La collection porte sa propre copie de `LICENSE` et `NOTICE`, si bien qu'une archive construite par `ansible-galaxy collection build` reste sous licence une fois sortie du dépôt. `galaxy.yml` et le `meta/main.yml` de chaque rôle déclarent `Apache-2.0`, et chaque plugin commence par l'en-tête de licence.
+- La licence couvre cette automatisation, **pas les produits IBM qu'elle installe**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager et l'IBM SDK restent sous les conditions d'IBM — pour l'édition « for Developers », l'ILAN (section 16). Rien de ce qu'IBM livre n'est redistribué ici : les playbooks récupèrent les médias depuis un dépôt fourni par l'exploitant.

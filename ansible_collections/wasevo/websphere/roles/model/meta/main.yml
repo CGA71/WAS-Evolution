@@ -6,6 +6,6 @@ galaxy_info:
     Validate the shared model, enforce the product x JDK matrix, translate
     the JVM intents, and publish the name of every WAS object this run
     builds.
-  license: GPL-3.0-or-later
+  license: Apache-2.0
   min_ansible_version: "2.15"
 dependencies: []

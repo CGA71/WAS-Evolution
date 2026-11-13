@@ -6,7 +6,7 @@ galaxy_info:
     The application servers that are the members of a cluster, vertical or
     horizontal. Replayable on its own: it resolves the model, stages the
     Jython driver and checks its own preconditions.
-  license: GPL-3.0-or-later
+  license: Apache-2.0
   min_ansible_version: "2.15"
 
 # Deliberately empty. The roles this one needs - model, traditional.config -
