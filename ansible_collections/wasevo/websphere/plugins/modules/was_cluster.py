@@ -141,8 +141,8 @@ cluster:
     name: ClusterEXT
     prefer_local: "true"
     members:
-      - name: EXTrit-was-01-1
-        node: NDrit-was-01AppSrv
+      - name: ClusterEXT_PREPRODNode01_01
+        node: PREPRODNode01
 """
 
 from ansible.module_utils.basic import AnsibleModule
