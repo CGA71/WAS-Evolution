@@ -18,16 +18,20 @@
       ci/k3s/lab-mirror-was.sh; that is the one step no job can do.
     success_msg: "the media is on {{ inventory_hostname }}"
 
+# tar CREATES the archive here: unarchive does the opposite, and
+# community.general.archive is not in the execution environment.
 - name: Archive the media once
-  ansible.builtin.command:
+  ansible.builtin.command:  # noqa: command-instead-of-module
     cmd: >-
       tar -cf {{ was_install_binaries_base_dir }}/{{ media_archive }}
       -C {{ was_install_binaries_base_dir }} {{ media_dirs | join(' ') }}
     creates: "{{ was_install_binaries_base_dir }}/{{ media_archive }}"
   become: true
 
+# A read-only question. The systemd module only sets a state; it has no
+# is-active, and service_facts would read every unit to answer for one.
 - name: Is the server already up
-  ansible.builtin.command:
+  ansible.builtin.command:  # noqa: command-instead-of-module
     cmd: systemctl is-active {{ media_unit }}
   register: _media_unit_state
   changed_when: false

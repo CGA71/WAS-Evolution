@@ -3,10 +3,12 @@
 # archive stays, so the next cell built from this lab copies without
 # re-archiving.
 
+#
+# The unit is transient (systemd-run): once stopped it no longer exists, so a
+# replay finds nothing to stop - which is not a failure.
 - name: Stop serving the media
-  ansible.builtin.command:
-    cmd: systemctl stop {{ media_unit }}
+  ansible.builtin.systemd_service:
+    name: "{{ media_unit }}"
+    state: stopped
   become: true
-  register: _media_stop
-  changed_when: _media_stop.rc == 0
   failed_when: false

@@ -87,7 +87,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "{{ certificate_renewal.action }} {{ certificate_renewal.alias }}"
+    - name: "The certificate, acted on: {{ certificate_renewal.action }} {{ certificate_renewal.alias }}"
       wasevo.websphere.was_certificate:
         action: "{{ certificate_renewal.action }}"
         keystore: "{{ certificate_renewal.keystore }}"
