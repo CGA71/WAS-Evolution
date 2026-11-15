@@ -574,6 +574,36 @@ payload ssl_absent <<'JSON'
 JSON
 
 # --------------------------------------------------------------------------
+# Certificates: the inventory, and each way a certificate is renewed
+# --------------------------------------------------------------------------
+# The fake cell seeds a certificate of each kind at an expiry relative to
+# today: the cell's own, comfortable; the first node's, within a month; the
+# other nodes', within three; the root; an application's certificate a
+# corporate CA signed, within three months; a partner's signer, within ten
+# days. Files go through a native path, so the simulation also runs from Git
+# Bash on Windows, where a Python started from bash does not read /tmp.
+CERT_DIR="$(cygpath -m "$WORK" 2>/dev/null || echo "$WORK")"
+CELL_SCOPE='"scope":"(cell):TestCell"'
+NODE1_SCOPE='"scope":"(cell):TestCell:(node):STUBNode01"'
+cert_payload() {
+    local name="$1" params="$2" check="${3:-false}"
+    printf '{"resource":"certificates","state":"present","params":%s,"check_mode":%s,"save_config":true,"sync_nodes":true}\n' \
+        "$params" "$check" > "$WORK/$name.json"
+}
+cert_payload cert_inv '{"action":"inventory"}'
+cert_payload cert_renew_ca '{"action":"renew","keystore":"ExtranetKeyStore",'"$CELL_SCOPE"',"alias":"extranet-web"}'
+cert_payload cert_renew_root '{"action":"renew","keystore":"DefaultRootStore",'"$CELL_SCOPE"',"alias":"root"}'
+cert_payload cert_renew_far '{"action":"renew","keystore":"CellDefaultKeyStore",'"$CELL_SCOPE"',"alias":"default"}'
+cert_payload cert_renew_node_check '{"action":"renew","keystore":"NodeDefaultKeyStore",'"$NODE1_SCOPE"',"alias":"default"}' true
+cert_payload cert_renew_node '{"action":"renew","keystore":"NodeDefaultKeyStore",'"$NODE1_SCOPE"',"alias":"default"}'
+cert_payload cert_request '{"action":"request","keystore":"ExtranetKeyStore",'"$CELL_SCOPE"',"alias":"extranet-web","request_file":"'"$CERT_DIR"'/extranet.csr"}'
+cert_payload cert_receive_unknown '{"action":"receive","keystore":"ExtranetKeyStore",'"$CELL_SCOPE"',"alias":"extranet-web","request_alias":"nothing_waits","certificate_file":"'"$CERT_DIR"'/signed.pem"}'
+cert_payload cert_signer_nohost '{"action":"refresh_signer","keystore":"CellDefaultTrustStore",'"$CELL_SCOPE"',"alias":"partner-api"}'
+cert_payload cert_signer '{"action":"refresh_signer","keystore":"CellDefaultTrustStore",'"$CELL_SCOPE"',"alias":"partner-api","host":"api.partner.sim","port":443}'
+printf -- '-----BEGIN CERTIFICATE-----\nSIMULATED\n-----END CERTIFICATE-----\n' > "$WORK/signed.pem"
+cp "$WORK/signed.pem" "$WORK/ca.pem"
+
+# --------------------------------------------------------------------------
 # Web services policy sets: a default imported, a copy adjusted
 # --------------------------------------------------------------------------
 payload ps <<'JSON'
@@ -957,6 +987,71 @@ expect "node config and signer removed"           ssl_absent           true
 expect "replay delete"                            ssl_absent           false
 
 echo
+echo "=== certificates: the inventory, and each way of renewing ==="
+# status=count pairs, and one certificate's expiry and users, read through the
+# driver as the inventory role reads them.
+cert_inventory() {
+    "$PY" "$STUB/shim.py" "$DRIVER" "$WORK/cert_inv.json" 2>&1 \
+      | sed -n '/<<<VSSP-JSON>>>/,/<<<END-VSSP-JSON>>>/p' | sed '1d;$d' \
+      | "$PY" -c '
+import json, sys
+found = json.load(sys.stdin)["before"]
+query = sys.argv[1]
+if query == "summary":
+    print(" ".join("%s=%d" % (k, found["summary"][k]) for k in sorted(found["summary"])))
+elif query == "methods":
+    print(" ".join(sorted("%s:%s" % (c["alias"], c["method"]) for c in found["certificates"]
+                          if c["keystore"] in ("ExtranetKeyStore", "DefaultRootStore", "CellDefaultTrustStore"))))
+else:
+    keystore, alias = query.split("/")
+    for c in found["certificates"]:
+        held = c["alias"].startswith(alias[:-1]) if alias.endswith("*") else c["alias"] == alias
+        if c["keystore"] == keystore and held:
+            print("%s %s %s %s" % (c["alias"], c["status"], ",".join(c["used_by"]) or "-",
+                                   ",".join(c.get("pending_requests", [])) or "-"))
+' "$1"
+}
+expect "inventory: read only"                     cert_inv             false
+# Three nodes: the first one's within a month, the other two within three.
+expect_value "one of each status, LTPA keys skipped" "$(cert_inventory summary)" "critical=2 ok=2 warning=3"
+expect_value "each renewed the way its issuer allows" "$(cert_inventory methods)" \
+    "extranet-web:request partner-api:refresh_signer root:manual"
+expect_value "who presents the application's certificate" \
+    "$(cert_inventory ExtranetKeyStore/extranet-web)" "extranet-web warning ExtranetSSLSettings -"
+expect_refusal "renew a CA-signed certificate" \
+    cert_renew_ca "a CA outside the cell"
+expect_refusal "renew the cell's root" \
+    cert_renew_root "the cell's root"
+expect "renew: far from expiry, nothing to do"    cert_renew_far       false
+expect "renew --check: due, would renew"          cert_renew_node_check true
+expect_value "the check run renewed nothing" \
+    "$(cert_inventory NodeDefaultKeyStore/default | head -1)" "default critical NodeDefaultSSLSettings -"
+expect "renew the first node's certificate"       cert_renew_node      true
+expect "replay (idempotency)"                     cert_renew_node      false
+expect "request: a CSR for the corporate CA"      cert_request         true
+expect_value "the request waits, the CSR is written" \
+    "$(cert_inventory ExtranetKeyStore/extranet-web | cut -d' ' -f1,4)-$(grep -c 'BEGIN NEW CERTIFICATE REQUEST' "$WORK/extranet.csr")" \
+    "extranet-web extranet-web_$("$PY" -c 'import datetime;print((datetime.date.today()+datetime.timedelta(days=45)).strftime("%Y%m%d"))')-1"
+rm -f "$WORK/extranet.csr"
+expect "replay (idempotency)"                     cert_request         false
+expect_value "and the CSR is extracted again for the CA" \
+    "$(grep -c 'BEGIN NEW CERTIFICATE REQUEST' "$WORK/extranet.csr" 2>/dev/null || echo 0)" "1"
+expect_refusal "receive an answer nobody asked for" \
+    cert_receive_unknown "run action request first"
+REQUEST_ALIAS="$(cert_inventory ExtranetKeyStore/extranet-web | cut -d' ' -f4)"
+cert_payload cert_receive '{"action":"receive","keystore":"ExtranetKeyStore",'"$CELL_SCOPE"',"alias":"extranet-web","request_alias":"'"$REQUEST_ALIAS"'","certificate_file":"'"$CERT_DIR"'/signed.pem","ca_file":"'"$CERT_DIR"'/ca.pem"}'
+expect "receive the answer, replace the old one"  cert_receive         true
+expect "replay (idempotency)"                     cert_receive         false
+expect_value "the SSL configuration presents the new certificate" \
+    "$(cert_inventory "ExtranetKeyStore/$REQUEST_ALIAS")" "$REQUEST_ALIAS ok ExtranetSSLSettings -"
+expect_refusal "a signer without its peer" \
+    cert_signer_nohost "the peer's host and port"
+expect "retrieve the partner's signer again"      cert_signer          true
+expect "replay (idempotency)"                     cert_signer          false
+expect_value "what is left: the two other nodes', within three months" \
+    "$(cert_inventory summary)" "ok=6 warning=2"
+
+echo
 echo "=== web services policy sets ==="
 expect "a default imported, a copy adjusted"      ps                   true
 expect "replay (idempotency)"                     ps                   false
@@ -1242,7 +1337,7 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Forty-six effective changes above. The cluster: created, members created,
+# Fifty effective changes above. The cluster: created, members created,
 # a port pinned, a member drained, a member deleted, the cluster deleted (6).
 # The aliases: created, password rotated, deleted (3). JDBC: provider created,
 # its jar replaced, an alias created, a datasource created, its pool changed,
@@ -1252,17 +1347,18 @@ print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 # JMS on IBM MQ: created, a factory moved to CLIENT, deleted (3).
 # Server settings: transactions, EJB, CDI on then back, JPA (5).
 # Dynamic cache, HPEL, PMI (3). Security: federated, LDAP, the password
-# rotated, custom (4). SSL: created, removed (2). Policy sets: created, an
-# attribute changed, the copy deleted (3).
+# rotated, custom (4). SSL: created, removed (2). Certificates: a node's
+# renewed, a request made, its answer received, a signer retrieved again (4).
+# Policy sets: created, an attribute changed, the copy deleted (3).
 # Every replay, every check run, the password left alone under on_create, the
 # store drift left alone and every refusal must add none - a node
 # synchronisation on a cell that did not change is a ripple through the estate
 # for nothing.
-if [ "$syncs" = "46" ]; then
-    echo "  ok     46 syncs for 46 effective changes, none for the replays, the"
+if [ "$syncs" = "50" ]; then
+    echo "  ok     50 syncs for 50 effective changes, none for the replays, the"
     echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 46 syncs, state reports $syncs"
+    echo "  FAIL   expected 50 syncs, state reports $syncs"
     fail=1
 fi
 

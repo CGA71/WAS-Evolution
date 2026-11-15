@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Certificats WAS</title>
+  <link rel="stylesheet" href="portal.css">
+</head>
+<body>
+  <header class="bar">
+    <div>
+      <h1>Certificats WAS</h1>
+      <p class="sub">Moteur et applications des cellules WAS traditionnel, lus par AWX</p>
+    </div>
+    <div class="bar-right">
+      <span id="who" class="who"></span>
+      <button id="reload" type="button">Actualiser</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="login" class="notice" hidden>
+      <p>Le portail lit AWX avec <strong>votre</strong> session : connectez-vous à AWX, puis revenez ici.</p>
+      <p><a id="login-link" href="/#/login">Se connecter à AWX</a></p>
+    </section>
+
+    <section id="error" class="notice error" hidden></section>
+
+    <section class="tiles" id="tiles" aria-label="Synthèse"></section>
+
+    <section class="cells" id="cells" aria-label="Cellules"></section>
+
+    <section class="filters" aria-label="Filtres">
+      <label>Organisation
+        <select id="f-org"><option value="">Toutes</option></select>
+      </label>
+      <label>Domaine
+        <select id="f-domain">
+          <option value="">Tous</option>
+          <option value="engine">Moteur</option>
+          <option value="application">Applications</option>
+          <option value="trust">Confiance (signataires)</option>
+        </select>
+      </label>
+      <label class="grow">Recherche
+        <input id="f-text" type="search" placeholder="cellule, keystore, alias, sujet…">
+      </label>
+      <label class="check"><input id="f-due" type="checkbox" checked> <span id="f-due-label">À échéance seulement</span></label>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Statut</th><th>Jours</th><th>Expire le</th><th>Cellule</th><th>Domaine</th>
+            <th>Keystore / alias</th><th>Sujet</th><th>Émetteur</th><th>Utilisé par</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="empty" hidden></p>
+    </section>
+
+    <section class="jobs" id="jobs-section" hidden>
+      <h2>Jobs lancés depuis cette page</h2>
+      <ul id="jobs"></ul>
+    </section>
+  </main>
+
+  <dialog id="dlg">
+    <form method="dialog" id="dlg-form">
+      <h2 id="dlg-title"></h2>
+      <p id="dlg-what" class="what"></p>
+      <dl id="dlg-cert" class="cert"></dl>
+      <div id="dlg-fields"></div>
+      <label class="check"><input id="dlg-force" type="checkbox"> Forcer, même loin de l'échéance</label>
+      <p id="dlg-missing" class="error" hidden></p>
+      <div class="dlg-actions">
+        <button value="cancel" type="submit" formnovalidate>Annuler</button>
+        <button id="dlg-launch" value="launch" type="submit" class="primary">Lancer le job AWX</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="certificates.js"></script>
+  <script src="portal.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: platform_certificate_portal
+  author: neo
+  description: >-
+    The certificate portal - a static page served on AWX's own host that shows the certificates of
+    every cell the viewer may see and launches their renewal through AWX. Replayable on its own.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+
+dependencies: []

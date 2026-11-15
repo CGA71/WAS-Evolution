@@ -1,0 +1,32 @@
+---
+# One certificate of a cell renewed, then the cell's certificates read again.
+#
+#   ansible-playbook -i inventories/lab <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr \
+#       -e '{"certificate_renewal": {"action": "renew", "keystore": "CellDefaultKeyStore",
+#            "scope": "(cell):MyCell", "alias": "default"}}'
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. In AWX, "Certificates - renew",
+# launched by the certificate portal with the certificate it shows. The read
+# that follows is the inventory role, unchanged: it puts the cell as it now is
+# in this job's artifacts, so the portal refreshes from the job it launched
+# without a second one.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: One certificate renewed, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: Renew the certificate
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.certificate_renewal
+
+    - name: The certificates of the cell as they now are
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.certificates

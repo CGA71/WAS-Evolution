@@ -1,0 +1,6 @@
+---
+# The file names this run uses on the deployment manager: one certificate,
+# one name, nothing a scope or an alias could turn into a path.
+_renewal_base: >-
+  {{ (certificate_renewal.keystore | default('') ~ '_' ~ certificate_renewal.alias | default(''))
+     | regex_replace('[^A-Za-z0-9_.-]', '_') }}

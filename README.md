@@ -1734,6 +1734,60 @@ Copyright 2026 CGA. Licensed under the [Apache License, Version 2.0](LICENSE); a
 - The collection carries its own copy of `LICENSE` and `NOTICE`, so a collection tarball built with `ansible-galaxy collection build` stays licensed once it leaves the repository. `galaxy.yml` and every role's `meta/main.yml` declare `Apache-2.0`, and every plugin starts with the licence header.
 - The licence covers this automation, **not the IBM products it installs**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager and the IBM SDK stay under IBM's own terms — for the "for Developers" edition, the ILAN (section 16). Nothing IBM ships is redistributed here: the playbooks fetch the media from a repository the operator provides.
 
+## 23. Certificates: inventory, renewal and the portal
+
+Every cell is read for its certificates - engine and applications - and a page
+shows, across every cell and every client, the ones expiring within three
+months, with a button that launches their renewal. Everything goes through AWX:
+the page holds no credential and no data of its own.
+
+| Playbook | Role | What it does |
+|---|---|---|
+| `traditional_certificates.yml` | `traditional.certificates` | Read only. Every key store of the cell, every personal and signer certificate, its expiry, what uses it and how it is renewed. Published as AWX job artifacts under `wasevo_certificates.cells.<cell>`. |
+| `traditional_certificate_renewal.yml` | `traditional.certificate_renewal` | Renews ONE certificate, named by the `certificate_renewal` extra var, then inventories the cell again. |
+| `platform_certificate_portal.yml` | `platform.certificate_portal` | The page, on the k3s node: a ConfigMap, an unprivileged nginx and an Ingress for `/wasevo/certificates` on AWX's own host. |
+
+**Renewal follows the issuer**, so the page offers only what is possible:
+
+| Issuer | Action | What happens |
+|---|---|---|
+| The cell's own root | `renew` | `renewCertificate`: issued again by the cell, same alias, every SSL configuration that uses it keeps working. |
+| A CA | `request`, then `receive` | A certificate request is generated in the key store; the CSR comes back in the job artifacts (`wasevo_certificate_job`) for the PKI. Its answer, pasted in the page, is received and replaces the certificate. No private key leaves the key store. |
+| A peer (signer) | `refresh_signer` | The signer is retrieved again from the peer's host and port. |
+| The cell's root itself | - | Shown, never automated: renewing it re-issues every certificate it signed. |
+
+A certificate far from its expiry is refused unless `force` is set, so a replay
+- or a second click - changes nothing.
+
+**Multi-client is AWX's organisations.** The page is served on AWX's host, so
+the browser sends the viewer's own AWX session and CSRF cookie with each API
+call: no token, no service account, and AWX's rights are the tenant isolation.
+A user sees the cells of the inventories they may read and launches what they
+may execute - nothing else. The page finds the templates by their playbook, not
+their name, and shows for each cell the newest successful report.
+
+**In AWX**, per organisation:
+
+```sh
+AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" \
+    bash ci/awx/apply-certificates.sh
+
+# once per AWX: the portal template, on the k3s node's inventory
+AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS cell lab" \
+    bash ci/awx/apply-certificates.sh
+```
+
+It creates "Certificates - inventory" and "Certificates - renew" in the
+organisation, prompting for inventory and variables at launch, attaches the
+organisation's WAS administrative credential when it exists, and schedules the
+inventory daily. The portal is then at `https://<awx host>/wasevo/certificates/`.
+
+**In CI**, nothing is deployed: the fake cell carries certificates and the new
+`AdminTask` verbs, `ci/run-stub-tests.sh` inventories, renews by each method and
+replays to `changed=false`, and `ci/portal-tests.js` checks what the page
+decides - the status for today, the newest report per cell, the actions per
+issuer and the extra vars of a launch.
+
 ---
 
 <a name="français"></a>
@@ -3500,3 +3554,60 @@ Copyright 2026 CGA. Sous [licence Apache, version 2.0](LICENSE) ; l'attribution 
 - Tout le dépôt est sous cette licence : la collection `wasevo.websphere`, ses rôles, modules et plugins, les inventaires, la CI et la documentation.
 - La collection porte sa propre copie de `LICENSE` et `NOTICE`, si bien qu'une archive construite par `ansible-galaxy collection build` reste sous licence une fois sortie du dépôt. `galaxy.yml` et le `meta/main.yml` de chaque rôle déclarent `Apache-2.0`, et chaque plugin commence par l'en-tête de licence.
 - La licence couvre cette automatisation, **pas les produits IBM qu'elle installe**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager et l'IBM SDK restent sous les conditions d'IBM — pour l'édition « for Developers », l'ILAN (section 16). Rien de ce qu'IBM livre n'est redistribué ici : les playbooks récupèrent les médias depuis un dépôt fourni par l'exploitant.
+
+## 23. Certificats : inventaire, renouvellement et portail
+
+Chaque cellule est lue pour ses certificats - moteur et applications - et une
+page montre, sur toutes les cellules et tous les clients, ceux qui expirent
+dans les trois mois, avec un bouton qui lance leur renouvellement. Tout passe
+par AWX : la page ne détient ni identifiant ni donnée propre.
+
+| Playbook | Rôle | Ce qu'il fait |
+|---|---|---|
+| `traditional_certificates.yml` | `traditional.certificates` | Lecture seule. Chaque keystore de la cellule, chaque certificat personnel et signataire, son échéance, ce qui l'utilise et comment il se renouvelle. Publié en artefacts de job AWX sous `wasevo_certificates.cells.<cellule>`. |
+| `traditional_certificate_renewal.yml` | `traditional.certificate_renewal` | Renouvelle UN certificat, nommé par la variable `certificate_renewal`, puis refait l'inventaire de la cellule. |
+| `platform_certificate_portal.yml` | `platform.certificate_portal` | La page, sur le nœud k3s : une ConfigMap, un nginx non privilégié et un Ingress pour `/wasevo/certificates` sur l'hôte même d'AWX. |
+
+**Le renouvellement suit l'émetteur**, la page ne propose donc que le possible :
+
+| Émetteur | Action | Ce qui se passe |
+|---|---|---|
+| La racine de la cellule | `renew` | `renewCertificate` : réémis par la cellule, même alias, toutes les configurations SSL qui l'utilisent continuent de fonctionner. |
+| Une CA | `request`, puis `receive` | Une requête de certificat est générée dans le keystore ; le CSR revient dans les artefacts du job (`wasevo_certificate_job`) pour la PKI. Sa réponse, collée dans la page, est reçue et remplace le certificat. Aucune clé privée ne quitte le keystore. |
+| Un pair (signataire) | `refresh_signer` | Le signataire est récupéré à nouveau sur l'hôte et le port du pair. |
+| La racine elle-même | - | Affichée, jamais automatisée : la renouveler réémet tout ce qu'elle a signé. |
+
+Un certificat loin de son échéance est refusé sauf `force`, si bien qu'un rejeu
+- ou un second clic - ne change rien.
+
+**Le multi-client, ce sont les organisations AWX.** La page est servie sur
+l'hôte d'AWX, donc le navigateur envoie à chaque appel la session AWX de
+l'utilisateur et son cookie CSRF : ni jeton ni compte de service, et les droits
+AWX font l'isolation entre clients. Un utilisateur voit les cellules des
+inventaires qu'il peut lire et lance ce qu'il peut exécuter - rien d'autre. La
+page trouve les templates par leur playbook, pas par leur nom, et montre pour
+chaque cellule le rapport réussi le plus récent.
+
+**Dans AWX**, par organisation :
+
+```sh
+AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" \
+    bash ci/awx/apply-certificates.sh
+
+# une fois par AWX : le template du portail, sur l'inventaire du noeud k3s
+AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS cell lab" \
+    bash ci/awx/apply-certificates.sh
+```
+
+Il crée « Certificates - inventory » et « Certificates - renew » dans
+l'organisation, avec inventaire et variables demandés au lancement, y attache
+l'identifiant d'administration WAS de l'organisation s'il existe, et planifie
+l'inventaire chaque jour. Le portail est alors à
+`https://<hôte awx>/wasevo/certificates/`.
+
+**En CI**, rien n'est déployé : la fausse cellule porte des certificats et les
+nouveaux verbes `AdminTask`, `ci/run-stub-tests.sh` fait l'inventaire,
+renouvelle par chaque méthode et rejoue jusqu'à `changed=false`, et
+`ci/portal-tests.js` vérifie ce que la page décide - le statut du jour, le
+rapport le plus récent par cellule, les actions par émetteur et les variables
+d'un lancement.

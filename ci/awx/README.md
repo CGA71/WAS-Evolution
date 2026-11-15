@@ -33,3 +33,16 @@ kubectl -n awx get secret awx-admin-password -o jsonpath='{.data.password}' | ba
 - Single-node k3s: one replica, operator-managed PostgreSQL on the `local-path`
   StorageClass. This is a forge, not a production AWX - there is no HA, and a
   node loss means a restore from backup.
+
+## Certificates
+
+`apply-certificates.sh` creates, for one organisation (one client), the
+"Certificates - inventory" and "Certificates - renew" job templates and a daily
+schedule for the inventory; with `AWX_PORTAL_INVENTORY`, also the
+"Certificates - portal" template that deploys the page. Run it once per
+organisation. See README section 23.
+
+```sh
+AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" bash ci/awx/apply-certificates.sh
+bash ci/awx/apply-certificates.sh --show
+```

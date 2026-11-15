@@ -1,0 +1,113 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ certportal_name }}
+  namespace: {{ certportal_namespace }}
+  labels: {app: {{ certportal_name }}}
+data:
+{% for name, content in _certportal_files.items() %}
+  {{ name }}: {{ content | to_json }}
+{% endfor %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ certportal_name }}-nginx
+  namespace: {{ certportal_namespace }}
+  labels: {app: {{ certportal_name }}}
+data:
+  # The page is served under the same path the Ingress routes, and nothing
+  # else: no directory listing, no other file. No caching of the page itself,
+  # so a redeployed portal is what the next load gets.
+  default.conf: |
+    server {
+      listen 8080;
+      server_tokens off;
+      location = {{ certportal_path }} { return 301 {{ certportal_path }}/; }
+      location {{ certportal_path }}/ {
+        alias /usr/share/nginx/html/;
+        index index.html;
+        autoindex off;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options "nosniff";
+        add_header Referrer-Policy "same-origin";
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+      }
+      location / { return 404; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ certportal_name }}
+  namespace: {{ certportal_namespace }}
+  labels: {app: {{ certportal_name }}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ certportal_name }}}
+  template:
+    metadata:
+      labels: {app: {{ certportal_name }}}
+      annotations:
+        # A changed page is a new rollout, not a pod serving the old files.
+        wasevo/content-hash: "{{ (_certportal_files | to_json) | hash('sha256') }}"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: nginx
+          image: {{ certportal_image }}
+          ports: [{containerPort: 8080, name: http}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 200m, memory: 64Mi}
+          readinessProbe:
+            httpGet: {path: "{{ certportal_path }}/portal.json", port: http}
+          volumeMounts:
+            - {name: site, mountPath: /usr/share/nginx/html, readOnly: true}
+            - {name: conf, mountPath: /etc/nginx/conf.d, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: site
+          configMap: {name: {{ certportal_name }}}
+        - name: conf
+          configMap: {name: {{ certportal_name }}-nginx}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ certportal_name }}
+  namespace: {{ certportal_namespace }}
+  labels: {app: {{ certportal_name }}}
+spec:
+  selector: {app: {{ certportal_name }}}
+  ports: [{port: 80, targetPort: http, name: http}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ certportal_name }}
+  namespace: {{ certportal_namespace }}
+  labels: {app: {{ certportal_name }}}
+spec:
+  ingressClassName: {{ certportal_ingress_class }}
+  rules:
+    - host: {{ _certportal_host }}
+      http:
+        paths:
+          - path: {{ certportal_path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ certportal_name }}
+                port: {name: http}

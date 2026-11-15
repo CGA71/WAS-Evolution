@@ -1,0 +1,15 @@
+---
+# The certificate portal, on the k3s node, served on AWX's own host.
+#
+#   ansible-playbook -i inventories/cell <this>
+#
+# In AWX, "Certificates - portal", with the k3s node's machine credential - the
+# same one job 0 of the cell workflow uses. Replayable: a replay with the same
+# page changes nothing; a changed page rolls the server.
+
+- name: The certificate portal, on the k3s node
+  hosts: "{{ certportal_hosts | default('k3s_control') }}"
+  gather_facts: true
+
+  roles:
+    - wasevo.websphere.platform.certificate_portal

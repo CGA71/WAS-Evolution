@@ -1,0 +1,35 @@
+---
+# Renew ONE certificate of a cell, the way its issuer allows. The certificate
+# portal launches it with the certificate it shows; it is just as launchable
+# from AWX or the command line:
+#
+#   certificate_renewal:
+#     action: renew            # renew | request | receive | refresh_signer
+#     keystore: CellDefaultKeyStore
+#     scope: "(cell):MyCell"
+#     alias: default
+#     # request
+#     subject_dn: ""           # the current certificate's subject when empty
+#     # receive - the request job reported request_alias
+#     request_alias: ""
+#     signed_certificate: |    # the CA's answer, base64 (PEM)
+#       -----BEGIN CERTIFICATE-----
+#     ca_certificate: ""       # the issuing CA, PEM, when the key store lacks it
+#     # refresh_signer
+#     peer_host: api.partner.example.com
+#     peer_port: 443
+#     force: false             # act even far from the expiry
+#
+# Certificates are public: a request, a signed certificate and a CA chain
+# travel as extra vars and job artifacts without exposing anything. No private
+# key ever leaves the key store - that is the point of a certificate request.
+
+certificate_renewal: {}
+
+# Act only on a certificate expiring within this many days, so a replay - or
+# a second click - changes nothing.
+certificate_renewal_within_days: 90
+
+# Where request and certificate files are written on the deployment manager.
+# Owned by the WAS user, 0700, emptied of the certificates after the run.
+certificate_renewal_work_dir: "{{ was_jython_dir | dirname }}/certificates"

@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: traditional_certificates
+  author: neo
+  description: >-
+    The certificate inventory of a cell - every key store, every personal and signer certificate,
+    its expiry and how it is renewed - published as AWX job artifacts for the certificate portal.
+    Read only, replayable on its own.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model and traditional.config are included where they are
+# used, so this role stays runnable on its own.
+dependencies: []

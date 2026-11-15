@@ -1,0 +1,71 @@
+---
+# The certificates of the cell, on the deployment manager, in one wsadmin
+# session. Changes nothing.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names what is missing.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [certificates, always]
+
+- name: Check the credentials and the profile, and stage the driver
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.config
+    tasks_from: cell_preflight.yml
+  vars:
+    cell_label: certificates
+    cell_render: {settings: {}, errors: [], warnings: []}
+  tags: [certificates]
+
+- name: Read every certificate of the cell
+  wasevo.websphere.was_certificate_info:
+    renew_within_days: "{{ certificates_renew_within_days | int }}"
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: certificates_found
+  tags: [certificates]
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      - "cell        : {{ certificates_found.cell }}"
+      - "certificates: {{ certificates_found.certificates | length }}, {{ certificates_found.summary | to_json }}"
+      - "unreadable  : {{ certificates_found.unreadable | join(' | ') | default('none', true) }}"
+  tags: [certificates]
+
+- name: What needs attention
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.status }} - {{ item.days_left if item.days_left is not none else '?' }} day(s) -
+      {{ item.keystore }}/{{ item.alias }} at {{ item.scope }} - renewed by {{ item.method }}
+      {{ ('- presented by ' ~ (item.used_by | join(', '))) if item.used_by else '' }}
+  loop: "{{ certificates_found.certificates | rejectattr('status', 'equalto', 'ok') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  tags: [certificates]
+
+- name: Publish the inventory for the certificate portal
+  ansible.builtin.set_stats:
+    aggregate: true
+    per_host: false
+    data:
+      wasevo_certificates:
+        cells: "{{ {certificates_found.cell: _certificates_report} }}"
+  vars:
+    _certificates_report:
+      cell: "{{ certificates_found.cell }}"
+      host: "{{ inventory_hostname }}"
+      scope_names: "{{ certificates_found.certificates | map(attribute='scope') | unique | list }}"
+      scanned_on: "{{ certificates_found.today }}"
+      scanned_at: "{{ ansible_date_time.iso8601 | default('') }}"
+      renew_within_days: "{{ certificates_found.renew_within_days }}"
+      certificates: "{{ certificates_found.certificates }}"
+      summary: "{{ certificates_found.summary }}"
+      unreadable: "{{ certificates_found.unreadable }}"
+      environment: "{{ was_environment | default('') }}"
+  when: certificates_publish | bool
+  tags: [certificates]

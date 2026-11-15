@@ -1,0 +1,177 @@
+---
+# One certificate renewed, on the deployment manager, in one wsadmin session.
+#
+# REPLAYABLE ON ITS OWN. Resolves the model, stages the driver, checks its own
+# preconditions, and names what is missing. A replay changes nothing: the
+# certificate is no longer due, the request already waits, the answer is
+# already received.
+
+- name: The certificate and what to do with it must be named
+  ansible.builtin.assert:
+    that:
+      - certificate_renewal.action | default('') in ['renew', 'request', 'receive', 'refresh_signer']
+      - certificate_renewal.keystore | default('') | length > 0
+      - certificate_renewal.scope | default('') | length > 0
+      - certificate_renewal.alias | default('') | length > 0
+    fail_msg: >-
+      certificate_renewal needs action (renew, request, receive or
+      refresh_signer), keystore, scope and alias - exactly as the inventory
+      lists them. Got: {{ certificate_renewal | to_json }}.
+      See roles/traditional/certificate_renewal/defaults/main.yml.
+    success_msg: >-
+      {{ certificate_renewal.action }} {{ certificate_renewal.alias }} in
+      {{ certificate_renewal.keystore }} at {{ certificate_renewal.scope }}
+  tags: [certificates, always]
+
+- name: Receiving needs the request and the CA's answer
+  ansible.builtin.assert:
+    that:
+      - certificate_renewal.request_alias | default('') | length > 0
+      - certificate_renewal.signed_certificate | default('') is search('BEGIN CERTIFICATE')
+    fail_msg: >-
+      receive needs request_alias - the request job reported it - and
+      signed_certificate, the CA's answer in PEM.
+  when: certificate_renewal.action == 'receive'
+  tags: [certificates, always]
+
+- name: A signer is retrieved again from its peer
+  ansible.builtin.assert:
+    that:
+      - certificate_renewal.peer_host | default('') | length > 0
+      - certificate_renewal.peer_port | default('') | string | length > 0
+    fail_msg: refresh_signer needs peer_host and peer_port - the peer that presents the certificate.
+  when: certificate_renewal.action == 'refresh_signer'
+  tags: [certificates, always]
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [certificates, always]
+
+- name: Check the credentials and the profile, and stage the driver
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.config
+    tasks_from: cell_preflight.yml
+  vars:
+    cell_label: certificates
+    cell_render: {settings: {}, errors: [], warnings: []}
+  tags: [certificates]
+
+- name: Renew it
+  tags: [certificates]
+  block:
+    - name: A private directory for the request and the certificates
+      ansible.builtin.file:
+        path: "{{ certificate_renewal_work_dir }}"
+        state: directory
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "0700"
+      become: "{{ config_become | default(ansible_become | default(true)) | bool }}"
+      check_mode: false
+
+    - name: The CA's answer, and its issuer when given
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ certificate_renewal_work_dir }}/{{ item.name }}"
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "0600"
+      become: "{{ config_become | default(ansible_become | default(true)) | bool }}"
+      check_mode: false
+      loop: >-
+        {{ ([{'name': _renewal_base ~ '.signed.pem', 'content': certificate_renewal.signed_certificate}]
+            + ([{'name': _renewal_base ~ '.ca.pem', 'content': certificate_renewal.ca_certificate}]
+               if certificate_renewal.ca_certificate | default('') | length > 0 else []))
+           if certificate_renewal.action == 'receive' else [] }}
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "{{ certificate_renewal.action }} {{ certificate_renewal.alias }}"
+      wasevo.websphere.was_certificate:
+        action: "{{ certificate_renewal.action }}"
+        keystore: "{{ certificate_renewal.keystore }}"
+        scope: "{{ certificate_renewal.scope }}"
+        alias: "{{ certificate_renewal.alias }}"
+        renew_within_days: "{{ certificate_renewal_within_days | int }}"
+        force: "{{ certificate_renewal.force | default(false) | bool }}"
+        request_alias: "{{ certificate_renewal.request_alias | default(omit, true) }}"
+        request_file: >-
+          {{ (certificate_renewal_work_dir ~ '/' ~ _renewal_base ~ '.csr')
+             if certificate_renewal.action == 'request' else omit }}
+        subject_dn: "{{ certificate_renewal.subject_dn | default(omit, true) }}"
+        certificate_file: >-
+          {{ (certificate_renewal_work_dir ~ '/' ~ _renewal_base ~ '.signed.pem')
+             if certificate_renewal.action == 'receive' else omit }}
+        ca_file: >-
+          {{ (certificate_renewal_work_dir ~ '/' ~ _renewal_base ~ '.ca.pem')
+             if certificate_renewal.action == 'receive'
+                and certificate_renewal.ca_certificate | default('') | length > 0 else omit }}
+        peer_host: "{{ certificate_renewal.peer_host | default(omit, true) }}"
+        peer_port: "{{ certificate_renewal.peer_port | default(omit, true) }}"
+        profile_path: "{{ was_profile_path }}"
+        admin_user: "{{ was_admin_user }}"
+        admin_password: "{{ was_admin_password }}"
+        jython_dir: "{{ was_jython_dir }}"
+      register: certificate_renewal_result
+
+    - name: The request, for the CA
+      ansible.builtin.slurp:
+        src: "{{ certificate_renewal_work_dir }}/{{ _renewal_base }}.csr"
+      become: "{{ config_become | default(ansible_become | default(true)) | bool }}"
+      register: _renewal_csr
+      when:
+        - certificate_renewal.action == 'request'
+        - not ansible_check_mode
+
+    - name: The peer has not renewed its certificate yet
+      ansible.builtin.debug:
+        msg: >-
+          {{ certificate_renewal.peer_host }}:{{ certificate_renewal.peer_port }} still presents
+          a certificate that expires on {{ certificate_renewal_result.certificate.not_after }}.
+          The signer was retrieved again, but only the peer can renew what it presents:
+          ask its owner, then launch this again.
+      when:
+        - certificate_renewal.action == 'refresh_signer'
+        - not ansible_check_mode
+        - (certificate_renewal_result.certificate.days_left | default(none)) is not none
+        - certificate_renewal_result.certificate.days_left | int <= certificate_renewal_within_days | int
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "action      : {{ certificate_renewal.action }}"
+          - "certificate : {{ certificate_renewal.alias }} in {{ certificate_renewal.keystore }} at {{ certificate_renewal.scope }}"
+          - "changed     : {{ certificate_renewal_result.changed }}"
+          - "expires     : {{ (certificate_renewal_result.certificate | default({}, true)).not_after | default('replaced') }}"
+          - "request     : {{ certificate_renewal_result.request_alias | default('-', true) }}"
+
+    - name: Publish the outcome for the certificate portal
+      ansible.builtin.set_stats:
+        aggregate: false
+        per_host: false
+        data:
+          wasevo_certificate_job:
+            action: "{{ certificate_renewal.action }}"
+            id: >-
+              {{ ('signer' if certificate_renewal.action == 'refresh_signer' else 'personal')
+                 ~ '|' ~ certificate_renewal.scope ~ '|' ~ certificate_renewal.keystore
+                 ~ '|' ~ certificate_renewal.alias }}
+            changed: "{{ certificate_renewal_result.changed }}"
+            certificate: "{{ certificate_renewal_result.certificate | default(none) }}"
+            request_alias: "{{ certificate_renewal_result.request_alias | default('') }}"
+            request_pem: >-
+              {{ (_renewal_csr.content | b64decode)
+                 if (_renewal_csr.content | default('') | length > 0) else '' }}
+
+  always:
+    - name: No certificate is left behind
+      ansible.builtin.file:
+        path: "{{ certificate_renewal_work_dir }}/{{ item }}"
+        state: absent
+      become: "{{ config_become | default(ansible_become | default(true)) | bool }}"
+      check_mode: false
+      loop:
+        - "{{ _renewal_base }}.signed.pem"
+        - "{{ _renewal_base }}.ca.pem"
+        - "{{ _renewal_base }}.csr"

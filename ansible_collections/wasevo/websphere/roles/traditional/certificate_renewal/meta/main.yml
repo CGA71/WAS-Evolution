@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: traditional_certificate_renewal
+  author: neo
+  description: >-
+    Renews one certificate of a cell the way its issuer allows - issued again by the cell, by a
+    request to a CA and its answer, or a signer retrieved again from its peer. Replayable on its
+    own.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+
+# Deliberately empty: model and traditional.config are included where they are
+# used, so this role stays runnable on its own.
+dependencies: []

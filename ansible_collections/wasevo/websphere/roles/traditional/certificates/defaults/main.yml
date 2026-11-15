@@ -1,0 +1,19 @@
+---
+# The certificate inventory of a cell: every key store, every personal and
+# signer certificate, its expiry and how it is renewed. Read only - it changes
+# nothing, so it is also what a check run and a schedule launch.
+#
+# The result is published twice:
+#   - in the job output, the certificates that need attention;
+#   - as AWX job artifacts (set_stats), under wasevo_certificates.cells.<cell>,
+#     which is what the certificate portal reads through the AWX API with the
+#     viewer's own rights - a user sees the cells of the organisations AWX
+#     lets them see, and no others.
+
+# Expiring within this many days is a warning; within 30, critical. Three
+# months by default: the time a CA-signed renewal takes when a request has to
+# go through a corporate PKI.
+certificates_renew_within_days: 90
+
+# Publish the inventory as job artifacts. Off, the job only prints it.
+certificates_publish: true

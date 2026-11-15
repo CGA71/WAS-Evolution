@@ -276,6 +276,49 @@ SSL_PROTOCOLS = ("SSL_TLS", "SSL", "SSLv2", "SSLv3", "TLS", "TLSv1", "TLSv1.1", 
 SSL_LEVELS = ("HIGH", "MEDIUM", "LOW", "CUSTOM")
 SSL_DEFAULT_CONFIGS = ("CellDefaultSSLSettings", "NodeDefaultSSLSettings")
 
+# Who signed a certificate. The cell's root signs what the profile creates;
+# a corporate CA signs what an application brought in.
+CHAINED_ISSUER = "CN=sim.root, OU=Root Certificate, OU=%s, O=IBM, C=US" % FAKE_CELL
+CORPORATE_ISSUER = "CN=Corp Issuing CA, O=Example"
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _certificate(alias, subject, issuer, days, numeric=False):
+    """A certificate as a key store holds it here: expiring `days` from today,
+    so the inventory's statuses stay what the seed meant whatever the date."""
+    import datetime
+    return {"alias": alias, "issuedTo": subject, "issuedBy": issuer,
+            "serial": str(abs(hash((alias, subject))) % 10 ** 12),
+            "not_after": (datetime.date.today() + datetime.timedelta(days=days)).isoformat(),
+            "numeric": numeric}
+
+
+def _validity(cert):
+    """The validity line as AdminTask prints it: month names on an English JVM,
+    US numeric dates on another - the handler has to read both."""
+    import datetime
+    end = datetime.date(*[int(p) for p in cert["not_after"].split("-")])
+    start = end - datetime.timedelta(days=365)
+    if cert.get("numeric"):
+        shown = ["%d/%d/%02d" % (d.month, d.day, d.year % 100) for d in (start, end)]
+    else:
+        shown = ["%s %d, %d" % (MONTH_NAMES[d.month - 1], d.day, d.year) for d in (start, end)]
+    return "Valid from %s to %s." % tuple(shown)
+
+
+def _cert_text(cert):
+    if not isinstance(cert, dict):
+        # A signer retrieved before signers carried dates: a year from now.
+        cert = _certificate(cert, "CN=%s" % cert, "CN=%s CA" % cert, 365)
+    return ("[ [alias %s] [version 3] [size 2048] [serialNumber %s] [issuedTo [%s]] "
+            "[issuedBy [%s]] [fingerPrint 00:11:22] [signatureAlgorithm "
+            "SHA256withRSA(1.2.840.113549.1.1.11)] [validity [%s]] ]"
+            % (cert["alias"], cert["serial"], cert["issuedTo"], cert["issuedBy"], _validity(cert)))
+
+
+def _alias_of(cert):
+    return cert["alias"] if isinstance(cert, dict) else cert
+
 # The default policy sets the product offers for import, with the policy
 # types each holds. The attribute names are the fake's own: the handler
 # compares only what a declaration names.
@@ -575,12 +618,46 @@ class FakeAdminConfig(object):
                 continue
             scope = self._create_object("ManagementScope", "ManagementScope",
                                         {"scopeName": scope_name, "scopeType": prefix.lower()})
-            key = self._create_object("KeyStore", prefix + "DefaultKeyStore",
-                                      {"name": prefix + "DefaultKeyStore", "managementScope": scope,
-                                       "_signers": []})
+            # The certificates a profile is created with, at expiries that put
+            # one of each status in front of the inventory: the cell's own
+            # comfortable, the first node's within a month, the others within
+            # three. A node's certificate is printed with US numeric dates,
+            # the cell's with month names - both shapes WAS prints.
+            node_days = 20 if prefix == "Node" and not self._find(
+                "KeyStore", name="NodeDefaultKeyStore") else 75
+            key = self._create_object("KeyStore", prefix + "DefaultKeyStore", {
+                "name": prefix + "DefaultKeyStore", "managementScope": scope, "usage": "SSLKeys",
+                "_signers": [], "_requests": [],
+                "_personal": [_certificate("default", "CN=%s.sim, OU=%s" % (prefix.lower(), scope_name),
+                                           CHAINED_ISSUER, 400 if prefix == "Cell" else node_days,
+                                           numeric=prefix == "Node")]})
             trust = self._create_object("KeyStore", prefix + "DefaultTrustStore",
-                                        {"name": prefix + "DefaultTrustStore",
-                                         "managementScope": scope, "_signers": []})
+                                        {"name": prefix + "DefaultTrustStore", "usage": "SSLKeys",
+                                         "managementScope": scope, "_signers": [], "_personal": [],
+                                         "_requests": []})
+            if prefix == "Cell":
+                # The root that signs the chained certificates, and what an
+                # application brought: its own key store with a certificate
+                # a corporate CA signed, and the signer of a partner it calls.
+                self._create_object("KeyStore", "DefaultRootStore", {
+                    "name": "DefaultRootStore", "managementScope": scope, "usage": "RootKeys",
+                    "_signers": [], "_requests": [],
+                    "_personal": [_certificate("root", CHAINED_ISSUER, CHAINED_ISSUER, 5000)]})
+                self._create_object("KeyStore", "CellLTPAKeys", {
+                    "name": "CellLTPAKeys", "managementScope": scope, "usage": "KeySetKeys",
+                    "_signers": [], "_personal": [], "_requests": []})
+                extranet = self._create_object("KeyStore", "ExtranetKeyStore", {
+                    "name": "ExtranetKeyStore", "managementScope": scope, "usage": "SSLKeys",
+                    "_signers": [], "_requests": [],
+                    "_personal": [_certificate("extranet-web", "CN=extranet.sim, O=Example",
+                                               CORPORATE_ISSUER, 45)]})
+                self.state["objects"][trust]["attrs"]["_signers"].append(
+                    _certificate("partner-api", "CN=api.partner.sim, O=Partner",
+                                 "CN=Partner CA, O=Partner", 10))
+                config = self._ssl_config("ExtranetSSLSettings", scope, extranet, trust,
+                                          "TLSv1.2", "HIGH", "false", "false")
+                setting = self.state["objects"][config]["attrs"]["setting"]
+                self.state["objects"][setting]["attrs"]["serverKeyAlias"] = "extranet-web"
             self._ssl_config(prefix + "DefaultSSLSettings", scope, key, trust,
                              "SSL_TLSv2", "HIGH", "false", "false")
 
@@ -1802,17 +1879,17 @@ class FakeAdminTask(object):
         return self.config.state["objects"][store]["attrs"].setdefault("_signers", [])
 
     def listSignerCertificates(self, args):
-        return "\n".join("[ [alias %s] [version 3] [size 2048] [issuedTo CN=%s] ]" % (a, a)
-                         for a in self._signer_store(args))
+        return "\n".join(_cert_text(c) for c in self._signer_store(args))
 
     def retrieveSignerFromPort(self, args):
         signers = self._signer_store(args)
         alias = self._named(args, "-certificateAlias")
-        self._named(args, "-host")
+        host = self._named(args, "-host")
         self._named(args, "-port")
-        if alias in signers:
+        if alias in [_alias_of(c) for c in signers]:
             raise RuntimeError("CWPKI0004E: alias %s already exists in the key store" % alias)
-        signers.append(alias)
+        # What the peer presents today: a certificate it renewed, valid a year.
+        signers.append(_certificate(alias, "CN=%s" % host, "CN=%s CA" % host, 365))
         self.config.state["saved"] = False
         _store(self.config.state)
         return "true"
@@ -1820,9 +1897,139 @@ class FakeAdminTask(object):
     def deleteSignerCertificate(self, args):
         signers = self._signer_store(args)
         alias = self._named(args, "-certificateAlias")
-        if alias not in signers:
+        held = [c for c in signers if _alias_of(c) == alias]
+        if not held:
             raise RuntimeError("CWPKI0005E: no signer %s" % alias)
-        signers.remove(alias)
+        signers.remove(held[0])
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    # -- certificates: personal, requests, renewal -----------------------
+
+    def _store_attrs(self, args):
+        store = self._keystore(self._named(args, "-keyStoreName"), self._named(args, "-keyStoreScope"))
+        attrs = self.config.state["objects"][store]["attrs"]
+        for key in ("_personal", "_requests", "_signers"):
+            attrs.setdefault(key, [])
+        return store, attrs
+
+    def _personal(self, attrs, alias):
+        for cert in attrs["_personal"]:
+            if cert["alias"] == alias:
+                return cert
+        raise RuntimeError("CWPKI0006E: no personal certificate %s" % alias)
+
+    def listPersonalCertificates(self, args):
+        _, attrs = self._store_attrs(args)
+        if attrs.get("usage") == "KeySetKeys":
+            raise RuntimeError("CWPKI0007E: %s holds key sets, not certificates"
+                               % self._named(args, "-keyStoreName"))
+        return "\n".join(_cert_text(c) for c in attrs["_personal"])
+
+    def renewCertificate(self, args):
+        _, attrs = self._store_attrs(args)
+        cert = self._personal(attrs, self._named(args, "-certificateAlias"))
+        # Stricter than WAS, which would issue a cell-signed replacement for a
+        # certificate a corporate CA signed: no client trusts that one, so a
+        # handler that gets here has failed to refuse.
+        if cert["issuedBy"] not in (cert["issuedTo"], CHAINED_ISSUER):
+            raise RuntimeError("renewCertificate on %s, signed by %s: the cell would replace a "
+                               "CA-signed certificate with its own" % (cert["alias"], cert["issuedBy"]))
+        cert.update(_certificate(cert["alias"], cert["issuedTo"], cert["issuedBy"], 365,
+                                 numeric=cert.get("numeric", False)))
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    def _request_text(self, alias, subject):
+        return ("-----BEGIN NEW CERTIFICATE REQUEST-----\nSIMULATED %s %s\n"
+                "-----END NEW CERTIFICATE REQUEST-----\n" % (alias, subject))
+
+    def createCertificateRequest(self, args):
+        _, attrs = self._store_attrs(args)
+        alias = self._named(args, "-certificateAlias")
+        if alias in [c["alias"] for c in attrs["_personal"] + attrs["_requests"]]:
+            raise RuntimeError("CWPKI0008E: alias %s already exists in the key store" % alias)
+        subject = self._named(args, "-subjectDN")
+        self._named(args, "-keySize")
+        self._named(args, "-signatureAlgorithm")
+        path = self._named(args, "-certificateRequestFilePath")
+        attrs["_requests"].append({"alias": alias, "subject": subject})
+        with open(path, "w") as handle:
+            handle.write(self._request_text(alias, subject))
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    def listCertificateRequests(self, args):
+        _, attrs = self._store_attrs(args)
+        return "\n".join("[ [alias %s] [subjectDN [%s]] ]" % (r["alias"], r["subject"])
+                         for r in attrs["_requests"])
+
+    def extractCertificateRequest(self, args):
+        _, attrs = self._store_attrs(args)
+        alias = self._named(args, "-certificateAlias")
+        held = [r for r in attrs["_requests"] if r["alias"] == alias]
+        if not held:
+            raise RuntimeError("CWPKI0009E: no certificate request %s" % alias)
+        with open(self._named(args, "-certificateRequestFilePath"), "w") as handle:
+            handle.write(self._request_text(alias, held[0]["subject"]))
+        return "true"
+
+    def _read_pem(self, path):
+        if not os.path.exists(path):
+            raise RuntimeError("CWPKI0010E: no file %s" % path)
+        with open(path) as handle:
+            text = handle.read()
+        if "-----BEGIN CERTIFICATE-----" not in text:
+            raise RuntimeError("CWPKI0011E: %s is not a base64 certificate" % path)
+        return text
+
+    def addSignerCertificate(self, args):
+        _, attrs = self._store_attrs(args)
+        alias = self._named(args, "-certificateAlias")
+        self._read_pem(self._named(args, "-certificateFilePath"))
+        if alias in [_alias_of(c) for c in attrs["_signers"]]:
+            raise RuntimeError("CWPKI0004E: alias %s already exists in the key store" % alias)
+        attrs["_signers"].append(_certificate(alias, CORPORATE_ISSUER, CORPORATE_ISSUER, 3650))
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    def receiveCertificate(self, args):
+        _, attrs = self._store_attrs(args)
+        self._read_pem(self._named(args, "-certificateFilePath"))
+        if self._named(args, "-isBase64Encoded") != "true":
+            raise ValueError("the simulation receives base64 certificates only")
+        # WAS matches the answer to its request by public key. The simulation
+        # has no keys, so it insists on there being exactly one to match.
+        if len(attrs["_requests"]) != 1:
+            raise RuntimeError("CWPKI0012E: %d certificate requests wait in this key store; the "
+                               "simulation matches an answer to exactly one" % len(attrs["_requests"]))
+        request = attrs["_requests"].pop()
+        attrs["_personal"].append(_certificate(request["alias"], request["subject"],
+                                               CORPORATE_ISSUER, 365))
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return "true"
+
+    def replaceCertificate(self, args):
+        store, attrs = self._store_attrs(args)
+        old = self._personal(attrs, self._named(args, "-certificateAlias"))
+        new = self._personal(attrs, self._named(args, "-replacementCertificateAlias"))
+        self._named(args, "-deleteOldSigners")
+        # Every SSL configuration presenting the old certificate - by name, or
+        # as the store's "default" when it names none - presents the new one.
+        for obj in self.config.state["objects"].values():
+            if obj["type"] != "SecureSocketLayer" or obj["attrs"].get("keyStore") != store:
+                continue
+            for attribute in ("serverKeyAlias", "clientKeyAlias"):
+                held = obj["attrs"].get(attribute, "")
+                if held == old["alias"] or (not held and old["alias"] == "default"):
+                    obj["attrs"][attribute] = new["alias"]
+        if self._named(args, "-deleteOldCert") == "true":
+            attrs["_personal"].remove(old)
         self.config.state["saved"] = False
         _store(self.config.state)
         return "true"

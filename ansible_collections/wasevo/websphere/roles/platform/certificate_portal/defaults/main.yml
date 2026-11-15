@@ -1,0 +1,34 @@
+---
+# The certificate portal: a static page, served on AWX's own host name under
+# certportal_path, that reads the certificate inventories from the AWX API and
+# launches the renewal template - with the viewer's AWX session.
+#
+# SAME ORIGIN IS THE DESIGN. On AWX's host the browser sends the viewer's AWX
+# session with every API call, so the page needs no token and no server of its
+# own, and AWX's rights apply unchanged: an organisation's users see their
+# organisation's cells, launch what they may launch, and nothing else. On any
+# other host the browser would send nothing, and the page would need a
+# credential of its own - which is exactly what this avoids.
+#
+# Deployed on the k3s node, as its administrator, like the cell prerequisites:
+# a ConfigMap holding the page, an unprivileged nginx, a Service, and an
+# Ingress for this one path on AWX's host - Traefik routes the longest prefix,
+# so everything else on the host still reaches AWX.
+
+# AWX, as the inventory declares it. The page is served on its host.
+certportal_awx_api: "{{ prereq_awx_api | default('') }}"
+
+certportal_namespace: awx
+certportal_name: wasevo-certificates
+certportal_path: /wasevo/certificates
+certportal_ingress_class: traefik
+
+# Pinned, unprivileged: it listens on 8080 and runs as a non-root user.
+certportal_image: docker.io/nginxinc/nginx-unprivileged:1.27.3-alpine
+
+# Within this many days a certificate is shown as due. Three months, like the
+# inventory role's default: the page recomputes the status for today.
+certportal_renew_within_days: 90
+
+# The administrator's kubeconfig on the node.
+certportal_kubeconfig: "{{ ansible_env.HOME }}/.kube/config"
