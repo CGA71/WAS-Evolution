@@ -33,3 +33,14 @@
 # keeps a default because a site that runs one channel should not have to
 # answer for it on every launch.
 was_channel: Extranet
+
+# Environment families, when the site names its environments as a family and
+# an instance (DEV01, VAL02, PREPROD, PROD...). Declared, the answer must be
+# one of them and the family decides the tier; left out, any usable code is
+# accepted and the tier is an input. See inventories/aix for a declared set and
+# roles/model/vars/environments.yml for the mechanism.
+#
+# was_environment_families:
+#   DEV: {tier: non_prod, long_name: Developpement}
+#   PROD: {tier: prod, long_name: Production}
+# was_environment_instance_pattern: "[0-9]{2}"

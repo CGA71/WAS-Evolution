@@ -57,7 +57,7 @@
       accepted. It is a shape check, because the value becomes a cell name
       ({{ was_channel_name | default('Channel') }}_{{ was_env_code }}), a
       profile name, a node name, a directory under the profiles base and a
-      keystore path: two to eight characters, starting with a letter, letters
+      keystore path: two to ten characters, starting with a letter, letters
       and digits only. A space, a dot, a slash or an accent there produces a
       cell that cannot be federated and a path that cannot be created.
       The match is case-insensitive - the code is upper-cased before it is
@@ -77,6 +77,44 @@
       canonical form is title case, because that is how the channel appears
       inside WAS object names, and the first three letters become the cluster
       suffix ({{ was_cluster_name_pattern }}).
+  tags: [model, validate, environment]
+
+# Only when the site declared its environment families. The code is then a
+# family, alone or with an instance - DEV, DEV01, VAL02, PREPROD, PROD - and
+# nothing else: a typo would otherwise build an environment nobody planned.
+- name: The environment code must belong to a family the site declares
+  ansible.builtin.assert:
+    that:
+      - was_env_family | length > 0
+    fail_msg: >-
+      "{{ was_env_code }}" is not one of the environment families this site
+      declares ({{ was_env_families.keys() | map('upper') | join(', ') }}),
+      alone or followed by an instance matching {{ was_env_instance_pattern }}
+      - DEV, DEV01, VAL02, PREPROD, PROD. The families are declared in the
+      inventory, was_environment_families.
+    success_msg: >-
+      {{ was_env_code }}: family {{ was_env_family_upper }}{{
+        (', instance ' ~ was_env_instance) if was_env_instance else '' }},
+      {{ was_env_long_name }}, tier {{ was_env_tier }}
+  when: was_env_families | length > 0
+  tags: [model, validate, environment]
+
+# The family decides the tier. An answer that contradicts it is refused rather
+# than ignored: a PROD answered as non_prod is a mistake to stop, not a value
+# to quietly correct - and the reverse is a sign the wrong code was typed.
+- name: A tier supplied must agree with the family
+  ansible.builtin.assert:
+    that:
+      - (was_environment_tier | trim | lower) == was_env_tier
+    fail_msg: >-
+      was_environment_tier is "{{ was_environment_tier }}", and the family
+      {{ was_env_family_upper }} of {{ was_env_code }} is tier
+      {{ was_env_tier }}. With environment families declared the tier comes
+      from the family: leave was_environment_tier out, or answer the code
+      that was meant.
+  when:
+    - was_env_family | length > 0
+    - was_environment_tier | default('', true) | length > 0
   tags: [model, validate, environment]
 
 - name: The tier must be one of the two the collection acts on

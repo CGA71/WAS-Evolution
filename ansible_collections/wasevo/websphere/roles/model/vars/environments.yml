@@ -38,18 +38,58 @@ was_env_lower: "{{ was_env_code | lower }}"
 # The letter that appears inside node names. Derived from the code rather than
 # looked up; override it in the inventory when a site naming standard says
 # otherwise, because a derived first letter is a convention, not a rule.
-was_env_letter_upper: "{{ (was_environment_letter | default(was_env_code[:1])) | upper }}"
+was_env_letter_upper: >-
+  {{ (was_environment_letter | default(was_env_family_spec.letter | default(was_env_code[:1]), true)) | upper }}
 was_env_letter_lower: "{{ was_env_letter_upper | lower }}"
 
 # Free text, used in reports only. No value is invented for it: an environment
 # that was not described is reported by its code.
-was_env_long_name: "{{ was_environment_long_name | default(was_env_code, true) }}"
+was_env_long_name: >-
+  {{ was_environment_long_name | default(
+       ((was_env_family_spec.long_name ~ (' ' ~ was_env_instance if was_env_instance else ''))
+        if was_env_family_spec.long_name is defined else was_env_code), true) }}
 
-# Tier is an input, not a property of a code. It cannot be inferred: the whole
-# point of an open value is that this collection does not know which codes a
+# ---------------------------------------------------------------------------
+# Environment families - a SITE convention, declared in the inventory
+# ---------------------------------------------------------------------------
+# A site may name its environments as a family and an instance: DEV, DEV01,
+# DEV02, VAL01, PREPROD, PROD... The families are site data, so they live in
+# the inventory (was_environment_families), never here:
+#
+#   was_environment_families:
+#     DEV:     {tier: non_prod, long_name: Developpement}
+#     PROD:    {tier: prod,     long_name: Production, letter: P}
+#
+# When the inventory declares families, the code must be one of them, alone or
+# followed by an instance matching was_environment_instance_pattern (two
+# digits by default). The family then DECIDES the tier - a production family
+# cannot be answered as non_prod - and gives the long name and the letter.
+# When it declares none, the code is open and the tier is an input, as before.
+was_env_families: "{{ was_environment_families | default({}, true) }}"
+was_env_instance_pattern: "{{ was_environment_instance_pattern | default('[0-9]{2}', true) }}"
+
+# The family key the code belongs to, as the inventory spells it, or "".
+# Anchored, so PROD01 is never taken for a PREPROD and the reverse.
+was_env_family: >-
+  {%- set found = [] -%}
+  {%- for family in was_env_families.keys() -%}
+  {%-   if was_env_code is match('^' ~ (family | upper | regex_escape) ~ '(' ~ was_env_instance_pattern ~ ')?$') -%}
+  {%-     set _ = found.append(family) -%}
+  {%-   endif -%}
+  {%- endfor -%}{{ found | first | default('') }}
+was_env_family_upper: "{{ was_env_family | upper }}"
+was_env_instance: "{{ was_env_code[was_env_family | length:] if was_env_family else '' }}"
+was_env_family_spec: "{{ was_env_families[was_env_family] | default({}) if was_env_family else {} }}"
+
+# Tier is an input, not a property of a code - unless the site declared
+# families, in which case the family decides it. Without families it cannot be
+# inferred: an open value means this collection does not know which codes a
 # site calls production. Default non_prod, so forgetting it never UNLOCKS
 # production - it is the acknowledgement that unlocks it.
-was_env_tier: "{{ was_environment_tier | default('non_prod') | trim | lower }}"
+was_env_tier: >-
+  {{ (was_env_family_spec.tier | default('non_prod')) | trim | lower
+     if was_env_family
+     else was_environment_tier | default('non_prod', true) | trim | lower }}
 was_env_is_production: "{{ was_env_tier == 'prod' }}"
 
 # The channel is a second, independent input, treated the same way: canonical
@@ -66,5 +106,6 @@ was_channel_lower: "{{ was_channel_code | lower }}"
 # path, never for being unknown. Letter first because a profile name and a
 # node name both start with it; alphanumeric only because the value reaches a
 # cell name, a directory path, a keystore path and a DNS label.
-was_env_code_pattern: '^[A-Z][A-Z0-9]{1,7}$'
+# Ten characters at most: PREPROD01 is nine.
+was_env_code_pattern: '^[A-Z][A-Z0-9]{1,9}$'
 was_channel_code_pattern: '^[A-Z][A-Za-z0-9]{1,15}$'

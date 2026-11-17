@@ -1,0 +1,45 @@
+---
+# No default on purpose.
+#
+# The environment is an answer to the workflow survey question, not a value
+# baked into an inventory. Leaving a default here would mean a run with no
+# answer silently builds one particular environment, which is exactly the
+# confusion this removes.
+#
+# The model role refuses to continue when was_environment is undefined and
+# says where it is meant to come from.
+#
+#   AWX  : workflow survey, target environment
+#   shell: ansible-playbook ... -e was_environment=<code>
+
+# The channel keeps a default: it is a second, independent input and this inventory
+# only ever exercises one.
+was_channel: Extranet
+
+# This inventory has no environment group, deliberately: hosts.yml declares the role
+# group only, because the same server can be built as any environment. So the
+# check that the inventory holds hosts for the chosen code does not apply
+# here - it is a check for the estate inventory, where the groups exist.
+model_require_hosts: false
+
+# ---------------------------------------------------------------------------
+# The DSI's environments
+# ---------------------------------------------------------------------------
+# Four families, each usable alone or refined per project with a two-digit
+# instance: DEV, DEV01, DEV02... VAL01, VAL02... PREPROD, PREPROD01... PROD.
+# The answer to the survey must be one of them - anything else is refused - and
+# the family decides the tier: only PROD is production, and a PROD run still
+# needs model_allow_production (or the workflow's approval).
+#
+# letter is the one inside the deployment manager node name
+# (<letter>DmgrNode). PREPROD and PROD would both default to P; they are
+# separate cells, so it only matters if both are ever built on one machine -
+# set a letter here if that can happen.
+was_environment_families:
+  DEV: {tier: non_prod, long_name: Developpement}
+  VAL: {tier: non_prod, long_name: Validation}
+  PREPROD: {tier: non_prod, long_name: Preproduction}
+  PROD: {tier: prod, long_name: Production}
+
+# The instance after the family: two digits.
+was_environment_instance_pattern: "[0-9]{2}"

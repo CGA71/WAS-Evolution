@@ -4,12 +4,12 @@
   "spec": [
     {
       "question_name": "Give an environment",
-      "question_description": "The environment this build is for. It is an answer, not a property of a machine: the same host can be built as any environment. Two to eight characters, starting with a letter, letters and digits only - it becomes part of a cell name, a profile name and a filesystem path. No list of allowed codes is enforced; any code the site uses is accepted.",
+      "question_description": "The environment this build is for: a family the site declares, alone or with a two-digit instance - DEV, DEV01, VAL02, PREPROD, PREPROD01, PROD. The family decides the tier; only PROD is production. It is an answer, not a property of a machine: the same host can be built as any environment.",
       "variable": "was_environment",
       "type": "text",
       "required": true,
       "min": 2,
-      "max": 8,
+      "max": 10,
       "default": "",
       "choices": ""
     },
