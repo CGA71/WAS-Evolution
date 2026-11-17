@@ -1,11 +1,17 @@
 {#
-  manageprofiles response file for a federated node. IBM's format: mode on the
-  first line, then key=value, no dashes, no quoting.
+  manageprofiles response file for a federated node - the node agent and the
+  node the cluster members are created on. IBM's format: mode on the first
+  line, then key=value, no dashes, no quoting.
 
   Federating during creation rather than creating and then running addNode
   keeps it one operation with one log. profile_federate_later turns that off
   for a site whose deployment manager is built by someone else.
+
+  THIS IS THE ROLE'S DEFAULT. An inventory supplies its own with
+  profile_node_responsefile_template, and adds or overrides single keys with
+  profile_node_extra_options without touching any template.
 #}
+{% set _body %}
 create
 profileName={{ was_profile_name }}
 profilePath={{ was_profile_path }}
@@ -40,3 +46,17 @@ dmgrAdminUserName={{ was_admin_user }}
 dmgrAdminPassword={{ was_admin_password }}
 {% endif %}
 {% endif %}
+{% endset %}
+{#
+  The inventory's extra keys: one already written above is REPLACED in place,
+  a new one is appended - never a key twice.
+#}
+{% set ns = namespace(body=_body) %}
+{% for key, value in (profile_node_extra_options | default({})) | dictsort %}
+{%   if ns.body is search('(?m)^' ~ (key | regex_escape) ~ '=') %}
+{%     set ns.body = ns.body | regex_replace('(?m)^' ~ (key | regex_escape) ~ '=.*$', key ~ '=' ~ value) %}
+{%   else %}
+{%     set ns.body = ns.body ~ key ~ '=' ~ value ~ '\n' %}
+{%   endif %}
+{% endfor %}
+{{ ns.body }}

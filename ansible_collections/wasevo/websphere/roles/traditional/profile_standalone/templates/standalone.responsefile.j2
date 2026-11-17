@@ -4,7 +4,12 @@
   profileTemplates/default is the whole difference from the ND case: it
   produces a one-node cell that administers itself. No serverType, no dmgrHost,
   no federation.
+
+  THIS IS THE ROLE'S DEFAULT. An inventory supplies its own with
+  profile_standalone_responsefile_template, and adds or overrides single keys
+  with profile_standalone_extra_options without touching any template.
 #}
+{% set _body %}
 create
 profileName={{ was_profile_name }}
 profilePath={{ was_profile_path }}
@@ -25,3 +30,17 @@ adminPassword={{ was_admin_password }}
 {% else %}
 enableAdminSecurity=false
 {% endif %}
+{% endset %}
+{#
+  The inventory's extra keys: one already written above is REPLACED in place,
+  a new one is appended - never a key twice.
+#}
+{% set ns = namespace(body=_body) %}
+{% for key, value in (profile_standalone_extra_options | default({})) | dictsort %}
+{%   if ns.body is search('(?m)^' ~ (key | regex_escape) ~ '=') %}
+{%     set ns.body = ns.body | regex_replace('(?m)^' ~ (key | regex_escape) ~ '=.*$', key ~ '=' ~ value) %}
+{%   else %}
+{%     set ns.body = ns.body ~ key ~ '=' ~ value ~ '\n' %}
+{%   endif %}
+{% endfor %}
+{{ ns.body }}

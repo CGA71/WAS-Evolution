@@ -26,3 +26,17 @@ profile_federate_later: false
 # --check, which AWX offers as "Job type: Check" in the launch dialog - so the
 # role reads ansible_check_mode and nothing else. A parallel flag would be a
 # second code path, and the second path is the one nobody tests.
+
+# The response file handed to manageprofiles, as a Jinja2 template. The role's
+# own by default; an inventory points this at its own template - absolute, or
+# relative to a templates/ directory beside the playbook - to change the file
+# without changing the collection:
+#   profile_node_responsefile_template: "{{ inventory_dir }}/templates/managed.responsefile.j2"
+profile_node_responsefile_template: managed.responsefile.j2
+
+# Single manageprofiles keys from the inventory, without editing a template: a
+# key the template already writes is replaced, a new one is appended.
+#   profile_node_extra_options:
+#     enableService: "false"
+#     personalCertValidityPeriod: "5"
+profile_node_extra_options: {}

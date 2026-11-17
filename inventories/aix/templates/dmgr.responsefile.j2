@@ -1,0 +1,65 @@
+{#
+  manageprofiles response file for a deployment manager.
+
+  Format is IBM's, not Ansible's: the first line is the mode, then key=value
+  with no leading dash and no quoting. A value containing a space is written
+  as-is; manageprofiles takes the rest of the line.
+
+  Rendered fresh on every run. Nothing reads this file but the manageprofiles
+  call that follows it.
+
+  SITE TEMPLATE - inventories/aix. Selected by profile_dmgr_responsefile_template in
+  group_vars/all/35_profiles.yml; started as a copy of the role's default.
+  Edit it freely: every variable the role publishes is available here. Single
+  keys can also come from profile_dmgr_extra_options, which replaces a key
+  written below or appends a new one.
+#}
+{% set _body %}
+create
+profileName={{ was_dmgr_profile_name }}
+profilePath={{ was_dmgr_profile_path }}
+templatePath={{ was_home }}/profileTemplates/management
+serverType=DEPLOYMENT_MANAGER
+cellName={{ was_cell_name }}
+nodeName={{ was_node_name }}
+hostName={{ profile_dmgr_hostname }}
+{#
+  An explicit port map wins; otherwise manageprofiles allocates from the base
+  port in its own order. Which order that is does not matter here, because the
+  node agents are told the SOAP port the profile actually got, read back from
+  the created profile rather than computed.
+#}
+{% if profile_dmgr_ports | length > 0 %}
+portsFile={{ profile_response_dir }}/ports.dmgr
+{% elif was_base_port | default('') | string | length > 0 %}
+startingPort={{ was_base_port }}
+{% else %}
+{#
+  No port map and no base port: the product's own defaults - 9060 and 9043
+  for a deployment manager's console, 8879 for its SOAP connector. What a
+  machine that carries one profile of each kind wants.
+#}
+defaultPorts=true
+{% endif %}
+{% if profile_dmgr_admin_security | bool %}
+enableAdminSecurity=true
+adminUserName={{ was_admin_user }}
+adminPassword={{ was_admin_password }}
+{% else %}
+enableAdminSecurity=false
+{% endif %}
+{% endset %}
+{#
+  The inventory's extra keys: one already written above is REPLACED in place,
+  a new one is appended - never a key twice, which manageprofiles would read
+  in an order nobody chose.
+#}
+{% set ns = namespace(body=_body) %}
+{% for key, value in (profile_dmgr_extra_options | default({})) | dictsort %}
+{%   if ns.body is search('(?m)^' ~ (key | regex_escape) ~ '=') %}
+{%     set ns.body = ns.body | regex_replace('(?m)^' ~ (key | regex_escape) ~ '=.*$', key ~ '=' ~ value) %}
+{%   else %}
+{%     set ns.body = ns.body ~ key ~ '=' ~ value ~ '\n' %}
+{%   endif %}
+{% endfor %}
+{{ ns.body }}

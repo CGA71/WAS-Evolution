@@ -1,0 +1,49 @@
+---
+# The manageprofiles response files of this site, as Jinja2 templates.
+#
+# Three profiles, three templates, all in inventories/aix/templates/ - this
+# site's own, edited here without touching the collection:
+#
+#   dmgr.responsefile.j2        the deployment manager       profile_dmgr
+#                               (profileTemplates/management)
+#   managed.responsefile.j2     the federated node: its node  profile_nodeagent
+#                               agent, and the node the cluster
+#                               members are created on
+#                               (profileTemplates/managed)
+#   standalone.responsefile.j2  a standalone application      profile_standalone
+#                               server (profileTemplates/default),
+#                               for was_topology: standalone
+#
+# In an ND cell the APPLICATION SERVERS are the cluster members, and
+# manageprofiles does not create them: traditional_cluster_members.yml does,
+# with AdminTask.createClusterMember on the node above. Their settings are
+# inventory variables, not a response file - was_cluster_members_per_node,
+# was_cluster_member_name(s), was_cluster_member_ports in nodeagents.yml.
+#
+# Every variable the roles publish is available in the templates: the names
+# from the model (was_cell_name, was_node_name, was_profile_name...), the
+# paths, the ports, was_admin_user and was_admin_password. The rendered file
+# is written 0600, read by manageprofiles once, then deleted
+# (profile_keep_response: false). In a check run it is shown instead, every
+# key ending in Password masked.
+
+profile_dmgr_responsefile_template: "{{ inventory_dir }}/templates/dmgr.responsefile.j2"
+profile_node_responsefile_template: "{{ inventory_dir }}/templates/managed.responsefile.j2"
+profile_standalone_responsefile_template: "{{ inventory_dir }}/templates/standalone.responsefile.j2"
+
+# Single keys, without editing a template: a key the template already writes
+# is replaced in place, a new one is appended. IBM's manageprofiles keys, as
+# they appear in a response file - no leading dash. For example:
+#
+#   profile_dmgr_extra_options:
+#     enableService: "false"                  # no AIX inittab entry
+#     personalCertValidityPeriod: "5"         # years
+#     signingCertValidityPeriod: "20"
+#   profile_node_extra_options:
+#     webServerCheck: "false"
+#
+# Values are strings, quoted: YAML would turn false into a boolean and the
+# file would read False.
+profile_dmgr_extra_options: {}
+profile_node_extra_options: {}
+profile_standalone_extra_options: {}

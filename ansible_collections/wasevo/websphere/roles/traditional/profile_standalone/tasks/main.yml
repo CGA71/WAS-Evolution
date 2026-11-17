@@ -113,7 +113,7 @@
 
         - name: Render the response file
           ansible.builtin.template:
-            src: standalone.responsefile.j2
+            src: "{{ profile_standalone_responsefile_template }}"
             dest: "{{ profile_response_dir }}/{{ was_profile_name }}.responsefile"
             owner: "{{ site_was_user }}"
             group: "{{ site_was_group }}"
@@ -132,9 +132,8 @@
         - name: What manageprofiles would be given
           ansible.builtin.debug:
             msg: >-
-              {{ ( lookup('template', 'standalone.responsefile.j2')
-                   | regex_replace('(?m)^adminPassword=.*$', 'adminPassword=<masked>')
-                   | regex_replace('(?m)^dmgrAdminPassword=.*$', 'dmgrAdminPassword=<masked>')
+              {{ ( lookup('template', profile_standalone_responsefile_template)
+                   | regex_replace('(?m)^([A-Za-z.]*[Pp]assword)=.*$', '\1=<masked>')
                  ).split(_nl) }}
           vars:
             _nl: "\n"

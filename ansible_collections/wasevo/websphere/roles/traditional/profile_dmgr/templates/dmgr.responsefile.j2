@@ -7,7 +7,12 @@
 
   Rendered fresh on every run. Nothing reads this file but the manageprofiles
   call that follows it.
+
+  THIS IS THE ROLE'S DEFAULT. An inventory supplies its own with
+  profile_dmgr_responsefile_template, and adds or overrides single keys with
+  profile_dmgr_extra_options without touching any template.
 #}
+{% set _body %}
 create
 profileName={{ was_dmgr_profile_name }}
 profilePath={{ was_dmgr_profile_path }}
@@ -41,3 +46,18 @@ adminPassword={{ was_admin_password }}
 {% else %}
 enableAdminSecurity=false
 {% endif %}
+{% endset %}
+{#
+  The inventory's extra keys: one already written above is REPLACED in place,
+  a new one is appended - never a key twice, which manageprofiles would read
+  in an order nobody chose.
+#}
+{% set ns = namespace(body=_body) %}
+{% for key, value in (profile_dmgr_extra_options | default({})) | dictsort %}
+{%   if ns.body is search('(?m)^' ~ (key | regex_escape) ~ '=') %}
+{%     set ns.body = ns.body | regex_replace('(?m)^' ~ (key | regex_escape) ~ '=.*$', key ~ '=' ~ value) %}
+{%   else %}
+{%     set ns.body = ns.body ~ key ~ '=' ~ value ~ '\n' %}
+{%   endif %}
+{% endfor %}
+{{ ns.body }}

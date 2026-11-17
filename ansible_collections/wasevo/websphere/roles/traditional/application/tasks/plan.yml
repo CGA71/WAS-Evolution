@@ -118,6 +118,8 @@
       {%-         if s not in going -%}{%- set _ = busy.append('application server ' ~ n ~ '/' ~ s) -%}{%- endif -%}
       {%-       endfor -%}
       {%-       for r in inspected.resources -%}
+      {#-         Doubled backslashes: Ansible escapes them inside {{ }} itself,
+                  not inside a statement like this one. -#}
       {%-         set on = r | regex_search(' on (\\S+)$', '\\1') -%}
       {%-         if not (on and on[0] in going) -%}{%- set _ = busy.append(r ~ ' (node ' ~ n ~ ')') -%}{%- endif -%}
       {%-       endfor -%}
