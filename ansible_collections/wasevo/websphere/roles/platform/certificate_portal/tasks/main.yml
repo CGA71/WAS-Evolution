@@ -1,5 +1,6 @@
 ---
-# On the k3s node, as its administrator. kubectl reads the node's kubeconfig.
+# On the web host that fronts AWX's host name. Static files only: no process of
+# its own, nothing to restart - a replay with the same page changes nothing.
 
 - name: AWX must be declared - the page is served on its host
   ansible.builtin.assert:
@@ -8,42 +9,65 @@
       - certportal_awx_api | urlsplit('hostname') | default('', true) | length > 0
     fail_msg: >-
       certportal_awx_api is empty or has no host name. It is the AWX API URL,
-      from the inventory (prereq_awx_api), and the portal must be served on
+      from the inventory (awx_api_url), and the portal must be served on
       the same host for the browser to send the viewer's AWX session.
     success_msg: "portal at {{ _certportal_url }}"
 
-- name: The page, its server and its route
-  ansible.builtin.command:
-    cmd: kubectl apply -f -
-    stdin: "{{ lookup('ansible.builtin.template', 'portal.yml.j2') }}"
-  environment:
-    KUBECONFIG: "{{ certportal_kubeconfig }}"
-  register: _certportal_apply
-  changed_when: _certportal_apply.stdout is search('created|configured')
+- name: The page's directory
+  ansible.builtin.file:
+    path: "{{ certportal_web_root }}"
+    state: directory
+    owner: "{{ certportal_web_owner }}"
+    group: "{{ certportal_web_group }}"
+    mode: "0755"
+  become: "{{ certportal_become }}"
 
-- name: The server is up
-  ansible.builtin.command:
-    cmd: >-
-      kubectl -n {{ certportal_namespace }} rollout status
-      deployment/{{ certportal_name }} --timeout=180s
-  environment:
-    KUBECONFIG: "{{ certportal_kubeconfig }}"
-  changed_when: false
-  when: not ansible_check_mode
+- name: The page
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ certportal_web_root }}/{{ item.key }}"
+    owner: "{{ certportal_web_owner }}"
+    group: "{{ certportal_web_group }}"
+    mode: "0644"
+  loop: "{{ _certportal_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  become: "{{ certportal_become }}"
+
+- name: The web server's location block, beside the page
+  ansible.builtin.template:
+    src: "location.{{ certportal_web_server }}.conf.j2"
+    dest: "{{ certportal_web_snippet }}"
+    owner: "{{ certportal_web_owner }}"
+    group: "{{ certportal_web_group }}"
+    mode: "0644"
+  become: "{{ certportal_become }}"
+  register: _certportal_snippet
+  when: certportal_web_server | length > 0
 
 - name: The page answers on AWX's host
   ansible.builtin.uri:
     url: "{{ _certportal_url }}portal.json"
     return_content: true
+    # Directly, like the ci/awx scripts: through the HTTP proxy AWX answers 504.
+    use_proxy: false
+    # AWX behind a certificate from an internal authority, like the -k of the
+    # ci/awx scripts. Set true once the controller trusts that authority.
+    validate_certs: "{{ certportal_validate_certs | default(false) }}"
   register: _certportal_answer
-  retries: 15
-  delay: 4
-  until: _certportal_answer.status == 200
+  failed_when: false
   when: not ansible_check_mode
 
 - name: Where it is
   ansible.builtin.debug:
     msg:
       - "portal : {{ _certportal_url }}"
+      - "files  : {{ certportal_web_root }}"
+      - "server : {{ ('include ' ~ certportal_web_snippet ~ ' in the ' ~ certportal_web_server
+                     ~ ' configuration of ' ~ _certportal_host ~ ', once')
+                     if certportal_web_server | length > 0 else 'serve ' ~ certportal_web_root
+                     ~ ' at ' ~ certportal_path ~ '/' }}"
+      - "answer : {{ 'yes' if (_certportal_answer.status | default(0)) == 200
+                     else 'not yet - the location block is not included, or the server not reloaded' }}"
       - "reads  : the job templates whose playbook is traditional_certificates.yml or"
       - "         traditional_certificate_renewal.yml, with the viewer's AWX rights"

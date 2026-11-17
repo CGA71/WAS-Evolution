@@ -7,7 +7,9 @@
 ```
 inventories/
   was/        every environment, parameterised
-  k3s_sim/    the CI simulation, same groups, over kubernetes.core.kubectl
+  aix/        ServeurAIX: one physical AIX server carrying a whole ND cell
+              (installation, deployment manager, federated node), and the
+              web front of AWX for the certificate portal
 ```
 
 > An earlier shape in this repository had four near-identical directories, one per environment. Four copies of the same site facts is four chances to drift, and it needed a CI job comparing checksums to catch it. That job is gone because the drift can no longer happen.

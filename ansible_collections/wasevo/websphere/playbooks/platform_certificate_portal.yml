@@ -1,15 +1,17 @@
 ---
-# The certificate portal, on the k3s node, served on AWX's own host.
+# The certificate portal, on the web server that fronts AWX's host name.
 #
-#   ansible-playbook -i inventories/cell <this>
+#   ansible-playbook -i inventories/aix <this>
 #
-# In AWX, "Certificates - portal", with the k3s node's machine credential - the
-# same one job 0 of the cell workflow uses. Replayable: a replay with the same
-# page changes nothing; a changed page rolls the server.
+# In AWX, "Certificates - portal", with the machine credential of that web
+# host. AWX itself is hosted elsewhere and is not touched: the role copies a
+# static page into a directory the web server serves at /wasevo/certificates/
+# and renders the location block to include, once, in its configuration.
+# Replayable: a replay with the same page changes nothing.
 
-- name: The certificate portal, on the k3s node
-  hosts: "{{ certportal_hosts | default('k3s_control') }}"
-  gather_facts: true
+- name: The certificate portal, on AWX's web front
+  hosts: "{{ certportal_hosts | default('awx_web') }}"
+  gather_facts: false
 
   roles:
     - wasevo.websphere.platform.certificate_portal

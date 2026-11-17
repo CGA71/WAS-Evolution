@@ -83,16 +83,42 @@ forge_os_packages:
     - gettext-base
     - net-tools
   AIX:
-    # AIX was entirely absent from the source repository - zero occurrences.
-    # These are the install-time prerequisites to confirm against the IBM
-    # prerequisite statement for the WAS level in use before wave 1 ships.
+    # AIX FILESETS, checked with lslpp - not RPMs. They come from the AIX
+    # installation media (installp), so prereqs_os verifies them and refuses
+    # with their names; it does not install them. Confirm the list against the
+    # IBM prerequisite statement for the WAS level in use.
     - bos.adt.libm
     - bos.perf.perfstat
     - xlC.aix61.rte
 
+# Commands that must be on the DEFAULT PATH of a non-interactive SSH session,
+# per OS family. On Linux the packages above provide them in /usr/bin. On AIX
+# they come from the AIX Toolbox for Open Source Software, under
+# /opt/freeware/bin, which a non-interactive session does not have on its PATH
+# unless /etc/environment adds it or the Toolbox links them into /usr/bin -
+# and ansible.builtin.unarchive looks for unzip and zipinfo on that PATH, so a
+# missing one fails the Installation Manager job 148 MB of copy later.
+forge_os_commands:
+  RedHat: []
+  Debian: []
+  AIX:
+    - unzip
+    - zipinfo
+    - sudo
+
+# The AIX Toolbox RPMs that provide forge_os_commands. prereqs_os installs them
+# with the Toolbox's dnf when it is present; without dnf it refuses and names
+# them.
+forge_aix_toolbox_packages:
+  - unzip
+  - sudo
+forge_aix_dnf: /opt/freeware/bin/dnf
+
 # Kernel and shell limits the legacy repository deployed as files into
 # /etc/security/limits.d/. Declared as data so AIX can be given its own
-# equivalent rather than silently inheriting Linux values.
+# equivalent rather than silently inheriting Linux values: on AIX they are
+# user attributes in /etc/security/limits, set with chuser, under the names
+# forge_aix_limit_names gives them (a hard limit adds _hard).
 # site_was_user, not was_admin_user: these are two different things that I had
 # conflated. site_was_user is the OS account that owns the installation and
 # runs the processes; was_admin_user is the WAS administrative console user,
@@ -102,6 +128,10 @@ forge_limits:
   - { domain: "{{ site_was_user }}", type: hard, item: nofile, value: 65536 }
   - { domain: "{{ site_was_user }}", type: soft, item: nproc, value: 16384 }
   - { domain: "{{ site_was_user }}", type: hard, item: nproc, value: 16384 }
+
+forge_aix_limit_names:
+  nofile: nofiles
+  nproc: nproc
 
 # Directories that must exist before any install step. Derived from the paths
 # declared in the inventory, so changing a base path moves all of them.
@@ -118,6 +148,37 @@ forge_required_dirs:
 forge_min_free_mb:
   "{{ was_binaries_base_dir }}": 6144
   "{{ was_logs_base_dir }}": 2048
+
+# ---------------------------------------------------------------------------
+# Target side - the binaries mount point
+# ---------------------------------------------------------------------------
+# The IBM media is read from was_install_binaries_base_dir, a share the system
+# administrator mounts. tasks/binaries_mount.yml verifies it, read-only; the
+# playbook binaries_mount_check.yml runs that check on its own, and it is the
+# first gate of the pipeline's Validation stage.
+
+# The path must be a mount point, not a directory of the root filesystem. A
+# directory that merely exists passes a stat and then holds nothing, or holds a
+# stale copy, which is worse.
+forge_binaries_require_mount: true
+
+# The filesystem type the mount must have: nfs, cifs, jfs2... Empty or "none"
+# skips the comparison. Defaults to the type the inventory declares for the
+# share.
+forge_binaries_fstype: >-
+  {{ site_binaries_repository_type | default('')
+     | regex_replace('^none$', '') }}
+
+# When true, the mounted device must be the declared share
+# (site_binaries_repository). Off by default: the same export is often written
+# differently (host name, IP, trailing slash) and a false refusal is no help.
+forge_binaries_check_source: false
+
+# What must be on the share before an install, relative to the paths the
+# inventory declares. The Installation Manager archive and the WAS repository
+# are required; the fix packs are reported, since having none is a normal
+# outcome for the fix pack job.
+forge_binaries_require_media: true
 
 # ---------------------------------------------------------------------------
 # Target side - OpenShift
@@ -146,3 +207,7 @@ forge_preflight_strict: true
 # Set true to skip the target-side checks, e.g. when validating only the model
 # and the control side in CI where no WAS host is reachable.
 forge_preflight_control_only: false
+
+# Set false to skip the check that the directory layout exists, i.e. before the
+# first install on a new server: prereqs_os creates it.
+forge_preflight_check_dirs: true

@@ -1,73 +1,100 @@
 #!/usr/bin/env bash
-# Declare, in AWX, the workflow that builds a WAS cell on the k3s cluster from
-# nothing: three virtual machines, the media, Installation Manager and WAS, a
-# deployment manager and two federated nodes, a cluster of two members, all
-# started, and the console published on the node's address.
+# Declare, in AWX, the workflow that builds a WAS cell on the AIX server from
+# nothing: the binaries mount checked, Installation Manager and WAS installed
+# from it, the fix packs, a deployment manager and a federated node on the
+# same machine, the cluster, its members, all started.
 #
-#   bash ci/awx/apply-cell-workflow.sh            apply
-#   bash ci/awx/apply-cell-workflow.sh --show     print the workflow graph
+#   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-cell-workflow.sh          apply
+#   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-cell-workflow.sh --show   the graph
 #
-# Run it from the k3s node, like apply-templates.sh. It is re-runnable: every
-# object is found by name and patched.
+# AWX is hosted elsewhere; run this from any host that reaches it. The
+# password is typed at the prompt. It is re-runnable: every object is found by
+# name and patched. The configuration templates (J2C, JDBC, JMS, security...)
+# are appended to the same workflow by apply-templates.sh.
 #
-# A WORKFLOW OF ITS OWN. The install lab workflow builds a cell on one machine
-# and then configures it, resource by resource. This one builds a cell across
-# three machines and stops at the cluster: no JDBC, no JMS, no security
-# change. Separate, so launching one never runs the other's jobs.
+# NOTHING SECRET. This script declares the inventory, the templates and the
+# workflow - configuration only. Made by hand, in AWX, once:
 #
-# NOTHING SECRET, NO CLUSTER RIGHT. This script declares the inventory, the
-# templates and the workflow - configuration only. What carries a secret or a
-# right is job 0 of the workflow itself, "WAS cell - 0. Prerequisites"
-# (playbooks/cell_prerequisites.yml), run by AWX on the k3s node:
-#
-#   Kubernetes credential   the token of ServiceAccount awx-cell-platform,
-#                           which job 0 creates with its rights.
-#   WAS administrator       user wasadmin, its password generated once by job 0
-#                           into the Secret awx/was-cell-admin. Read it with:
-#                             kubectl -n awx get secret was-cell-admin \
-#                               -o jsonpath='{.data.password}' | base64 -d
-#   Node credential         the AWX machine credential job 0 logs in to the
-#                           node with ("k3s node administrator"). The one thing
-#                           made by hand, in AWX: it holds the node's key.
-#   Inventory               "WAS cell", sourced from inventories/cell/hosts.yml.
-#   Survey                  the same as the lab workflow's (environment,
-#                           channel, topology, names), by apply-survey.sh.
+#   Machine credential   "ServeurAIX (ansible)": the SSH key of the WAS account
+#                        on ServeurAIX (site_was_user in inventories/aix).
+#   WAS credential       of the type apply-templates.sh creates, "WAS
+#                        administrative user": the console user and password.
+#                        Attached here when it exists; until then the
+#                        templates that need it ask for it at launch.
+#   Inventory            "WAS AIX", sourced from inventories/aix/hosts.yml by
+#                        this script.
+#   Survey               environment, channel, topology, names, by
+#                        apply-survey.sh, which this script runs at the end.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
-API="${AWX_API:-http://awx.lab.example.com/api/v2}"
-WORKFLOW="${AWX_CELL_WORKFLOW:-WAS cell - deployment manager and two federated nodes}"
+API="${AWX_API:-https://awx.example.internal/api/v2}"
+AWX_USER="${AWX_USER:-admin}"
+WORKFLOW="${AWX_CELL_WORKFLOW:-WAS AIX - cell on ServeurAIX}"
 PROJECT="${AWX_PROJECT:-WAS Evolution}"
-INVENTORY="${AWX_CELL_INVENTORY:-WAS cell}"
-INVENTORY_FILE="inventories/cell/hosts.yml"
-MACHINE_CRED="${AWX_MACHINE_CRED:-WAS lab VM (ansible)}"
-NODE_CRED="${AWX_CELL_NODE_CRED:-k3s node administrator}"
+INVENTORY="${AWX_CELL_INVENTORY:-WAS AIX}"
+INVENTORY_FILE="inventories/aix/hosts.yml"
+MACHINE_CRED="${AWX_MACHINE_CRED:-ServeurAIX (ansible)}"
+WAS_CRED_TYPE="${AWX_WAS_CRED_TYPE:-WAS administrative user}"
 COL=ansible_collections/wasevo/websphere/playbooks
-
-export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 say() { printf '\n== %s\n' "$*"; }
 ok()  { printf '   ok    %s\n' "$*"; }
 note(){ printf '   --    %s\n' "$*"; }
 die() { printf '   FAIL  %s\n' "$*" >&2; exit 1; }
 
-NETRC="$(mktemp)"
-BODY="$(mktemp)"
-chmod 600 "$NETRC" "$BODY"
-trap 'rm -f "$NETRC" "$BODY"' EXIT
+# Same credential handling as apply-survey.sh: the netrc and the request body
+# live in a private temporary directory made by Python, removed on exit.
+WORKDIR="$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="awx-"))')"
+[ -d "$WORKDIR" ] || die "could not create the temporary directory"
+trap 'rm -rf "$WORKDIR"' EXIT
+NETRC="$WORKDIR/netrc"
+BODY="$WORKDIR/body"
 
-_awx_pw="$(kubectl -n awx get secret awx-admin-password -o jsonpath='{.data.password}' | base64 -d)"
-[ -n "$_awx_pw" ] || die "could not read the AWX admin password from the Secret"
-printf 'machine %s login admin password %s\n' \
-    "$(printf '%s' "$API" | sed -E 's#^https?://([^/]+).*#\1#')" "$_awx_pw" > "$NETRC"
-unset _awx_pw
+# AUTHENTICATION, in this order:
+#   AWX_TOKEN_FILE   a file holding an AWX personal access token (OAuth2,
+#                    User > Tokens in AWX). Preferred: revocable, scoped, no
+#                    password typed. Sent as "Authorization: Bearer", from a
+#                    0600 header file, so the token never reaches a command line.
+#   AWX_NETRC_FILE   a netrc already written by a calling script
+#                    (apply-cell-workflow.sh runs apply-survey.sh), reused so
+#                    the password is typed once per run.
+#   otherwise        AWX_USER's password, typed at the prompt.
+if [ -n "${AWX_TOKEN_FILE:-}" ]; then
+    [ -r "$AWX_TOKEN_FILE" ] || die "cannot read AWX_TOKEN_FILE ($AWX_TOKEN_FILE)"
+    ( umask 077
+      printf 'Authorization: Bearer %s\n' "$(tr -d ' \r\n' < "$AWX_TOKEN_FILE")" > "$WORKDIR/auth.header" )
+    AUTH=(-H "@$WORKDIR/auth.header")
+elif [ -n "${AWX_NETRC_FILE:-}" ] && [ -s "$AWX_NETRC_FILE" ]; then
+    NETRC="$AWX_NETRC_FILE"
+    AUTH=(--netrc-file "$NETRC")
+else
+    IFS= read -rsp "AWX password for $AWX_USER: " _awx_pw </dev/tty \
+        || die "could not read the AWX password from the terminal"
+    printf '\n' >&2
+    [ -n "$_awx_pw" ] || die "empty AWX password"
+    # The host part of AWX_API, by parameter expansion: AIX sed has no -E.
+    _host="${API#*://}"; _host="${_host%%/*}"
+    ( umask 077
+      printf 'machine %s login %s password %s\n' \
+          "$_host" "$AWX_USER" "$_awx_pw" > "$NETRC" )
+    unset _awx_pw
+    AUTH=(--netrc-file "$NETRC")
+fi
 
+# --noproxy "*": AWX is reached directly, never through the HTTP proxy the
+# environment may declare (http_proxy, https_proxy). Through that proxy the API
+# answers 504 Gateway Timeout.
+#
+# TLS: AWX's certificate is usually signed by an internal authority. With
+# AWX_CA_FILE pointing at that authority's certificate it is verified;
+# without it, -k accepts it unverified.
+if [ -n "${AWX_CA_FILE:-}" ]; then CURL_TLS=(--cacert "$AWX_CA_FILE"); else CURL_TLS=(-k); fi
 api() {
     local method="$1" path="$2"
     shift 2
-    curl -sS --netrc-file "$NETRC" -X "$method" \
+    curl -sS "${CURL_TLS[@]}" --noproxy '*' "${AUTH[@]}" -X "$method" \
         -H "Content-Type: application/json" "$API$path" "$@"
 }
 py() { python3 -c "$1" "${@:2}"; }
@@ -116,8 +143,17 @@ PROJECT_ID="$(id_of projects "$PROJECT")"
 [ -n "$PROJECT_ID" ] || die "no project named \"$PROJECT\""
 MACHINE_CRED_ID="$(id_of credentials "$MACHINE_CRED")"
 [ -n "$MACHINE_CRED_ID" ] || die "no credential named \"$MACHINE_CRED\""
-NODE_CRED_ID="$(id_of credentials "$NODE_CRED")"
-[ -n "$NODE_CRED_ID" ] || note "no credential \"$NODE_CRED\" yet - job 0 needs it to reach the node"
+# The WAS administrative credential, when its type and one credential of it
+# exist. Neither is made here: the type by apply-templates.sh, the credential
+# by a human, because it holds a password.
+CT_ID="$(id_of credential_types "$WAS_CRED_TYPE")"
+WAS_CRED_ID=""
+if [ -n "$CT_ID" ]; then
+    WAS_CRED_ID="$(api GET "/credentials/?credential_type=$CT_ID" | py 'import sys,json
+d=json.load(sys.stdin)
+print(d["results"][0]["id"] if d.get("count") else "")')"
+fi
+[ -n "$WAS_CRED_ID" ] || note "no \"$WAS_CRED_TYPE\" credential yet - the profile, cluster and start jobs will ask for one at launch"
 EE_ID="$(api GET "/job_templates/?page_size=200" | py 'import sys,json
 for t in json.load(sys.stdin)["results"]:
     if t.get("execution_environment"):
@@ -135,7 +171,7 @@ ok "project updated"
 
 py 'import json,sys
 print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]),
-  "description": "A deployment manager and two federated nodes on k3s - inventories/cell"}))' \
+  "description": "ServeurAIX: a deployment manager and a federated node on one AIX server - inventories/aix"}))' \
   "$INVENTORY" "$ORG_ID" > "$BODY"
 INV_ID="$(upsert inventories "$INVENTORY")"
 
@@ -149,46 +185,49 @@ SRC_ID="$(upsert inventory_sources "$INVENTORY from project")"
 # ---------------------------------------------------------------------------
 say "Job templates"
 # ---------------------------------------------------------------------------
-# name | playbook | become | node | extra vars
+# name | playbook | needs the WAS credential | extra vars
 #
-# The node column marks job 0, which logs in to the k3s node with the node
-# credential instead of the cell machines' one. Job 0 attaches the WAS and
-# Kubernetes credentials to the others when it has made them.
+# Every job runs on ServeurAIX with the machine credential, become on: the
+# roles ask for root (sudo, from the AIX Toolbox) only on the tasks that need
+# it. lab_hosts and profile_hosts point the install and profile playbooks at
+# the installation entry; config_dmgr_hosts lets the plays that act on the
+# deployment manager run on an inventory with no environment group, which this
+# one deliberately is - the same server is built as any environment.
 #
-# become is off on the jobs that run plays on the controller - the job pod has
-# no sudo - and their roles ask for root task by task where the machine needs
-# it. lab_hosts and profile_hosts point the reused install and profile
-# playbooks at this inventory's machines, and away from the media source.
+# The fix pack playbook appears twice, as two templates: the first pass lifts
+# Installation Manager to the level WAS needs, the second patches what the WAS
+# job installed. A workflow node is found by its template here, so one template
+# cannot be two nodes.
 STEPS=(
-  "WAS cell - 0. Prerequisites|$COL/cell_prerequisites.yml|false|node|"
-  "WAS cell - 1. Machines|$COL/cell_machines.yml|false||"
-  "WAS cell - 2. Media|$COL/cell_media.yml|false||"
-  "WAS cell - 3. Installation Manager|$COL/lab_install_im.yml|true||lab_hosts: was_install"
-  "WAS cell - 4. WAS|$COL/lab_install_was.yml|true||lab_hosts: was_install"
-  "WAS cell - 5. Profiles: deployment manager, federated nodes|$COL/lab_create_profiles.yml|true||profile_hosts: was_install"
-  "WAS cell - 6. Cluster|$COL/traditional_cluster.yml|true||config_dmgr_hosts: dmgr"
-  "WAS cell - 7. Cluster members|$COL/traditional_cluster_members.yml|true||config_dmgr_hosts: dmgr"
-  "WAS cell - 8. Start|$COL/traditional_start.yml|true||"
-  "WAS cell - 9. Console|$COL/cell_console.yml|false||"
+  "WAS AIX - 0. Binaries mount point|$COL/binaries_mount_check.yml||mount_check_hosts: was_install"
+  "WAS AIX - 1. Installation Manager|$COL/lab_install_im.yml||lab_hosts: was_install"
+  "WAS AIX - 2. Fix packs: Installation Manager|$COL/lab_apply_fixpacks.yml||lab_hosts: was_install"
+  "WAS AIX - 3. WAS|$COL/lab_install_was.yml||lab_hosts: was_install"
+  "WAS AIX - 4. Fix packs: WAS|$COL/lab_apply_fixpacks.yml||lab_hosts: was_install"
+  "WAS AIX - 5. Profiles: deployment manager, federated node|$COL/lab_create_profiles.yml|was|profile_hosts: was_install"
+  "WAS AIX - 6. Cluster|$COL/traditional_cluster.yml|was|config_dmgr_hosts: dmgr"
+  "WAS AIX - 7. Cluster members|$COL/traditional_cluster_members.yml|was|config_dmgr_hosts: dmgr"
+  "WAS AIX - 8. Start|$COL/traditional_start.yml|was|config_dmgr_hosts: dmgr"
 )
 
 JT_IDS=()
 for step in "${STEPS[@]}"; do
-    IFS='|' read -r name playbook become node extra <<<"$step"
+    IFS='|' read -r name playbook needs_was extra <<<"$step"
     py 'import json,sys
-name, playbook, become, extra, inv, proj, ee = sys.argv[1:8]
+name, playbook, ask_cred, extra, inv, proj, ee = sys.argv[1:8]
 b = {"name": name, "job_type": "run", "inventory": int(inv), "project": int(proj),
      "playbook": playbook, "execution_environment": int(ee),
-     "become_enabled": become == "true", "verbosity": 1, "timeout": 5400,
+     "become_enabled": True, "verbosity": 1, "timeout": 5400,
      "ask_job_type_on_launch": True, "ask_variables_on_launch": True,
-     "ask_credential_on_launch": False}
+     "ask_credential_on_launch": ask_cred == "true"}
 b["extra_vars"] = ("---\n%s\n" % extra.strip()) if extra.strip() else ""
-print(json.dumps(b))' "$name" "$playbook" "$become" "$extra" "$INV_ID" "$PROJECT_ID" "$EE_ID" > "$BODY"
+print(json.dumps(b))' "$name" "$playbook" \
+        "$([ "$needs_was" = "was" ] && [ -z "$WAS_CRED_ID" ] && echo true || echo false)" \
+        "$extra" "$INV_ID" "$PROJECT_ID" "$EE_ID" > "$BODY"
     jt="$(upsert job_templates "$name")"
-    if [ "$node" = "node" ]; then
-        [ -z "$NODE_CRED_ID" ] || api POST "/job_templates/$jt/credentials/" -d "{\"id\": $NODE_CRED_ID}" >/dev/null || true
-    else
-        api POST "/job_templates/$jt/credentials/" -d "{\"id\": $MACHINE_CRED_ID}" >/dev/null || true
+    api POST "/job_templates/$jt/credentials/" -d "{\"id\": $MACHINE_CRED_ID}" >/dev/null || true
+    if [ "$needs_was" = "was" ] && [ -n "$WAS_CRED_ID" ]; then
+        api POST "/job_templates/$jt/credentials/" -d "{\"id\": $WAS_CRED_ID}" >/dev/null || true
     fi
     JT_IDS+=("$jt")
 done
@@ -198,8 +237,8 @@ say "Workflow"
 # ---------------------------------------------------------------------------
 py 'import json,sys
 print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]), "inventory": int(sys.argv[3]),
-  "description": "Prerequisites, three KubeVirt machines, WAS, a deployment manager, two federated nodes, "
-                 "a cluster of two members, started; the console on the node address.",
+  "description": "ServeurAIX: binaries mount checked, Installation Manager, WAS and fix packs from it, "
+                 "a deployment manager and a federated node, the cluster and its members, started.",
   "ask_variables_on_launch": True}))' "$WORKFLOW" "$ORG_ID" "$INV_ID" > "$BODY"
 WF_ID="$(upsert workflow_job_templates "$WORKFLOW")"
 
@@ -224,7 +263,7 @@ for n in json.load(sys.stdin)["results"]:
 done
 
 say "Survey"
-AWX_WORKFLOW="$WORKFLOW" bash "$HERE/apply-survey.sh" | tail -4
+AWX_NETRC_FILE="$NETRC" AWX_WORKFLOW="$WORKFLOW" bash "$HERE/apply-survey.sh" | tail -4
 
 say "Done"
 printf '   Launch it in AWX:\n     %s\n' \

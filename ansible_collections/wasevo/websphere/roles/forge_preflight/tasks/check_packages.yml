@@ -4,36 +4,93 @@
 # Read-only: the preflight reports, prereqs_os installs. Mixing the two is how
 # a verification job quietly becomes a deployment job.
 
-- name: Query the package facts
-  ansible.builtin.package_facts:
-    manager: auto
+# ---------------------------------------------------------------------------
+# Linux: RPM or deb packages, through package_facts
+# ---------------------------------------------------------------------------
+
+- name: Linux packages
+  when: ansible_facts.os_family != 'AIX'
+  block:
+
+    - name: Query the package facts
+      ansible.builtin.package_facts:
+        manager: auto
+      check_mode: false
+
+    - name: Required packages must be installed
+      ansible.builtin.assert:
+        that:
+          - item in ansible_facts.packages
+        fail_msg: >-
+          Package {{ item }} is missing on {{ inventory_hostname }}.
+          {{ "psmisc provides killall, which manageprofiles needs - the legacy "
+             "playbook installed it as its last task, after the profiles that "
+             "depend on it." if item == "psmisc" else "" }}
+          Run the prereqs_os role, which installs it rather than just reporting it.
+        success_msg: "{{ item }} present"
+      loop: "{{ forge_os_packages[ansible_facts.os_family] }}"
+      loop_control:
+        label: "{{ item }}"
+
+# ---------------------------------------------------------------------------
+# AIX: filesets, through lslpp
+# ---------------------------------------------------------------------------
+# package_facts has no installp backend, and the rpm one sees only the AIX
+# Toolbox, never the base filesets. lslpp -Lc prints one colon-separated line
+# per installed fileset and complains about the others on stderr, so presence
+# is ":<fileset>:" in its output whatever its exit code.
+
+- name: AIX filesets
+  when: ansible_facts.os_family == 'AIX'
+  block:
+
+    - name: Query the declared filesets
+      ansible.builtin.command:
+        cmd: "lslpp -Lc {{ forge_os_packages['AIX'] | join(' ') }}"
+      register: _forge_lslpp
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Required filesets must be installed
+      ansible.builtin.assert:
+        that:
+          - (':' ~ item ~ ':') in _forge_lslpp.stdout
+        fail_msg: >-
+          Fileset {{ item }} is not installed on {{ inventory_hostname }}.
+          It comes from the AIX installation media: install it with installp
+          (smitty install_latest) - prereqs_os does not install filesets.
+        success_msg: "{{ item }} present"
+      loop: "{{ forge_os_packages['AIX'] }}"
+      loop_control:
+        label: "{{ item }}"
+
+# ---------------------------------------------------------------------------
+# Commands on the default PATH - what the modules will actually find
+# ---------------------------------------------------------------------------
+
+- name: Look for the required commands
+  ansible.builtin.shell:
+    cmd: "command -v {{ item }}"
+  loop: "{{ forge_os_commands[ansible_facts.os_family] | default([]) }}"
+  register: _forge_commands
+  changed_when: false
+  failed_when: false
   check_mode: false
 
-- name: Required packages must be installed
+- name: Required commands must be on the default PATH
   ansible.builtin.assert:
     that:
-      - item in ansible_facts.packages
+      - item.rc == 0
     fail_msg: >-
-      Package {{ item }} is missing on {{ inventory_hostname }}.
-      {{ "psmisc provides killall, which manageprofiles needs - the legacy "
-         "playbook installed it as its last task, after the profiles that "
-         "depend on it." if item == "psmisc" else "" }}
-      Run the prereqs_os role, which installs it rather than just reporting it.
-    success_msg: "{{ item }} present"
-  loop: "{{ forge_os_packages[ansible_facts.os_family] }}"
+      {{ item.item }} is not on the PATH of a non-interactive session on
+      {{ inventory_hostname }}.
+      {{ ('On AIX it comes from the AIX Toolbox (/opt/freeware/bin): install '
+          'it, then add /opt/freeware/bin to PATH in /etc/environment or link '
+          'it into /usr/bin. ansible.builtin.unarchive looks for unzip and '
+          'zipinfo on this PATH only.')
+         if ansible_facts.os_family == 'AIX' else '' }}
+    success_msg: "{{ item.item }} at {{ item.stdout | trim }}"
+  loop: "{{ _forge_commands.results | default([]) }}"
   loop_control:
-    label: "{{ item }}"
-  when: not (was_simulation | default(false))
-
-# In the simulation the pod starts from a stock image, so the packages are
-# genuinely absent until prereqs_os runs. Reporting is still useful; failing is
-# not, because the job that installs them comes next in the pipeline.
-- name: Report missing packages without failing, in the simulation
-  ansible.builtin.debug:
-    msg: >-
-      {{ forge_os_packages[ansible_facts.os_family]
-         | reject('in', ansible_facts.packages) | list
-         | ternary('missing: ' ~ (forge_os_packages[ansible_facts.os_family]
-             | reject('in', ansible_facts.packages) | list | join(', ')),
-           'all required packages present') }}
-  when: was_simulation | default(false)
+    label: "{{ item.item }}"

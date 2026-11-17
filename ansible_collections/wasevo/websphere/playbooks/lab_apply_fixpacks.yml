@@ -10,7 +10,7 @@
 # discovers what is installed rather than being handed a list: on pass 1 only
 # Installation Manager is there, on pass 2 everything is.
 #
-#   ansible-playbook -i inventories/lab \
+#   ansible-playbook -i inventories/aix \
 #       ansible_collections/wasevo/websphere/playbooks/lab_apply_fixpacks.yml \
 #       -e was_environment=<code>
 #
@@ -18,7 +18,7 @@
 # says what it found and where to put media, and exits green.
 
 - name: Apply IBM fixpacks
-  hosts: "{{ lab_hosts | default('was_lab') }}"
+  hosts: "{{ lab_hosts | default('was_install') }}"
   gather_facts: true
 
   roles:

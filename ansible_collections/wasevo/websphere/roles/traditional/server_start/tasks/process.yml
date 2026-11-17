@@ -8,16 +8,16 @@
 # behind; a check on the file alone would call a dead server running and never
 # start it. The pid inside must name a live process.
 
+# Plain POSIX sh, no bash: /bin/sh is ksh on AIX, and bash is not in the base
+# system there. There is no pipeline, so there is nothing for pipefail to do.
 - name: Is it running - {{ start_label }}
   ansible.builtin.shell:
     cmd: |
-      set -o pipefail
       if [ -f "{{ start_pid_file }}" ] && kill -0 "$(cat "{{ start_pid_file }}")" 2>/dev/null; then
         echo running
       else
         echo stopped
       fi
-    executable: /bin/bash
   register: _start_state
   changed_when: false
   check_mode: false

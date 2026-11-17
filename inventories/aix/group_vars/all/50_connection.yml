@@ -1,0 +1,22 @@
+---
+# How Ansible reaches ServeurAIX.
+#
+# The private key is supplied by the AWX Machine Credential, by --private-key
+# on a command-line run, or by the CI variable AIX_SSH_PRIVATE_KEY. It is never
+# named here.
+ansible_user: "{{ site_was_user }}"
+
+# AIX ships no Python 3 in the base system. The AIX Toolbox for Open Source
+# Software installs it under /opt/freeware, together with the other tools the
+# roles call: sudo, bash, unzip and zipinfo (ansible.builtin.unarchive needs
+# both), GNU tar and gzip. Interpreter discovery does not look there, so it is
+# named explicitly.
+ansible_python_interpreter: /opt/freeware/bin/python3
+
+# sudo from the AIX Toolbox, which is where become looks by default once
+# /opt/freeware/bin is on the account's PATH.
+ansible_become_method: sudo
+
+# /tmp on AIX is often a small filesystem; Ansible's temporary files go under
+# the account's home instead.
+ansible_remote_tmp: "~/.ansible/tmp"

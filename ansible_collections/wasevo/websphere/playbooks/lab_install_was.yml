@@ -1,7 +1,7 @@
 ---
 # Job 2 of the install workflow: WebSphere Application Server for Developers.
 #
-#   ansible-playbook -i inventories/lab \
+#   ansible-playbook -i inventories/aix \
 #       ansible_collections/wasevo/websphere/playbooks/lab_install_was.yml
 #
 # In AWX this is "WAS lab - 2. Install WAS for Developers", reached only on
@@ -10,7 +10,7 @@
 # inside a shell call.
 
 - name: Install WebSphere Application Server for Developers
-  hosts: "{{ lab_hosts | default('was_lab') }}"
+  hosts: "{{ lab_hosts | default('was_install') }}"
   gather_facts: true
 
   pre_tasks:

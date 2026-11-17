@@ -1,27 +1,49 @@
 ---
-# Three things this pipeline proves, in order of how much they cost to get wrong:
+# Three stages, in the order a WAS installation on a physical AIX server can
+# go wrong, and in increasing cost:
 #
-#   1. The model refuses invalid product / JDK pairs, refuses production without
-#      being asked, and refuses an artefact with no version. Static, no cluster.
-#   2. The whole traditional chain - module, payload, wsadmin launch, driver,
-#      handler, JSON, changed/diff - works, against a fake cell. No cluster.
-#   3. The same chain works against real hosts, over a real connection, with
-#      real idempotency: run twice, the second run must report changed=0.
-#      This one needs k3s.
+#   validation   No change anywhere. The static gates - the model refuses
+#                invalid product / JDK pairs and production without being
+#                asked, the traditional chain works against a fake cell, the
+#                portal logic holds - and, on ServeurAIX, the binaries mount
+#                point: mounted, of the declared type, readable, carrying the
+#                Installation Manager archive and a WAS repository; then the
+#                forge preflight (filesets, AIX Toolbox commands, free space).
+#   build        The product on ServeurAIX: Installation Manager, the fix
+#                packs, WAS, read from the mount. Then the whole build is
+#                replayed and must report changed=0 - the proof that the
+#                install is idempotent, not just that it ran once.
+#   deploy       The cell: a check run first, then the deployment manager and
+#                the federated node, the cluster, its members, started - and
+#                replayed, changed=0 again. Manual: it is a click, not a push.
 #
-# The simulation uses Rocky Linux 9 because it is the closest freely
-# redistributable match to the RHEL the estate runs on: same package manager,
-# same systemd, same /etc/security/limits.d semantics.
+# NOTHING HERE NEEDS KUBERNETES. The server jobs reach ServeurAIX over SSH from
+# a plain Python image, with inventories/aix. They are skipped, not failed,
+# when the CI variables that reach the server are absent, so a fork or a clone
+# still gets the static gates.
 #
-# Two namespaces, was-sim-dmgr and was-sim-nodeagents, because the deployment
-# manager and the node agents are different trust zones. A NetworkPolicy makes
-# that boundary testable instead of implied.
+# CI/CD variables (Settings > CI/CD > Variables), none of them in this file:
+#
+#   AIX_SSH_PRIVATE_KEY   File. The private key of the WAS account on
+#                         ServeurAIX (site_was_user in inventories/aix).
+#   AIX_SSH_KNOWN_HOSTS   File or variable. ServeurAIX's host key line(s), as
+#                         ssh-keyscan prints them. Without it the key is taken
+#                         on first use, and the job says so.
+#   WAS_ENVIRONMENT       The environment code to build ServeurAIX as - what
+#                         the AWX survey would ask: a DSI family, alone or with
+#                         an instance (DEV01, VAL02...). No default, on purpose.
+#   WAS_ADMIN_USER        The WAS administrative console user.
+#   WAS_ADMIN_PASSWORD    Masked and protected. Written to a 0600 vars file,
+#                         never to a command line.
+#
+# The build and deploy stages run on the default branch only, and one pipeline
+# at a time (resource_group): two pipelines installing on one server contend
+# for Installation Manager's lock.
 
 stages:
-  - lint
-  - validate
-  - simulate
-  - teardown
+  - validation
+  - build
+  - deploy
 
 variables:
   ANSIBLE_FORCE_COLOR: "1"
@@ -33,11 +55,13 @@ variables:
   # that CONTAINS ansible_collections/, which is what Ansible looks for.
   ANSIBLE_COLLECTIONS_PATH: "$CI_PROJECT_DIR"
   ANSIBLE_ROLES_PATH: "$CI_PROJECT_DIR/ansible_collections/wasevo/websphere/roles"
-  NS_DMGR: was-sim-dmgr
-  NS_NODES: was-sim-nodeagents
+  AIX_INVENTORY: inventories/aix
+  # Only for ssh-keyscan when AIX_SSH_KNOWN_HOSTS is absent; Ansible reads the
+  # host from the inventory.
+  AIX_HOST: ServeurAIX
 
 # ---------------------------------------------------------------------------
-# Static checks. No cluster, no credentials.
+# Static checks. No server, no credentials.
 # ---------------------------------------------------------------------------
 
 .static:
@@ -47,13 +71,13 @@ variables:
 
 yamllint:
   extends: .static
-  stage: lint
+  stage: validation
   script:
     - yamllint -s .
 
 ansible-lint:
   extends: .static
-  stage: lint
+  stage: validation
   script:
     - ansible-lint $COLLECTION
   # Advisory while the later-wave roles are still stubs.
@@ -61,7 +85,7 @@ ansible-lint:
 
 syntax:
   extends: .static
-  stage: lint
+  stage: validation
   # THE ENVIRONMENT HAS TO BE PASSED, EVEN HERE. Most of these playbooks take
   # their host pattern from was_environment, because the environment is a
   # launch input rather than a directory. Ansible renders `hosts` before it
@@ -70,8 +94,8 @@ syntax:
   # unparsable, which it is not. The value is arbitrary here: --syntax-check
   # matches no host and contacts nothing, it only has to render.
   #
-  # This job was red for exactly that reason, and a red lint stage skips every
-  # job after it - which is why the stub and simulation gates had not run.
+  # This job was red for exactly that reason once, and a red job here keeps
+  # the build and deploy stages from running.
   script:
     - ansible-playbook --syntax-check $COLLECTION/playbooks/pilot_render_matrix.yml
     - ansible-playbook --syntax-check $COLLECTION/playbooks/model_validate.yml -e was_environment=SYNTAX
@@ -101,20 +125,27 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_0_foundation.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_2_persistence.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_3_enterprise.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_prerequisites.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_machines.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_media.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/traditional_start.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/cell_console.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/lab_create_profiles.yml -e was_environment=SYNTAX
+    # The AIX server: the mount check and the install chain.
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount_check.yml
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_im.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_apply_fixpacks.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_was.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_create_profiles.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_start.yml -e was_environment=SYNTAX
+    # Applications: deployment and every step of a decommissioning.
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_application_deploy.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check
+        $COLLECTION/playbooks/traditional_application_decommission.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check
+        $COLLECTION/playbooks/traditional_application_remove_node.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_1_web_services.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_6_management.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_4_messaging.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_5_extended.yml -e was_environment=SYNTAX
-    # Certificates: inventory and renewal on the dmgr, the portal on the k3s node.
+    # Certificates: inventory and renewal on the dmgr, the portal on AWX's web front.
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_certificates.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_certificate_renewal.yml -e was_environment=SYNTAX
-    - ansible-playbook -i inventories/cell --syntax-check $COLLECTION/playbooks/platform_certificate_portal.yml
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/platform_certificate_portal.yml
 
 # The environment is a launch input, so the loop passes it as one - exactly as
 # the AWX survey does. There is no list of environment codes to iterate: what
@@ -126,7 +157,7 @@ syntax:
 # declared alongside the environment.
 model-matrix:
   extends: .static
-  stage: validate
+  stage: validation
   script:
     - |
       set -e
@@ -169,6 +200,37 @@ model-matrix:
       fi
       echo "refused as expected"
     - |
+      set -e
+      echo "=============== environment families: a family and an instance ==============="
+      # The site's families are inventory data; these two are test families,
+      # never a real code. With families declared, the code must be one of
+      # them, alone or with a two-digit instance, and the family decides the
+      # tier.
+      FAMILIES='{"was_environment_families": {"ENVCODE": {"tier": "non_prod", "long_name": "Test"},
+                 "PRDCODE": {"tier": "prod", "long_name": "Prod test"}}, "model_require_hosts": false}'
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+        -e "$FAMILIES" -e was_environment=ENVCODE01 > family.log
+      grep -q "family ENVCODE, instance 01" family.log || { echo "FAIL: ENVCODE01 was not read as ENVCODE + 01"; exit 1; }
+      for refused in ENVCODE1 OTHER01 ENVCODE01X; do
+        if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+             -e "$FAMILIES" -e was_environment=$refused > /dev/null 2>&1; then
+          echo "FAIL: $refused was accepted although it is no family + instance"; exit 1
+        fi
+      done
+      echo "=============== the family decides the tier ==============="
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+           -e "$FAMILIES" -e was_environment=PRDCODE02 > /dev/null 2>&1; then
+        echo "FAIL: a production family ran without acknowledgement"; exit 1
+      fi
+      if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+           -e "$FAMILIES" -e was_environment=PRDCODE02 -e was_environment_tier=non_prod \
+           -e model_allow_production=true > /dev/null 2>&1; then
+        echo "FAIL: a production family answered as non_prod was accepted"; exit 1
+      fi
+      ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml \
+        -e "$FAMILIES" -e was_environment=PRDCODE02 -e model_allow_production=true > /dev/null
+      echo "families: instance read, strays refused, the tier taken from the family"
+    - |
       echo "=============== an environment with no hosts must be refused ==============="
       if ansible-playbook -i inventories/was $COLLECTION/playbooks/model_validate.yml            -e was_environment=NOSUCH; then
         echo "FAIL: an environment with no hosts was accepted"; exit 1
@@ -208,18 +270,18 @@ model-matrix:
 # argument here.
 pilot-render:
   extends: .static
-  stage: validate
+  stage: validation
   script:
     - ansible-playbook $COLLECTION/playbooks/pilot_render_matrix.yml -e was_environment=PILOT -e was_channel=Extranet
   artifacts:
     paths: [rendered/]
     expire_in: 1 week
 
-# The driver, the handler and the fake cell, with no cluster and no Ansible.
+# The driver, the handler and the fake cell, with no server and no Ansible.
 # Fast, and it catches most regressions before anything is deployed.
 stub-unit:
   image: python:3.12-slim
-  stage: validate
+  stage: validation
   # PyYAML and nothing else: the check that renders the shared model for WAS
   # traditional reads model/example/common.yml, and the driver, the handlers
   # and the fake cell need only the standard library. Still no Ansible here -
@@ -234,379 +296,186 @@ stub-unit:
 # AWX. Node only: the page has no build step and no dependency.
 portal-unit:
   image: node:22-alpine
-  stage: validate
-  needs: []
+  stage: validation
   script:
     - node ci/portal-tests.js
 
+
 # ---------------------------------------------------------------------------
-# Simulation on k3s
+# ServeurAIX, over SSH
 # ---------------------------------------------------------------------------
 
-.k3s:
+.aix:
   image: python:3.12-slim
   variables:
-    # The password of the simulation's J2C alias. A marker, not a secret: the
-    # point is the PATH - inventories/k3s_sim/group_vars/all/60_resources.yml
-    # declares password_env: SIM_J2C_PASSWORD, and the role reads it from the
-    # controller's environment exactly as it reads one an AWX credential
-    # injected. Nothing about a real password is exercised by its value.
-    SIM_J2C_PASSWORD: "sim-marker-not-a-secret"
+    ANSIBLE_STDOUT_CALLBACK: default
   before_script:
-    - apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
-    - pip install --quiet --no-cache-dir ansible-core kubernetes
-    # From requirements.yml, not a hand-picked list. forge_preflight checks the
-    # collections it declares, and a job that installs a subset of them fails
-    # that check - which is the preflight working, not a false positive.
+    - apt-get update -qq && apt-get install -y -qq openssh-client >/dev/null
+    - pip install --quiet --no-cache-dir ansible-core
+    # From requirements.yml, not a hand-picked list: forge_preflight checks the
+    # collections it declares, and a subset fails that check.
     - ansible-galaxy collection install --force -r collections/requirements.yml >/dev/null
-    - curl -sLo /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.4/bin/linux/amd64/kubectl"
-    - chmod +x /usr/local/bin/kubectl
-    # Built from CI variables, never from a kubeconfig in the repository. The
-    # ServiceAccount behind KUBE_TOKEN is scoped to the two simulation
-    # namespaces by namespaced Roles, so a leaked token reaches nothing else.
+    # The key and the known host, from CI variables, never from the repository.
     - |
       set -e
-      echo "$KUBE_CA_B64" | base64 -d > /tmp/k3s-ca.crt
-      kubectl config set-cluster k3s --server="$KUBE_URL" \
-        --certificate-authority=/tmp/k3s-ca.crt --embed-certs=true
-      kubectl config set-credentials ci --token="$KUBE_TOKEN"
-      kubectl config set-context k3s --cluster=k3s --user=ci --namespace="$NS_DMGR"
-      kubectl config use-context k3s
+      install -d -m 700 ~/.ssh
+      install -m 600 "$AIX_SSH_PRIVATE_KEY" ~/.ssh/id_aix
+      export ANSIBLE_PRIVATE_KEY_FILE=~/.ssh/id_aix
+      echo "export ANSIBLE_PRIVATE_KEY_FILE=$HOME/.ssh/id_aix" >> ~/.aix-env
+      if [ -n "${AIX_SSH_KNOWN_HOSTS:-}" ]; then
+        if [ -f "$AIX_SSH_KNOWN_HOSTS" ]; then cat "$AIX_SSH_KNOWN_HOSTS"
+        else printf '%s\n' "$AIX_SSH_KNOWN_HOSTS"; fi > ~/.ssh/known_hosts
+      else
+        echo "WARNING: AIX_SSH_KNOWN_HOSTS is not set - ServeurAIX's host key is taken on first use."
+        ssh-keyscan -T 10 "$AIX_HOST" > ~/.ssh/known_hosts 2>/dev/null
+      fi
+      chmod 600 ~/.ssh/known_hosts
+    # The WAS administrative credential, as a vars file in a private temporary
+    # directory made by Python: a password on the command line is readable by
+    # every process on the runner. Read from the environment, written 0600.
+    - |
+      set -e
+      VARS_DIR="$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="aix-"))')"
+      python3 - "$VARS_DIR/admin.json" <<'PY'
+      import json, os, sys
+      fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+      with os.fdopen(fd, "w") as f:
+          json.dump({"was_admin_user": os.environ.get("WAS_ADMIN_USER", ""),
+                     "was_admin_password": os.environ.get("WAS_ADMIN_PASSWORD", "")}, f)
+      PY
+      echo "export ADMIN_VARS=$VARS_DIR/admin.json" >> ~/.aix-env
+    - . ~/.aix-env
+    - test -n "${WAS_ENVIRONMENT:-}" || { echo "WAS_ENVIRONMENT is not set - which environment is ServeurAIX built as?"; exit 1; }
+    - ansible -i $AIX_INVENTORY was_install -m ansible.builtin.ping
+  after_script:
+    - rm -f ~/.ssh/id_aix ~/.aix-env
   rules:
-    # Skipped rather than failed when the cluster credentials are absent, so a
-    # fork or a clone without them still gets the static gates.
-    - if: $KUBE_TOKEN == null
+    - if: $AIX_SSH_PRIVATE_KEY == null
       when: never
     - when: on_success
 
-sim:deploy:
-  extends: .k3s
-  stage: simulate
-  script:
-    - |
-      set -e
-      echo "--- clearing pods left by an earlier run ---"
-      kubectl -n $NS_DMGR  delete pod -l was-evolution/sim=true --ignore-not-found --wait=true
-      kubectl -n $NS_NODES delete pod -l was-evolution/sim=true --ignore-not-found --wait=true
-    - kubectl apply -f ci/k3s/10-sim-hosts.yml
-    - kubectl -n $NS_DMGR  wait --for=condition=Ready pod/was-dmgr-01 --timeout=180s
-    - kubectl -n $NS_NODES wait --for=condition=Ready pod/was-node-01 --timeout=180s
-    - kubectl -n $NS_NODES wait --for=condition=Ready pod/was-node-02 --timeout=180s
-    - kubectl get pods -n $NS_DMGR -o wide
-    - kubectl get pods -n $NS_NODES -o wide
+# Every job that changes ServeurAIX: the default branch only, one at a time.
+.aix-change:
+  extends: .aix
+  resource_group: serveur-aix
+  rules:
+    - if: $AIX_SSH_PRIVATE_KEY == null
+      when: never
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      when: never
+    - when: on_success
 
-sim:preflight:
-  extends: .k3s
-  stage: simulate
-  needs: [sim:deploy]
-  script:
-    # Target-side checks against Rocky 9. Packages are reported, not enforced:
-    # the pod starts from a stock image and prereqs_os is what installs them.
-    - ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/forge_preflight.yml
+# --- validation --------------------------------------------------------------
 
-# THE ENVIRONMENT IS PASSED AS AN EXTRA VAR, EVEN THOUGH THE INVENTORY
-# DECLARES IT. A play's `hosts:` is rendered before any host is in scope, so it
-# cannot see inventory variables - group_vars/all/10_environment.yml included -
-# and these playbooks take their host pattern from was_environment because the
-# environment is a launch input. In AWX the survey answer is an extra var; here
-# -e is the same thing. Without it the run dies on "Mandatory variable
-# 'was_environment' not defined", which is a message about the pattern and
-# reads like a missing inventory.
-sim:configure:
-  extends: .k3s
-  stage: simulate
-  needs: [sim:preflight]
+# The mount point that holds the IBM binaries, before anything reads it.
+# Read-only. See roles/forge_preflight/tasks/binaries_mount.yml.
+aix:mount:
+  extends: .aix
+  stage: validation
   script:
-    # The jars of the simulation's pattern library. A real estate puts them
-    # there when it deploys its application binaries; the shared library role
-    # only reads the directory, on the deployment manager, so they have to be
-    # in place before it runs. Empty files: the fake cell never opens a jar.
-    - |
-      set -e
-      echo "=============== stage the jars the pattern library matches ==============="
-      kubectl -n $NS_DMGR exec was-dmgr-01 -- sh -c \
-        'mkdir -p /app/sim-shared && : > /app/sim-shared/commons-a.jar && : > /app/sim-shared/commons-b.jar \
-         && : > /app/sim-shared/README.txt && ls -1 /app/sim-shared'
-    - |
-      echo "=============== dry run first ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
-        --check --diff
-    - |
-      echo "=============== apply ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only | tee run1.log
-    - |
-      echo "=============== replay: must change nothing ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_config.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only | tee run2.log
-      set -e
-      # The second run is the only real proof of idempotency. The legacy
-      # approach could not make this claim: its marker files reported "nothing
-      # to do" whether or not the cell still matched.
-      bad=$(grep -E "^was-(dmgr|node)-[0-9]+ +:" run2.log | grep -v "changed=0" || true)
-      if [ -n "$bad" ]; then
-        echo "IDEMPOTENCY FAILURE - the second run changed something:"
-        echo "$bad"
-        exit 1
-      fi
-      echo "second run reported changed=0 on every host"
-    - |
-      set -e
-      echo "=============== the pattern library holds exactly what *.jar matched ==============="
-      # Two jars and a README were staged. Two jars, not three files: the
-      # pattern is honoured, not the directory taken whole.
-      grep -q "simCommonLibrary (2 jar(s))" run1.log \
-        || { echo "simCommonLibrary did not resolve to exactly the 2 staged jars"; exit 1; }
-      grep -q "simReportingLibrary (2 jar(s))" run1.log \
-        || { echo "simReportingLibrary did not keep its 2 explicit jars"; exit 1; }
-      echo "the pattern matched the 2 jars and left the README; the explicit list was taken as written"
+    - ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/binaries_mount_check.yml | tee mount.log
   artifacts:
     when: always
-    paths: [run1.log, run2.log]
+    paths: [mount.log]
     expire_in: 1 week
 
-# The profile roles, simulated the way AWX simulates: a check run.
-#
-# "Simulate the installation" means --check, which AWX offers as
-# "Job type: Check" in the launch dialog. There is no dry-run flag of our own -
-# a second code path is a second thing to keep true, and it would be the one
-# nobody launches. Under --check the command tasks do not run, the hard refusals
-# stand down, and each profile role prints what it WOULD hand to manageprofiles,
-# rendered on the controller with lookup('template') so nothing is written
-# anywhere.
-#
-# Both topologies are exercised, because the one that is not exercised is the
-# one that breaks: nd renders a management template on the deployment manager
-# and a managed template on each node, standalone renders a default template
-# and refuses to build a cluster.
-sim:profiles:
-  extends: .k3s
-  stage: simulate
-  needs: [sim:preflight]
+# The forge preflight on the server: filesets (lslpp), the AIX Toolbox
+# commands on the default PATH, free space, the mount again. The directory
+# layout is not checked yet: the build creates it.
+aix:preflight:
+  extends: .aix
+  stage: validation
+  needs: [aix:mount]
+  script:
+    - >-
+      ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/forge_preflight.yml
+      -e forge_preflight_hosts=was_install -e was_environment="$WAS_ENVIRONMENT"
+      -e forge_preflight_check_dirs=false
+
+# --- build -------------------------------------------------------------------
+
+# The product, from the mount: Installation Manager, its fix pack pass, WAS,
+# WAS's fix pack pass - the order the AWX workflow runs them in. Then the four
+# again, which must change nothing.
+aix:install:
+  extends: .aix-change
+  stage: build
+  timeout: 3h
   script:
     - |
-      echo "=============== nd: check run ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml \
-        -e was_topology=nd \
-        -e was_admin_user=ci -e was_admin_password=check-only \
-        --check --diff | tee nd.log
+      set -e
+      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_apply_fixpacks; do
+        echo "=============== $pb ==============="
+        ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$pb.yml \
+          -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" | tee -a install.log
+      done
     - |
       set -e
-      echo "=============== nd: what would be sent must be ND ==============="
-      # Asserted on the rendered response file, because that file is the
-      # contract between this collection and manageprofiles. A check run writes
-      # nothing, so the log is where it appears.
-      for want in "profileTemplates/management" "serverType=DEPLOYMENT_MANAGER" "cellName=" "nodeName="; do
-        grep -q "$want" nd.log || { echo "the deployment manager response file lacks $want"; exit 1; }
+      echo "=============== replay: must change nothing ==============="
+      : > install-replay.log
+      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_apply_fixpacks; do
+        ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$pb.yml \
+          -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" > "replay-$pb.log"
+        cat "replay-$pb.log" >> install-replay.log
+        bash ci/assert-idempotent.sh "replay-$pb.log"
       done
-      for want in "profileTemplates/managed" "federateLater=false" "dmgrHost=" "dmgrPort="; do
-        grep -q "$want" nd.log || { echo "the node response file lacks $want"; exit 1; }
+    - |
+      set -e
+      echo "=============== the full preflight, now that the layout exists ==============="
+      ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/forge_preflight.yml \
+        -e forge_preflight_hosts=was_install -e was_environment="$WAS_ENVIRONMENT"
+  artifacts:
+    when: always
+    paths: [install.log, install-replay.log]
+    expire_in: 1 month
+
+# --- deploy ------------------------------------------------------------------
+
+# The cell on ServeurAIX: a deployment manager and a federated node, the
+# cluster, its members, started. A check run first - what AWX offers as
+# "Job type: Check" - then the run, then the replay.
+aix:cell:
+  extends: .aix-change
+  stage: deploy
+  needs: [aix:install]
+  timeout: 2h
+  rules:
+    - if: $AIX_SSH_PRIVATE_KEY == null
+      when: never
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      when: never
+    - when: manual
+  script:
+    - |
+      echo "=============== profiles: check run ==============="
+      ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/lab_create_profiles.yml \
+        -e profile_hosts=was_install -e was_topology=nd -e was_environment="$WAS_ENVIRONMENT" \
+        -e @"$ADMIN_VARS" --check --diff | tee profiles-check.log
+    - |
+      set -e
+      run() {
+        ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$1.yml \
+          -e profile_hosts=was_install -e config_dmgr_hosts=dmgr -e was_topology=nd \
+          -e was_environment="$WAS_ENVIRONMENT" -e @"$ADMIN_VARS"
+      }
+      for pb in lab_create_profiles traditional_cluster traditional_cluster_members traditional_start; do
+        echo "=============== $pb ==============="
+        run "$pb" | tee -a cell.log
       done
-      # A standalone template on a node would be an unfederated server that
-      # looks healthy and is in no cell.
-      grep -q "profileTemplates/default" nd.log && { echo "an ND run rendered a standalone template"; exit 1; }
+      echo "=============== replay: must change nothing ==============="
+      : > cell-replay.log
+      for pb in lab_create_profiles traditional_cluster traditional_cluster_members traditional_start; do
+        run "$pb" > "replay-$pb.log"
+        cat "replay-$pb.log" >> cell-replay.log
+        bash ci/assert-idempotent.sh "replay-$pb.log"
+      done
+    - |
       # The administrative password must never reach a log, masked or not.
-      grep -q "check-only" nd.log && { echo "the administrative password reached the log"; exit 1; }
-      grep -q "adminPassword=<masked>" nd.log || { echo "the password was not masked in the display"; exit 1; }
-      echo "both ND response files carry what manageprofiles needs, password masked"
-    - |
-      echo "=============== standalone: check run ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml \
-        -e was_topology=standalone \
-        -e was_admin_user=ci -e was_admin_password=check-only \
-        --check --diff | tee standalone.log
-    - |
-      set -e
-      echo "=============== standalone: no cluster, no federation ==============="
-      grep -q "no cluster" standalone.log || { echo "the standalone topology did not report that it cannot cluster"; exit 1; }
-      grep -q "there is no deployment manager to create" standalone.log \
-        || { echo "profile_dmgr did not stand down on a standalone run"; exit 1; }
-      grep -q "there is no cell to join" standalone.log || { echo "profile_nodeagent did not stand down on a standalone run"; exit 1; }
-      grep -q "profileTemplates/default" standalone.log || { echo "the standalone run did not render the default template"; exit 1; }
-      echo "standalone built one cell and refused the ND machinery"
-    - |
-      echo "=============== an unknown topology must be refused ==============="
-      set +e
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/lab_create_profiles.yml \
-        -e was_topology=whatever --check > refused.log 2>&1
-      rc=$?
-      set -e
-      [ "$rc" -ne 0 ] || { echo "a topology of 'whatever' was accepted"; exit 1; }
-      grep -q "accepted values are" refused.log || { echo "the refusal did not say what is accepted"; exit 1; }
-      echo "refused, and the message names the two values"
-    - |
-      echo "=============== nothing was deployed ==============="
-      set -e
-      # The point of a check run: no profile and no response file left behind
-      # on any simulated host.
-      #
-      # WHY THIS IS NOT "/app/profiles IS EMPTY" ANY MORE. The wsadmin
-      # stand-in has to live where the modules look for wsadmin, which is
-      # <profile path>/bin/wsadmin.sh, so staging it creates a directory under
-      # /app/profiles. That directory is not a profile: it holds three stub
-      # files and nothing else.
-      #
-      # So what is asserted is the absence of what manageprofiles ACTUALLY
-      # creates, which is also what the profile roles verify afterwards -
-      # startNode.sh, startServer.sh, portdef.props, a config tree. A check run
-      # that produced any of those would mean manageprofiles had been called.
-      #
-      # /app/data/profiles is still required to be empty: that is the response
-      # file directory, and a rendered response file carries the administrative
-      # password.
-      for ns_pod in was-sim-dmgr/was-dmgr-01 was-sim-nodeagents/was-node-01 was-sim-nodeagents/was-node-02; do
-        ns="${ns_pod%%/*}"; pod="${ns_pod##*/}"
-        real=$(kubectl -n "$ns" exec "$pod" -- sh -c \
-          'ls -1 /app/profiles/*/bin/startNode.sh /app/profiles/*/bin/startServer.sh \
-                 /app/profiles/*/properties/portdef.props /app/profiles/*/config 2>/dev/null' || true)
-        [ -z "$real" ] || { echo "$pod carries a real profile after a check run: $real"; exit 1; }
-        responses=$(kubectl -n "$ns" exec "$pod" -- sh -c 'ls -A /app/data/profiles 2>/dev/null' || true)
-        [ -z "$responses" ] || { echo "$pod left something in the response directory: $responses"; exit 1; }
-        stub=$(kubectl -n "$ns" exec "$pod" -- sh -c 'ls -A /app/profiles/*/bin 2>/dev/null' || true)
-        echo "  $pod: no profile, no response file. Under /app/profiles: ${stub:-nothing}"
-      done
-      echo "no profile and no response file on any simulated host"
-  artifacts:
-    when: always
-    paths: [nd.log, standalone.log, refused.log]
-    expire_in: 1 week
-
-# The cluster members, which are the application servers.
-#
-# sim:configure already builds one member per node through traditional_config.yml,
-# which is a HORIZONTAL cluster. This job is the vertical axis and the replay:
-# two members per node over two nodes is four JVMs, which is the shape that
-# catches everything specific about members - the -firstMember rule that must
-# fire exactly once per cluster, and the generated ports that must differ for
-# two JVMs on one node.
-#
-# It also runs the playbook ON ITS OWN rather than through traditional_config.yml,
-# because being separately launchable is the point of splitting it out: one
-# wsadmin session to fix the members after a change, not the whole chain.
-sim:members:
-  extends: .k3s
-  stage: simulate
-  needs: [sim:configure]
-  script:
-    - |
-      echo "=============== vertical x horizontal: dry run ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
-        -e was_cluster_members_per_node=2 --check --diff | tee members-check.log
-    - |
-      echo "=============== apply ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only -e was_cluster_members_per_node=2 | tee members1.log
-    - |
-      echo "=============== replay: must change nothing ==============="
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only -e was_cluster_members_per_node=2 | tee members2.log
-      set -e
-      bad=$(grep -E "^was-(dmgr|node)-[0-9]+ +:" members2.log | grep -v "changed=0" || true)
-      if [ -n "$bad" ]; then
-        echo "IDEMPOTENCY FAILURE - the second run changed something:"
-        echo "$bad"
-        exit 1
+      if [ -n "${WAS_ADMIN_PASSWORD:-}" ] && grep -qF -- "$WAS_ADMIN_PASSWORD" profiles-check.log cell.log cell-replay.log; then
+        echo "the administrative password reached a log"; exit 1
       fi
-      echo "second run reported changed=0 on every host"
-    - |
-      set -e
-      echo "=============== the shape must be what was asked for ==============="
-      # Four members over two nodes, and the role saying so in those words:
-      # the count alone would pass with four members on one node, which is a
-      # different cluster.
-      grep -q "4 member(s) over 2 node(s)" members1.log \
-        || { echo "the run did not build 4 members over 2 nodes"; exit 1; }
-      grep -q "vertical and horizontal" members1.log \
-        || { echo "the role did not recognise the shape it built"; exit 1; }
-      echo "4 JVMs, 2 per node, on 2 nodes"
-    - |
-      set -e
-      echo "=============== two JVMs on one node cannot share a port ==============="
-      # Asserted in the fake cell, which is where the serverindex lives. The
-      # generated ports of the two members of a node must differ; if they did
-      # not, the second server would fail to start hours later with an
-      # address-already-in-use error.
-      kubectl -n $NS_DMGR exec was-dmgr-01 -- cat /opt/exploit/was-sim-state.json \
-        | python3 ci/assert-member-ports.py
-    - |
-      set -e
-      echo "=============== a count above the bound must be refused ==============="
-      set +e
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
-        -e was_cluster_members_per_node=99 --check > refused-count.log 2>&1
-      rc=$?
-      set -e
-      [ "$rc" -ne 0 ] || { echo "99 members per node was accepted"; exit 1; }
-      grep -q "upper bound" refused-count.log \
-        || { echo "the refusal did not say there is a bound"; exit 1; }
-      echo "refused, and the message says why there is a bound"
-    - |
-      set -e
-      echo "=============== one imposed name cannot name several JVMs ==============="
-      # The ambiguity that must not be guessed at: a name somebody chose by
-      # hand, and a count that needs more than one name. Appending an index to
-      # it would invent a convention they did not ask for.
-      set +e
-      ansible-playbook -i inventories/k3s_sim $COLLECTION/playbooks/traditional_cluster_members.yml \
-        -e was_environment=SIM -e was_admin_user=ci -e was_admin_password=check-only \
-        -e was_cluster_members_per_node=2 -e was_cluster_member_name=OneServerOnly \
-        --check > refused-name.log 2>&1
-      rc=$?
-      set -e
-      [ "$rc" -ne 0 ] || { echo "one name was accepted for two members"; exit 1; }
-      grep -q "cannot name" refused-name.log \
-        || { echo "the refusal did not name the conflict"; exit 1; }
-      grep -q "was_cluster_member_names" refused-name.log \
-        || { echo "the refusal did not say how to declare several names"; exit 1; }
-      echo "refused, and the message gives both ways out"
+      echo "the administrative password is in no log"
   artifacts:
     when: always
-    paths:
-      - members-check.log
-      - members1.log
-      - members2.log
-      - refused-count.log
-      - refused-name.log
-    expire_in: 1 week
-
-sim:isolation:
-  extends: .k3s
-  stage: simulate
-  needs: [sim:configure]
-  script:
-    # The two namespaces exist to separate trust zones, so the separation is
-    # asserted rather than described.
-    - |
-      set -e
-      echo "--- the simulation identity must NOT reach other namespaces ---"
-      for ns in kube-system ci default; do
-        if kubectl auth can-i create pods/exec -n $ns 2>/dev/null | grep -q "^yes"; then
-          echo "FAIL: the CI identity can exec into $ns"; exit 1
-        fi
-        echo "ok: no exec in $ns"
-      done
-    # The boundary is asserted by TRAFFIC, not by reading the policy objects.
-    # An existing NetworkPolicy proves a YAML object exists, not that anything
-    # is blocked - and reading it needed a right an administrator had to grant
-    # by hand. Sending connections across the boundary needs only pods/exec,
-    # which this identity already holds, and proves the thing that matters.
-    - |
-      set -e
-      echo "--- the boundary must hold, checked by connections ---"
-      bash ci/assert-network-boundary.sh
-
-sim:teardown:
-  extends: .k3s
-  stage: teardown
-  needs: [sim:configure, sim:members, sim:isolation]
-  when: always
-  script:
-    # Pods only. The namespaces, the ServiceAccount and the NetworkPolicies are
-    # infrastructure applied once by an administrator; a pipeline that deletes
-    # them makes itself unrunnable.
-    - kubectl -n $NS_DMGR  delete pod -l was-evolution/sim=true --ignore-not-found
-    - kubectl -n $NS_NODES delete pod -l was-evolution/sim=true --ignore-not-found
-    - echo "simulation pods removed, namespaces left in place"
+    paths: [profiles-check.log, cell.log, cell-replay.log]
+    expire_in: 1 month

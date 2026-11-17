@@ -5,14 +5,14 @@
 #   AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" \
 #       bash ci/awx/apply-certificates.sh
 #
-#   AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS cell lab" \
+#   AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS AIX" \
 #       bash ci/awx/apply-certificates.sh            also the portal template
 #
 #   bash ci/awx/apply-certificates.sh --show         what the organisation holds
 #
-# Run it from the k3s node, like the other scripts here: the admin password is
-# read from the Secret the operator generated and never appears in an argument,
-# an environment variable or this repository.
+# Run it like the other scripts here, from any host that reaches AWX: the
+# password is typed at the prompt and never appears in an argument, an
+# environment variable or this repository.
 #
 # ONE ORGANISATION PER CLIENT. AWX's organisations are the tenants: a client's
 # users see that organisation's inventories, jobs and job artifacts and nothing
@@ -32,14 +32,15 @@
 
 set -euo pipefail
 
-API="${AWX_API:-http://awx.lab.example.com/api/v2}"
+API="${AWX_API:-https://awx.example.internal/api/v2}"
+AWX_USER="${AWX_USER:-admin}"
 ORGANIZATION="${AWX_ORGANIZATION:-Default}"
 PROJECT="${AWX_PROJECT:-WAS Evolution}"
 INVENTORY="${AWX_INVENTORY:-}"
 PORTAL_INVENTORY="${AWX_PORTAL_INVENTORY:-}"
-MACHINE_CRED="${AWX_MACHINE_CRED:-WAS lab VM (ansible)}"
+MACHINE_CRED="${AWX_MACHINE_CRED:-ServeurAIX (ansible)}"
 WAS_CRED_TYPE="${AWX_WAS_CRED_TYPE:-WAS administrative user}"
-# Only for an inventory that declares no environment group, like the lab: the
+# Only for an inventory that declares no environment group, like inventories/aix: the
 # deployment manager group to run on. A client inventory leaves it empty and
 # the portal passes the cell's was_environment at launch.
 DMGR_HOSTS="${AWX_DMGR_HOSTS:-}"
@@ -47,27 +48,61 @@ DMGR_HOSTS="${AWX_DMGR_HOSTS:-}"
 SCHEDULE_RRULE="${AWX_CERT_RRULE:-DTSTART;TZID=Europe/Paris:20261116T060000 RRULE:FREQ=DAILY;INTERVAL=1}"
 COL=ansible_collections/wasevo/websphere/playbooks
 
-export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
-
 say() { printf '\n== %s\n' "$*"; }
 ok()  { printf '   ok    %s\n' "$*"; }
 note(){ printf '   --    %s\n' "$*"; }
 die() { printf '   FAIL  %s\n' "$*" >&2; exit 1; }
 
-NETRC="$(mktemp)"
-chmod 600 "$NETRC"
-trap 'rm -f "$NETRC"' EXIT
+# Same credential handling as apply-survey.sh: a netrc in a private temporary
+# directory made by Python, removed on exit.
+WORKDIR="$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="awx-"))')"
+[ -d "$WORKDIR" ] || die "could not create the temporary directory"
+trap 'rm -rf "$WORKDIR"' EXIT
+NETRC="$WORKDIR/netrc"
 
-_awx_pw="$(kubectl -n awx get secret awx-admin-password -o jsonpath='{.data.password}' | base64 -d)"
-[ -n "$_awx_pw" ] || die "could not read the AWX admin password from the Secret"
-printf 'machine %s login admin password %s\n' \
-    "$(printf '%s' "$API" | sed -E 's#^https?://([^/]+).*#\1#')" "$_awx_pw" > "$NETRC"
-unset _awx_pw
+# AUTHENTICATION, in this order:
+#   AWX_TOKEN_FILE   a file holding an AWX personal access token (OAuth2,
+#                    User > Tokens in AWX). Preferred: revocable, scoped, no
+#                    password typed. Sent as "Authorization: Bearer", from a
+#                    0600 header file, so the token never reaches a command line.
+#   AWX_NETRC_FILE   a netrc already written by a calling script
+#                    (apply-cell-workflow.sh runs apply-survey.sh), reused so
+#                    the password is typed once per run.
+#   otherwise        AWX_USER's password, typed at the prompt.
+if [ -n "${AWX_TOKEN_FILE:-}" ]; then
+    [ -r "$AWX_TOKEN_FILE" ] || die "cannot read AWX_TOKEN_FILE ($AWX_TOKEN_FILE)"
+    ( umask 077
+      printf 'Authorization: Bearer %s\n' "$(tr -d ' \r\n' < "$AWX_TOKEN_FILE")" > "$WORKDIR/auth.header" )
+    AUTH=(-H "@$WORKDIR/auth.header")
+elif [ -n "${AWX_NETRC_FILE:-}" ] && [ -s "$AWX_NETRC_FILE" ]; then
+    NETRC="$AWX_NETRC_FILE"
+    AUTH=(--netrc-file "$NETRC")
+else
+    IFS= read -rsp "AWX password for $AWX_USER: " _awx_pw </dev/tty \
+        || die "could not read the AWX password from the terminal"
+    printf '\n' >&2
+    [ -n "$_awx_pw" ] || die "empty AWX password"
+    # The host part of AWX_API, by parameter expansion: AIX sed has no -E.
+    _host="${API#*://}"; _host="${_host%%/*}"
+    ( umask 077
+      printf 'machine %s login %s password %s\n' \
+          "$_host" "$AWX_USER" "$_awx_pw" > "$NETRC" )
+    unset _awx_pw
+    AUTH=(--netrc-file "$NETRC")
+fi
 
+# --noproxy "*": AWX is reached directly, never through the HTTP proxy the
+# environment may declare (http_proxy, https_proxy). Through that proxy the API
+# answers 504 Gateway Timeout.
+#
+# TLS: AWX's certificate is usually signed by an internal authority. With
+# AWX_CA_FILE pointing at that authority's certificate it is verified;
+# without it, -k accepts it unverified.
+if [ -n "${AWX_CA_FILE:-}" ]; then CURL_TLS=(--cacert "$AWX_CA_FILE"); else CURL_TLS=(-k); fi
 api() {
     local method="$1" path="$2"
     shift 2
-    curl -sS --netrc-file "$NETRC" -X "$method" \
+    curl -sS "${CURL_TLS[@]}" --noproxy '*' "${AUTH[@]}" -X "$method" \
         -H "Content-Type: application/json" "$API$path" "$@"
 }
 
@@ -117,7 +152,7 @@ for t in json.load(sys.stdin)["results"]:
 fi
 
 [ -n "$INVENTORY" ] || [ -n "$PORTAL_INVENTORY" ] \
-    || die "set AWX_INVENTORY (the client's WAS inventory) and/or AWX_PORTAL_INVENTORY (the k3s node)"
+    || die "set AWX_INVENTORY (the client's WAS inventory) and/or AWX_PORTAL_INVENTORY (the one holding the awx_web group)"
 
 PROJECT_ID="$(id_of projects "$PROJECT")"
 [ -n "$PROJECT_ID" ] || die "no project named \"$PROJECT\""
@@ -224,7 +259,7 @@ print(d["results"][0]["id"] if d.get("count") else "")')"
 fi
 
 # ---------------------------------------------------------------------------
-# The portal, on the k3s node - one per AWX, not per client
+# The portal, on the web server in front of AWX - one per AWX, not per client
 # ---------------------------------------------------------------------------
 if [ -n "$PORTAL_INVENTORY" ]; then
     say "Portal template"

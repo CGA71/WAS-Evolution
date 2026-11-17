@@ -1,7 +1,7 @@
 ---
 # One certificate of a cell renewed, then the cell's certificates read again.
 #
-#   ansible-playbook -i inventories/lab <this> \
+#   ansible-playbook -i inventories/aix <this> \
 #       -e was_environment=<code> -e config_dmgr_hosts=dmgr \
 #       -e '{"certificate_renewal": {"action": "renew", "keystore": "CellDefaultKeyStore",
 #            "scope": "(cell):MyCell", "alias": "default"}}'

@@ -2,7 +2,7 @@
 # Start what the cell runs and is not running - the deployment manager, then
 # each node agent and the cluster members on its node - and nothing else.
 #
-#   ansible-playbook -i inventories/lab <this> -e was_environment=<code> -e was_topology=nd
+#   ansible-playbook -i inventories/aix <this> -e was_environment=<code> -e was_topology=nd
 #
 # ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. A process with a live pid is left
 # alone, so a replay against a running cell changes nothing. Nothing here

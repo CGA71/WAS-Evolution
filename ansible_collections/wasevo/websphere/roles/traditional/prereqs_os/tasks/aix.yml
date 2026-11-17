@@ -1,0 +1,136 @@
+---
+# AIX prerequisites.
+#
+# Three different things, handled three different ways:
+#
+#   filesets      from the AIX installation media, through installp. Not
+#                 something a playbook should install behind the system
+#                 administrator's back: verified with lslpp, refused by name.
+#   commands      unzip, zipinfo, sudo - from the AIX Toolbox for Open Source
+#                 Software. Installed with the Toolbox's dnf when it is there,
+#                 then required on the default PATH, which is where
+#                 ansible.builtin.unarchive looks.
+#   limits        user attributes in /etc/security/limits, set with chuser.
+#                 The equivalent of /etc/security/limits.d on Linux.
+
+# ---------------------------------------------------------------------------
+# Filesets
+# ---------------------------------------------------------------------------
+
+- name: Query the declared filesets
+  ansible.builtin.command:
+    cmd: "lslpp -Lc {{ forge_os_packages['AIX'] | join(' ') }}"
+  register: _aix_lslpp
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: The filesets must be installed
+  ansible.builtin.assert:
+    that:
+      - _aix_missing_filesets | length == 0
+    fail_msg: >-
+      Missing AIX fileset(s) on {{ inventory_hostname }}:
+      {{ _aix_missing_filesets | join(', ') }}. They come from the AIX
+      installation media - install them with installp (smitty
+      install_latest). This role does not install filesets.
+    success_msg: "filesets present: {{ forge_os_packages['AIX'] | join(', ') }}"
+  vars:
+    _aix_missing_filesets: >-
+      {%- set out = [] -%}
+      {%- for f in forge_os_packages['AIX'] -%}
+      {%-   if (':' ~ f ~ ':') not in _aix_lslpp.stdout -%}{%- set _ = out.append(f) -%}{%- endif -%}
+      {%- endfor -%}{{ out }}
+
+# ---------------------------------------------------------------------------
+# AIX Toolbox commands
+# ---------------------------------------------------------------------------
+
+- name: Look for the required commands
+  ansible.builtin.shell:
+    cmd: "command -v {{ item }}"
+  loop: "{{ forge_os_commands['AIX'] }}"
+  register: _aix_commands
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Is the AIX Toolbox dnf there
+  ansible.builtin.stat:
+    path: "{{ forge_aix_dnf }}"
+  register: _aix_dnf
+  check_mode: false
+
+- name: Install the AIX Toolbox packages that provide them
+  ansible.builtin.command:
+    cmd: "{{ forge_aix_dnf }} install -y {{ forge_aix_toolbox_packages | join(' ') }}"
+  become: true
+  register: prereqs_packages
+  changed_when: "'Nothing to do' not in prereqs_packages.stdout"
+  when:
+    - _aix_commands.results | rejectattr('rc', 'equalto', 0) | list | length > 0
+    - _aix_dnf.stat.exists
+
+- name: Look for the required commands again
+  ansible.builtin.shell:
+    cmd: "command -v {{ item }}"
+  loop: "{{ forge_os_commands['AIX'] }}"
+  register: _aix_commands_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: The commands must be on the default PATH
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+    fail_msg: >-
+      {{ item.item }} is not on the PATH of a non-interactive session on
+      {{ inventory_hostname }}.
+      {{ ('The AIX Toolbox dnf is not at ' ~ forge_aix_dnf ~ ': install the '
+          'Toolbox (dnf_aixtoolbox.sh), or the RPM by hand. ')
+         if not _aix_dnf.stat.exists else '' }}If it is installed under
+      /opt/freeware/bin, add that directory to PATH in /etc/environment or
+      link the command into /usr/bin - ansible.builtin.unarchive looks for
+      unzip and zipinfo on this PATH only.
+    success_msg: "{{ item.item }} at {{ item.stdout | trim }}"
+  loop: "{{ _aix_commands_after.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# ---------------------------------------------------------------------------
+# Limits, as user attributes
+# ---------------------------------------------------------------------------
+# nofile soft -> nofiles, nofile hard -> nofiles_hard, and the same for nproc.
+# Only the attributes that differ are written, so a replay changes nothing.
+
+- name: The limits WAS needs, as AIX user attributes
+  ansible.builtin.set_fact:
+    _aix_limits: >-
+      {%- set out = {} -%}
+      {%- for l in forge_limits -%}
+      {%-   set name = forge_aix_limit_names[l.item] ~ ('_hard' if l.type == 'hard' else '') -%}
+      {%-   set _ = out.update({ name: (l.value | string) }) -%}
+      {%- endfor -%}{{ out }}
+
+- name: Read the WAS account's current limits
+  ansible.builtin.command:
+    cmd: "lsuser -a {{ _aix_limits.keys() | join(' ') }} {{ site_was_user }}"
+  register: _aix_lsuser
+  changed_when: false
+  check_mode: false
+  become: true
+
+- name: Set the limits that differ
+  ansible.builtin.command:
+    cmd: "chuser {{ _aix_to_set | join(' ') }} {{ site_was_user }}"
+  become: true
+  changed_when: true
+  when: _aix_to_set | length > 0
+  vars:
+    _aix_current: "{{ dict(_aix_lsuser.stdout | regex_findall('(\\w+)=(\\S+)')) }}"
+    _aix_to_set: >-
+      {%- set out = [] -%}
+      {%- for k, v in _aix_limits.items() -%}
+      {%-   if _aix_current.get(k) != v -%}{%- set _ = out.append(k ~ '=' ~ v) -%}{%- endif -%}
+      {%- endfor -%}{{ out }}

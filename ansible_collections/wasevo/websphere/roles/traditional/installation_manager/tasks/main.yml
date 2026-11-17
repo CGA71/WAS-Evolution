@@ -144,15 +144,17 @@
           an IBMid and acceptance of the licence, so there is no URL a
           playbook can pull.
 
-          Download "IBM Installation Manager" for Linux x86_64, version
+          Download "IBM Installation Manager" for this platform
+          ({{ ansible_facts.system | default('the target OS') }}), version
           {{ im_required_version }} or later, and place the zip in:
 
               {{ im_media_dir }}/
 
           It is normally named something like
-          agent.installer.linux.gtk.x86_64_{{ im_required_version }}.zip,
-          but any name matching {{ im_media_pattern }} is accepted - the role
-          looks at the contents, not the name.
+          agent.installer.aix.motif.ppc_{{ im_required_version }}.zip on AIX,
+          or agent.installer.linux.gtk.x86_64_{{ im_required_version }}.zip
+          on Linux, but any name matching {{ im_media_pattern }} is accepted -
+          the role looks at the contents, not the name.
       when: im_archive_paths | length == 0
 
     - name: Create the unpack directory

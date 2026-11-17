@@ -48,8 +48,8 @@
 # THE HOST PATTERN IS A LAUNCH INPUT. Each step defaults to the intersection of
 # an environment group and the deployment manager group, so the environment is
 # an answer rather than a directory. An inventory with no environment group -
-# the lab, deliberately, because the same VM is built as any environment -
-# passes -e config_dmgr_hosts=dmgr.
+# the AIX server, deliberately, because the same machine is built as any
+# environment - passes -e config_dmgr_hosts=dmgr.
 #
 # Always run with --check --diff first. The whole point of the module approach
 # is that the dry run tells the truth, which the legacy marker-file approach

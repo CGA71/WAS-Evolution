@@ -34,7 +34,7 @@
           and the deployment manager group - the environment is an answer, not
           a directory. In AWX, answer the survey question for the target
           environment; on the command line, pass -e was_environment=<code>.
-          An inventory with no environment group - the lab - is run with
+          An inventory with no environment group - the AIX server - is run with
           -e config_dmgr_hosts=dmgr instead.
         success_msg: "a target was supplied"
 
@@ -42,7 +42,7 @@
     # does not exist, that play matches no host at all, so an assertion inside
     # it would never run and the job would end green having built nothing.
     # Only the default pattern needs the group; an inventory with no
-    # environment group - the lab - supplies config_dmgr_hosts.
+    # environment group - the AIX server - supplies config_dmgr_hosts.
     - name: The chosen environment must exist in the inventory
       ansible.builtin.assert:
         that:
@@ -50,8 +50,8 @@
         fail_msg: >-
           No inventory group named {{ was_environment | lower }}. Known
           environments: {{ groups.keys() | reject('in', ['all', 'ungrouped',
-          'dmgr', 'nodeagents', 'ihs', 'was_lab']) | list | join(', ') }}.
-          An inventory with no environment group - the lab - is run with
+          'dmgr', 'nodeagents', 'ihs', 'was_install']) | list | join(', ') }}.
+          An inventory with no environment group - the AIX server - is run with
           -e config_dmgr_hosts=dmgr instead.
         success_msg: "the environment group exists"
       when: config_dmgr_hosts is not defined

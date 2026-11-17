@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# The certificate portal, on AWX's host name. Include this file inside the
+# server block that serves {{ _certportal_host }}, then reload nginx. Only this
+# path is served from disk; everything else on the host still reaches AWX.
+location = {{ certportal_path }} { return 301 {{ certportal_path }}/; }
+location {{ certportal_path }}/ {
+    alias {{ certportal_web_root }}/;
+    index index.html;
+    autoindex off;
+    add_header Cache-Control "no-cache";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Referrer-Policy "same-origin";
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+}

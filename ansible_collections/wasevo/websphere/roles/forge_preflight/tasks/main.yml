@@ -126,8 +126,6 @@
           - "!all"
           - "!min"
           - distribution
-          - hardware
-          - mounts
       check_mode: false
 
     - name: The OS family must be one the forge supports
@@ -143,12 +141,16 @@
     - name: Required OS packages must be present
       ansible.builtin.include_tasks: check_packages.yml
 
+    # Off before the first install: prereqs_os, in the Installation Manager
+    # job, is what creates them. The pipeline's Validation stage runs before
+    # that job and passes forge_preflight_check_dirs=false.
     - name: Required directories must exist and be writable by the WAS user
       ansible.builtin.stat:
         path: "{{ item }}"
       loop: "{{ forge_required_dirs }}"
       register: _dir_stat
       check_mode: false
+      when: forge_preflight_check_dirs | default(true) | bool
 
     - name: Report missing directories
       ansible.builtin.assert:
@@ -162,45 +164,42 @@
       loop: "{{ _dir_stat.results }}"
       loop_control:
         label: "{{ item.item }}"
+      when: forge_preflight_check_dirs | default(true) | bool
+
+    # Through df on the path itself, or its nearest existing parent before the
+    # first install, rather than through the mount facts: AIX's mount facts do
+    # not reliably carry the free space, and a missing figure read as 0 MB
+    # refused every install.
+    - name: Read the free space where each path will live
+      ansible.builtin.shell:
+        cmd: |
+          p="{{ item.key }}"
+          while [ ! -d "$p" ]; do p=$(dirname "$p"); done
+          df -Pk "$p" | tail -1 | awk '{ print int($4 / 1024) }'
+      loop: "{{ forge_min_free_mb | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: _free
+      changed_when: false
+      check_mode: false
 
     - name: Free space must be sufficient before an install or a fixpack
       ansible.builtin.assert:
         that:
-          - >-
-            (ansible_facts.mounts
-             | selectattr('mount', 'equalto', _mount_for_path)
-             | map(attribute='size_available') | first | default(0)) / 1048576
-            >= (item.value | int)
+          - (item.stdout | trim | int) >= (item.item.value | int)
         fail_msg: >-
-          Less than {{ item.value }} MB free for {{ item.key }}. A fixpack that
-          runs out of space mid-apply leaves the installation in a state that
-          costs far more to recover than a refused playbook.
-      vars:
-        _mount_for_path: >-
-          {{ ansible_facts.mounts | map(attribute='mount')
-             | select('in', item.key) | sort(attribute='__len__')
-             | last | default('/') }}
-      loop: "{{ forge_min_free_mb | dict2items }}"
+          {{ item.stdout | trim }} MB free for {{ item.item.key }}, and
+          {{ item.item.value }} MB are needed. A fixpack that runs out of space
+          mid-apply leaves the installation in a state that costs far more to
+          recover than a refused playbook. On AIX: chfs -a size=+<n>G on the
+          filesystem holding it.
+        success_msg: "{{ item.stdout | trim }} MB free for {{ item.item.key }}"
+      loop: "{{ _free.results }}"
       loop_control:
-        label: "{{ item.key }}"
-      when: ansible_facts.mounts is defined
+        label: "{{ item.item.key }}"
 
-    - name: The install binaries repository must be reachable
-      ansible.builtin.stat:
-        path: "{{ was_install_binaries_base_dir }}"
-      register: _binrepo
-      check_mode: false
-
-    - name: Report an unreachable binaries repository
-      ansible.builtin.assert:
-        that:
-          - _binrepo.stat.exists
-        fail_msg: >-
-          {{ was_install_binaries_base_dir }} is not present. Every IBM
-          artefact path in the inventory is relative to it, so nothing can be
-          installed until the share
-          {{ was_binaries_repository | default('declared in the inventory') }}
-          is mounted.
+    - name: The binaries mount point must be mounted and carry the media
+      ansible.builtin.include_tasks: binaries_mount.yml
 
 
 # ---------------------------------------------------------------------------

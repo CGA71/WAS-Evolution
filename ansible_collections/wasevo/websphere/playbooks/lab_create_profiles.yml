@@ -1,7 +1,7 @@
 ---
 # Job 5 of the install workflow: the profiles.
 #
-#   ansible-playbook -i inventories/lab <this> \
+#   ansible-playbook -i inventories/aix <this> \
 #       -e was_environment=<code> -e was_topology=nd
 #
 # In AWX this is "WAS lab - 5. Create the profiles", reached after the install

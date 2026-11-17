@@ -1,0 +1,33 @@
+---
+# Same layout as the estate inventory. prereqs_os creates /app and /opt/exploit
+# and gives them to the WAS account; /mnt/binaries is the binaries share the
+# system administrator mounts, and binaries_mount_check.yml verifies it.
+#
+# On AIX each of these is normally its own JFS2 filesystem (crfs), sized before
+# the install: forge_preflight refuses an install with less free space than
+# forge_min_free_mb declares.
+was_app_base_dir: /app
+was_binaries_base_dir: "{{ was_app_base_dir }}/binaries"
+was_logs_base_dir: "{{ was_app_base_dir }}/logs"
+was_data_base_dir: "{{ was_app_base_dir }}/data"
+was_dump_base_dir: "{{ was_app_base_dir }}/dump/was"
+
+was_install_binaries_base_dir: /mnt/binaries
+was_backup_base_dir: /backup
+
+was_exploit_base_dir: /opt/exploit
+was_exploit_scripts_dir: "{{ was_exploit_base_dir }}/scripts"
+was_jython_dir: "{{ was_exploit_base_dir }}/scripts/{{ site_jython_dirname }}"
+
+was_version_short: "90"
+
+# Profile names come from roles/model/vars/naming.yml; only the paths are here.
+was_profile_path: "{{ was_profiles_base_dir }}/{{ was_profile_name }}"
+was_dmgr_profile_path: "{{ was_profiles_base_dir }}/{{ was_dmgr_profile_name }}"
+
+# No systemd on AIX: the processes are started by traditional_start.yml, which
+# calls the profile's own start scripts.
+
+# Installation directories - where Installation Manager and WAS are
+# installed - are declared in 25_install_dirs.yml, with each one mapped to
+# the imcl flag it feeds.

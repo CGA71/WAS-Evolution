@@ -11,9 +11,9 @@
 #   bash ci/awx/apply-survey.sh            apply
 #   bash ci/awx/apply-survey.sh --show     print what is attached today
 #
-# Run it from the k3s node. The admin password is read from the Secret the
-# operator generated and never appears in an argument, an environment variable
-# or this repository.
+# Run it from any host that reaches AWX (AWX_API, user AWX_USER, admin by
+# default). The password is typed at the prompt and never appears in an
+# argument, an environment variable or this repository.
 #
 # WHY THE SURVEY IS ON THE WORKFLOW AND ON THE TEMPLATES. The workflow is how
 # the build is meant to be launched, and a survey there is answered once and
@@ -39,10 +39,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPEC="${SURVEY_SPEC:-$HERE/surveys/was-build.json}"
-API="${AWX_API:-http://awx.lab.example.com/api/v2}"
-WORKFLOW="${AWX_WORKFLOW:-WAS lab - install WAS for Developers}"
-
-export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+API="${AWX_API:-https://awx.example.internal/api/v2}"
+AWX_USER="${AWX_USER:-admin}"
+WORKFLOW="${AWX_WORKFLOW:-WAS AIX - cell on ServeurAIX}"
 
 say() { printf '\n== %s\n' "$*"; }
 ok()  { printf '   ok    %s\n' "$*"; }
@@ -52,29 +51,61 @@ die() { printf '   FAIL  %s\n' "$*" >&2; exit 1; }
 python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$SPEC" \
     || die "$SPEC is not valid JSON"
 
-# The password is fetched per call and piped, never passed as an argument:
-# curl -u puts it in this host's process list, where any local account can read
-# it. --netrc-file with a pipe is not portable, so a temporary file with mode
-# 0600 is used and removed on exit.
-NETRC="$(mktemp)"
-chmod 600 "$NETRC"
-trap 'rm -f "$NETRC"' EXIT
+# The password is never passed as an argument: curl -u puts it in this host's
+# process list, where any local account can read it. --netrc-file with a pipe
+# is not portable, so a netrc file is used, in a private temporary directory
+# (mode 0700, made by Python's tempfile.mkdtemp) removed on exit.
+WORKDIR="$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="awx-"))')"
+[ -d "$WORKDIR" ] || die "could not create the temporary directory"
+trap 'rm -rf "$WORKDIR"' EXIT
+NETRC="$WORKDIR/netrc"
 
-# Read into a variable, not through `read` in a pipeline: base64 -d emits the
-# password with no trailing newline, so `read` returns 1 on EOF and set -e
-# kills the script before it has printed a single line. printf is a builtin,
-# so the password never reaches this host's process list either.
-_awx_pw="$(kubectl -n awx get secret awx-admin-password -o jsonpath='{.data.password}' | base64 -d)"
-[ -n "$_awx_pw" ] || die "could not read the AWX admin password from the Secret"
-printf 'machine %s login admin password %s\n' \
-    "$(printf '%s' "$API" | sed -E 's#^https?://([^/]+).*#\1#')" "$_awx_pw" > "$NETRC"
-unset _awx_pw
-[ -s "$NETRC" ] || die "could not write the temporary credential file"
+# Typed at the prompt, without echo. printf is a builtin, so the password never
+# reaches this host's process list either.
+# AUTHENTICATION, in this order:
+#   AWX_TOKEN_FILE   a file holding an AWX personal access token (OAuth2,
+#                    User > Tokens in AWX). Preferred: revocable, scoped, no
+#                    password typed. Sent as "Authorization: Bearer", from a
+#                    0600 header file, so the token never reaches a command line.
+#   AWX_NETRC_FILE   a netrc already written by a calling script
+#                    (apply-cell-workflow.sh runs apply-survey.sh), reused so
+#                    the password is typed once per run.
+#   otherwise        AWX_USER's password, typed at the prompt.
+if [ -n "${AWX_TOKEN_FILE:-}" ]; then
+    [ -r "$AWX_TOKEN_FILE" ] || die "cannot read AWX_TOKEN_FILE ($AWX_TOKEN_FILE)"
+    ( umask 077
+      printf 'Authorization: Bearer %s\n' "$(tr -d ' \r\n' < "$AWX_TOKEN_FILE")" > "$WORKDIR/auth.header" )
+    AUTH=(-H "@$WORKDIR/auth.header")
+elif [ -n "${AWX_NETRC_FILE:-}" ] && [ -s "$AWX_NETRC_FILE" ]; then
+    NETRC="$AWX_NETRC_FILE"
+    AUTH=(--netrc-file "$NETRC")
+else
+    IFS= read -rsp "AWX password for $AWX_USER: " _awx_pw </dev/tty \
+        || die "could not read the AWX password from the terminal"
+    printf '\n' >&2
+    [ -n "$_awx_pw" ] || die "empty AWX password"
+    # The host part of AWX_API, by parameter expansion: AIX sed has no -E.
+    _host="${API#*://}"; _host="${_host%%/*}"
+    ( umask 077
+      printf 'machine %s login %s password %s\n' \
+          "$_host" "$AWX_USER" "$_awx_pw" > "$NETRC" )
+    unset _awx_pw
+    [ -s "$NETRC" ] || die "could not write the temporary credential file"
+    AUTH=(--netrc-file "$NETRC")
+fi
 
+# --noproxy "*": AWX is reached directly, never through the HTTP proxy the
+# environment may declare (http_proxy, https_proxy). Through that proxy the API
+# answers 504 Gateway Timeout.
+#
+# TLS: AWX's certificate is usually signed by an internal authority. With
+# AWX_CA_FILE pointing at that authority's certificate it is verified;
+# without it, -k accepts it unverified.
+if [ -n "${AWX_CA_FILE:-}" ]; then CURL_TLS=(--cacert "$AWX_CA_FILE"); else CURL_TLS=(-k); fi
 api() {
     local method="$1" path="$2"
     shift 2
-    curl -sS --netrc-file "$NETRC" -X "$method" \
+    curl -sS "${CURL_TLS[@]}" --noproxy '*' "${AUTH[@]}" -X "$method" \
         -H "Content-Type: application/json" "$API$path" "$@"
 }
 

@@ -1,7 +1,7 @@
 ---
 # The application servers of the cluster, and nothing else.
 #
-#   ansible-playbook -i inventories/lab <this> \
+#   ansible-playbook -i inventories/aix <this> \
 #       -e was_environment=<code> -e was_topology=nd \
 #       -e config_dmgr_hosts=dmgr -e was_cluster_members_per_node=2
 #

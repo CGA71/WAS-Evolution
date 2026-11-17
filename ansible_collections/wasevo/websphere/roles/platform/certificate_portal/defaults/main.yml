@@ -10,25 +10,31 @@
 # other host the browser would send nothing, and the page would need a
 # credential of its own - which is exactly what this avoids.
 #
-# Deployed on the k3s node, as its administrator, like the cell prerequisites:
-# a ConfigMap holding the page, an unprivileged nginx, a Service, and an
-# Ingress for this one path on AWX's host - Traefik routes the longest prefix,
-# so everything else on the host still reaches AWX.
+# AWX IS HOSTED ELSEWHERE. This collection no longer installs it. What it needs
+# is the web server that fronts AWX's host name - the reverse proxy (nginx,
+# Apache httpd, IBM HTTP Server) in front of it - and a directory that server
+# serves at certportal_path. The role copies the page there and renders the
+# server's location block next to it; including that block in the server
+# configuration is a one-time step for whoever runs that server.
 
 # AWX, as the inventory declares it. The page is served on its host.
-certportal_awx_api: "{{ prereq_awx_api | default('') }}"
+certportal_awx_api: "{{ awx_api_url | default(prereq_awx_api | default('')) }}"
 
-certportal_namespace: awx
-certportal_name: wasevo-certificates
 certportal_path: /wasevo/certificates
-certportal_ingress_class: traefik
 
-# Pinned, unprivileged: it listens on 8080 and runs as a non-root user.
-certportal_image: docker.io/nginxinc/nginx-unprivileged:1.27.3-alpine
+# On the web host: where the page is copied, and who owns it.
+certportal_web_root: /var/www/wasevo/certificates
+certportal_web_owner: root
+certportal_web_group: root
+
+# The location block for the web server, rendered beside the page. nginx or
+# httpd (Apache httpd and IBM HTTP Server share the syntax). Empty to skip.
+certportal_web_server: nginx
+certportal_web_snippet: "{{ certportal_web_root | dirname }}/certificates.{{ certportal_web_server }}.conf"
 
 # Within this many days a certificate is shown as due. Three months, like the
 # inventory role's default: the page recomputes the status for today.
 certportal_renew_within_days: 90
 
-# The administrator's kubeconfig on the node.
-certportal_kubeconfig: "{{ ansible_env.HOME }}/.kube/config"
+# Copying into the web root normally needs root.
+certportal_become: true

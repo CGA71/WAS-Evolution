@@ -1,0 +1,30 @@
+---
+# Validate the binaries mount point on the installation target, and nothing
+# else. Read-only: it mounts nothing, copies nothing, installs nothing.
+#
+#   ansible-playbook -i inventories/aix \
+#       ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml
+#
+# It checks that was_install_binaries_base_dir is a mount point of the declared
+# type, readable by the connecting account, and that it carries the
+# Installation Manager archive and a WAS repository - see
+# roles/forge_preflight/tasks/binaries_mount.yml. It needs no environment: the
+# mount belongs to the machine, not to the environment built on it.
+#
+# In the pipeline it is the first job that touches the server, in the
+# Validation stage. In AWX it is the first node of the cell workflow, so an
+# unmounted share stops the workflow before Installation Manager is unpacked.
+
+- name: The binaries mount point
+  hosts: "{{ mount_check_hosts | default('was_install') }}"
+  gather_facts: true
+  gather_subset: ["!all", "!min", "distribution"]
+
+  tasks:
+    # tasks_from, so the role's defaults load at defaults precedence and an
+    # inventory can still override forge_binaries_* - include_vars would
+    # outrank it.
+    - name: Validate the mount and the media on it
+      ansible.builtin.include_role:
+        name: wasevo.websphere.forge_preflight
+        tasks_from: binaries_mount

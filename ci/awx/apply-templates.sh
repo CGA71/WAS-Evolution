@@ -5,9 +5,9 @@
 #   bash ci/awx/apply-templates.sh            apply
 #   bash ci/awx/apply-templates.sh --show     print the graph as it is today
 #
-# Run it from the k3s node, like apply-survey.sh. The admin password is read
-# from the Secret the operator generated and never appears in an argument, an
-# environment variable or this repository.
+# Run it like apply-survey.sh, from any host that reaches AWX. The password is
+# typed at the prompt and never appears in an argument, an environment variable
+# or this repository.
 #
 # WHY THIS IS A SCRIPT. The templates were created by hand in the UI, which is
 # why three of them existed and the three that build a cell did not. A job
@@ -31,37 +31,71 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-API="${AWX_API:-http://awx.lab.example.com/api/v2}"
-WORKFLOW="${AWX_WORKFLOW:-WAS lab - install WAS for Developers}"
+API="${AWX_API:-https://awx.example.internal/api/v2}"
+AWX_USER="${AWX_USER:-admin}"
+WORKFLOW="${AWX_WORKFLOW:-WAS AIX - cell on ServeurAIX}"
 PROJECT="${AWX_PROJECT:-WAS Evolution}"
-INVENTORY="${AWX_INVENTORY:-WAS install lab}"
-MACHINE_CRED="${AWX_MACHINE_CRED:-WAS lab VM (ansible)}"
+INVENTORY="${AWX_INVENTORY:-WAS AIX}"
+MACHINE_CRED="${AWX_MACHINE_CRED:-ServeurAIX (ansible)}"
 WAS_CRED_TYPE="${AWX_WAS_CRED_TYPE:-WAS administrative user}"
 COL=ansible_collections/wasevo/websphere/playbooks
-
-export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 say() { printf '\n== %s\n' "$*"; }
 ok()  { printf '   ok    %s\n' "$*"; }
 note(){ printf '   --    %s\n' "$*"; }
 die() { printf '   FAIL  %s\n' "$*" >&2; exit 1; }
 
-# Same credential handling as apply-survey.sh: a 0600 netrc, removed on exit,
-# so the password never lands in this host's process list.
-NETRC="$(mktemp)"
-chmod 600 "$NETRC"
-trap 'rm -f "$NETRC"' EXIT
+# Same credential handling as apply-survey.sh: a netrc in a private temporary
+# directory made by Python, removed on exit, so the password never lands in
+# this host's process list.
+WORKDIR="$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="awx-"))')"
+[ -d "$WORKDIR" ] || die "could not create the temporary directory"
+trap 'rm -rf "$WORKDIR"' EXIT
+NETRC="$WORKDIR/netrc"
 
-_awx_pw="$(kubectl -n awx get secret awx-admin-password -o jsonpath='{.data.password}' | base64 -d)"
-[ -n "$_awx_pw" ] || die "could not read the AWX admin password from the Secret"
-printf 'machine %s login admin password %s\n' \
-    "$(printf '%s' "$API" | sed -E 's#^https?://([^/]+).*#\1#')" "$_awx_pw" > "$NETRC"
-unset _awx_pw
+# AUTHENTICATION, in this order:
+#   AWX_TOKEN_FILE   a file holding an AWX personal access token (OAuth2,
+#                    User > Tokens in AWX). Preferred: revocable, scoped, no
+#                    password typed. Sent as "Authorization: Bearer", from a
+#                    0600 header file, so the token never reaches a command line.
+#   AWX_NETRC_FILE   a netrc already written by a calling script
+#                    (apply-cell-workflow.sh runs apply-survey.sh), reused so
+#                    the password is typed once per run.
+#   otherwise        AWX_USER's password, typed at the prompt.
+if [ -n "${AWX_TOKEN_FILE:-}" ]; then
+    [ -r "$AWX_TOKEN_FILE" ] || die "cannot read AWX_TOKEN_FILE ($AWX_TOKEN_FILE)"
+    ( umask 077
+      printf 'Authorization: Bearer %s\n' "$(tr -d ' \r\n' < "$AWX_TOKEN_FILE")" > "$WORKDIR/auth.header" )
+    AUTH=(-H "@$WORKDIR/auth.header")
+elif [ -n "${AWX_NETRC_FILE:-}" ] && [ -s "$AWX_NETRC_FILE" ]; then
+    NETRC="$AWX_NETRC_FILE"
+    AUTH=(--netrc-file "$NETRC")
+else
+    IFS= read -rsp "AWX password for $AWX_USER: " _awx_pw </dev/tty \
+        || die "could not read the AWX password from the terminal"
+    printf '\n' >&2
+    [ -n "$_awx_pw" ] || die "empty AWX password"
+    # The host part of AWX_API, by parameter expansion: AIX sed has no -E.
+    _host="${API#*://}"; _host="${_host%%/*}"
+    ( umask 077
+      printf 'machine %s login %s password %s\n' \
+          "$_host" "$AWX_USER" "$_awx_pw" > "$NETRC" )
+    unset _awx_pw
+    AUTH=(--netrc-file "$NETRC")
+fi
 
+# --noproxy "*": AWX is reached directly, never through the HTTP proxy the
+# environment may declare (http_proxy, https_proxy). Through that proxy the API
+# answers 504 Gateway Timeout.
+#
+# TLS: AWX's certificate is usually signed by an internal authority. With
+# AWX_CA_FILE pointing at that authority's certificate it is verified;
+# without it, -k accepts it unverified.
+if [ -n "${AWX_CA_FILE:-}" ]; then CURL_TLS=(--cacert "$AWX_CA_FILE"); else CURL_TLS=(-k); fi
 api() {
     local method="$1" path="$2"
     shift 2
-    curl -sS --netrc-file "$NETRC" -X "$method" \
+    curl -sS "${CURL_TLS[@]}" --noproxy '*' "${AUTH[@]}" -X "$method" \
         -H "Content-Type: application/json" "$API$path" "$@"
 }
 
@@ -140,31 +174,31 @@ ok "execution environment $EE_ID"
 # ---------------------------------------------------------------------------
 # name | playbook | extra vars
 #
-# config_dmgr_hosts=dmgr is what lets the cluster playbooks run on the LAB.
-# Their default host pattern is the intersection of an environment group and
-# the deployment manager group, because the environment is a launch input; the
-# lab declares no environment group on purpose - the same VM is built as any
-# environment - so the pattern is overridden here, exactly as the profile
-# playbook is already overridden for the same reason.
+# config_dmgr_hosts=dmgr is what lets these playbooks run on the AIX
+# inventory. Their default host pattern is the intersection of an environment
+# group and the deployment manager group, because the environment is a launch
+# input; inventories/aix declares no environment group on purpose - the same
+# server is built as any environment - so the pattern is overridden here.
+#
+# The install, the profiles, the cluster, its members and the start are
+# templates 0 to 8, declared by apply-cell-workflow.sh, which must run first:
+# these are appended after them, in this order.
 STEPS=(
-  "WAS lab - 5. Create the profiles|$COL/lab_create_profiles.yml|"
-  "WAS lab - 6. Create the cluster|$COL/traditional_cluster.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 7. Create the application servers|$COL/traditional_cluster_members.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 8. J2C authentication aliases|$COL/traditional_j2c.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 9. JDBC providers and datasources|$COL/traditional_jdbc.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 10. Shared libraries|$COL/traditional_shared_libraries.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 11. Service integration buses|$COL/traditional_sibus.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 12. JMS resources|$COL/traditional_jms.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 13. Transaction service and peer recovery|$COL/traditional_transactions.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 14. EJB container and timers|$COL/traditional_ejb_container.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 15. CDI|$COL/traditional_cdi.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 16. JPA level and defaults|$COL/traditional_jpa.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 17. SSL configurations and signers|$COL/traditional_ssl.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 18. Global security and user registry|$COL/traditional_security.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 19. Web services policy sets|$COL/traditional_policy_sets.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 20. Dynamic cache|$COL/traditional_dynamic_cache.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 21. Logging, trace and HPEL|$COL/traditional_logging.yml|config_dmgr_hosts: dmgr"
-  "WAS lab - 22. PMI|$COL/traditional_pmi.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 9. J2C authentication aliases|$COL/traditional_j2c.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 10. JDBC providers and datasources|$COL/traditional_jdbc.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 11. Shared libraries|$COL/traditional_shared_libraries.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 12. Service integration buses|$COL/traditional_sibus.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 13. JMS resources|$COL/traditional_jms.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 14. Transaction service and peer recovery|$COL/traditional_transactions.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 15. EJB container and timers|$COL/traditional_ejb_container.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 16. CDI|$COL/traditional_cdi.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 17. JPA level and defaults|$COL/traditional_jpa.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 18. SSL configurations and signers|$COL/traditional_ssl.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 19. Global security and user registry|$COL/traditional_security.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 20. Web services policy sets|$COL/traditional_policy_sets.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 21. Dynamic cache|$COL/traditional_dynamic_cache.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 22. Logging, trace and HPEL|$COL/traditional_logging.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 23. PMI|$COL/traditional_pmi.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------
@@ -228,7 +262,7 @@ if [ -n "$WAS_CRED_ID" ]; then
 else
     note "no credential of that type yet. Create one in AWX - Resources,"
     note "Credentials, type \"$WAS_CRED_TYPE\" - and re-run this script to"
-    note "attach it. Until then the three templates ask for a credential at"
+    note "attach it. Until then these templates ask for a credential at"
     note "launch, so a run is still possible by picking it in the dialog."
 fi
 

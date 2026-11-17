@@ -8,7 +8,7 @@
 # a WAS object name.
 #
 # Why one file: these patterns used to live in three inventories, written out
-# three times (inventories/was, lab, k3s_sim), with the cluster name hardcoded
+# three times (inventories/was and two others since removed), with the cluster name hardcoded
 # to ClusterEXT in two of them. Three copies of a naming rule is three chances
 # to disagree, and the disagreement surfaces as a cell that will not federate.
 #

@@ -296,15 +296,28 @@
   become: true
   tags: [was, verify]
 
+# At least the expected level, not exactly it: once the fix pack job has lifted
+# the base install, a replay of this job must still pass - a pipeline that
+# replays the build to prove it changes nothing would otherwise fail on a
+# server that is in better shape than the one it asserted.
 - name: The expected level must be installed
   ansible.builtin.assert:
     that:
-      - was_expected_version in was_verify.stdout
+      - (was_expected_version in was_verify.stdout)
+        or (_was_levels | select('version', was_expected_version, '>=') | list | length > 0)
     fail_msg: >-
-      Installation Manager does not report {{ was_expected_version }} as
-      installed. What it reports is:
+      Installation Manager does not report {{ was_expected_version }} or later
+      as installed. What it reports is:
       {{ was_verify.stdout_lines | default([]) | join(' | ') }}
-    success_msg: "{{ was_expected_version }} is installed"
+    success_msg: "{{ was_expected_version }} or later is installed"
+  vars:
+    # Lines of the WAS offering only, so the SDK's level does not count.
+    _was_lines: >-
+      {{ was_verify.stdout_lines | default([])
+         | select('search', was_package_filter | regex_escape) | list }}
+    _was_levels: >-
+      {{ _was_lines | map('regex_findall', '([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s*$')
+         | flatten | list }}
   tags: [was, verify]
 
 - name: The command-line tools must exist

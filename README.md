@@ -107,9 +107,8 @@ inventories/                     one all-YAML inventory; the environment is an i
 model/                           the shared declarative model
 docs/                            architecture and per-phase notes
 ci/
-  k3s/                           simulation pods, the lab VM, RBAC,
-                                 make-lab-vm.sh, lab-mirror-was.sh
-  awx/                           the AWX operator and its kustomizations
+  awx/                           what AWX holds, declared through its API
+  assert-idempotent.sh           the replay of a job must report changed=0
 ```
 
 **Never merge `config_render` and `deploy`.** `config_render` does not touch the cluster: it runs offline, is testable without OpenShift, and is the GitOps boundary. If Argo CD is adopted, `config_render` renders and commits, `deploy` is unplugged, nothing else changes.
@@ -394,266 +393,105 @@ Free space is checked before an install or a fixpack on purpose: a fixpack that
 runs out of space mid-apply leaves the installation in a state that costs far
 more to recover than a refused playbook.
 
-## 15. CI: simulation on k3s
+## 15. CI: validation, build and deploy on the AIX server
 
-The pipeline proves three things, cheapest first.
+No Kubernetes anywhere in the pipeline. [`.gitlab-ci.yml`](.gitlab-ci.yml) has three stages, in the order a WAS installation on a physical AIX server can go wrong:
 
-**Static, no cluster.** `yamllint`, `ansible-lint`, syntax checks, then:
-`site-vars-drift` compares the SHA-256 of `00_site.yml` across environments;
-`model-matrix` validates every environment, asserts production is refused
-without `-e model_allow_production=true` and passes once acknowledged, and
-asserts the diagnostic JDK is refused; `pilot-render` renders one datasource for
-all three phases.
-
-**The whole traditional chain, against a fake cell, no cluster.** `stub-unit`
-runs `ci/run-stub-tests.sh`, which drives the real `driver.py` and the real
-cluster handler through a `wsadmin.sh` stand-in. WAS ND cannot ship in a CI
-image — licensing, entitlement, several gigabytes — but almost nothing that goes
-wrong in the traditional plane is WAS behaviour. It is the plumbing: argument
-validation, the payload file, the launch, dispatch, read/plan/write, the JSON
-answer, `changed` and `diff`. All of that runs for real. Twenty-six checks, including
-two guards that fail the build if credentials ever reappear on a wsadmin command
-line or the properties file is not `0600`, and one that asserts node
-synchronisation fires on real changes only.
-
-Most of those checks are the whole life of a cluster member: created, replayed,
-drained to weight 0, its port pinned and the pinned port replayed, deleted,
-and refused when the cluster does not exist or when two JVMs of one node would
-claim the same port. The member handler is the first one to carry a **list**
-rather than a single object, and it is where a shallow dict copy in the planner
-silently skipped the write while the diff claimed the change had happened —
-caught here, by a replay that had to report no change and did not.
-
-**The same chain against real hosts on k3s.** Two namespaces:
-
-| Namespace | Holds | Why separate |
+| Stage | Jobs | What it proves |
 |---|---|---|
-| `was-sim-dmgr` | one Rocky 9 pod standing in for the deployment manager | The DMGR holds the master configuration repository and pushes it out |
-| `was-sim-nodeagents` | two Rocky 9 pods standing in for node agents | A node agent receives. Different trust zone |
+| **validation** | `yamllint`, `ansible-lint`, `syntax`, `model-matrix`, `pilot-render`, `stub-unit`, `portal-unit` | The static gates, with no server: the model refuses invalid product × JDK pairs and production without acknowledgement, the whole traditional chain works against a fake cell, the portal logic holds |
+| | `aix:mount` | On ServeurAIX, read-only: the **binaries mount point** is a mount point, of the declared type, readable, and carries the Installation Manager archive and a WAS repository |
+| | `aix:preflight` | The forge preflight on ServeurAIX: AIX filesets (`lslpp`), the AIX Toolbox commands on the default `PATH`, free space |
+| **build** | `aix:install` | Installation Manager, its fix pack pass, WAS, WAS's fix pack pass — read from the mount. Then the four **replayed**: every replay must report `changed=0` (`ci/assert-idempotent.sh`) |
+| **deploy** | `aix:cell` *(manual)* | A check run of the profiles, then the deployment manager and the federated node, the cluster, its members, started — and replayed, `changed=0` again. The administrative password must appear in no log |
 
-Rocky Linux 9 because it is the closest freely redistributable match to the RHEL
-the estate runs on: same package manager, same systemd, same
-`/etc/security/limits.d` semantics. The image is **stock** — no registry
-dependency, nothing to keep current. Packages, the Jython driver and the wsadmin
-stub are all put in place by the same roles that will run against the real
-estate, so CI exercises the production staging path rather than a special one.
+The server jobs reach ServeurAIX over SSH from a plain `python:3.12-slim` image with `inventories/aix`. They are **skipped, not failed**, when `AIX_SSH_PRIVATE_KEY` is absent, so a fork still gets the static gates. Build and deploy run on the default branch only, one pipeline at a time (`resource_group: serveur-aix`): two pipelines installing on one server would contend for Installation Manager's lock.
 
-There is no `sshd` and no private key in those pods. Ansible reaches them with
-the `kubernetes.core.kubectl` connection plugin, over `pods/exec`.
+CI/CD variables, none of them in the repository:
 
-`sim:configure` runs the play three times: `--check --diff`, then apply, then
-again. **The third run must report `changed=0` on every host.** That replay is
-the only real proof of idempotency, and it is a claim the legacy approach could
-not make — its marker files reported "nothing to do" whether or not the cell
-still matched.
+| Variable | |
+|---|---|
+| `AIX_SSH_PRIVATE_KEY` | File. The key of the WAS account on ServeurAIX |
+| `AIX_SSH_KNOWN_HOSTS` | ServeurAIX's host key line. Without it the key is taken on first use, and the job says so |
+| `WAS_ENVIRONMENT` | The environment code ServeurAIX is built as — what the AWX survey asks: a family, alone or with an instance (`DEV01`, `VAL02`…). No default |
+| `WAS_ADMIN_USER`, `WAS_ADMIN_PASSWORD` | The WAS console administrator. Masked; written to a `0600` vars file in a directory made by Python's `tempfile.mkdtemp`, never to a command line |
 
-`sim:members` is the vertical axis and the second replay. `sim:configure` builds
-one member per node, which is a horizontal cluster; this job runs
-`traditional_cluster_members.yml` **on its own** — being separately launchable
-is the point of splitting it out — with two members per node over two nodes,
-which is four JVMs. It then asserts the shape in the role's own words, that no
-two servers of a node hold the same port, that a count above the bound is
-refused, and that one imposed member name against a count of two is refused
-with both ways out named.
+### Validating the mount point
 
-`sim:isolation` asserts the boundary rather than describing it: the CI identity
-must **not** be able to exec into `kube-system`, `ci` or `default`, and the
-boundary must hold - checked by **traffic**, not by reading the policy objects.
-[`ci/assert-network-boundary.sh`](ci/assert-network-boundary.sh) starts a
-listener on the target, then connects across the boundary: a node agent
-reaches the deployment manager on the allowed port, and is refused on any
-other; the deployment manager cannot reach a node agent; a node agent cannot
-reach another. An existing NetworkPolicy proves a YAML object exists, not that
-anything is blocked - a cluster with its policy controller off holds the same
-objects and enforces nothing. And checking traffic needs only `pods/exec`,
-which the CI identity already holds, so the test runs on a cluster built from
-this repository with nothing granted by hand. The ServiceAccount is bound by namespaced
-Roles, never a ClusterRole, so a leaked CI token reaches exactly two throwaway
-namespaces.
+The IBM media cannot be downloaded by a playbook — every artefact needs an IBMid — so it lives on a share the system administrator mounts on the server at `was_install_binaries_base_dir` (`/mnt/binaries`). [`binaries_mount_check.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml) checks it before anything reads it:
 
-`sim:teardown` removes the pods and leaves the namespaces: they are
-infrastructure applied once, and a pipeline that deletes them makes itself
-unrunnable.
-
-## 16. The install lab: a KubeVirt VM
-
-The simulation above installs nothing. Installation Manager needs somewhere real
-to land, and that is a separate machine: **one KubeVirt VM**, `was-lab-01` in the
-`was-lab` namespace, declared in
-[`ci/k3s/20-was-lab-vm.yml`](ci/k3s/20-was-lab-vm.yml).
-
-**Why a VM and not another pod.** Installation Manager writes into the
-installation directories, keeps an installation registry, expects a genuine
-filesystem layout and enough disk, and `manageprofiles` expects a working
-process tree — it calls `killall`. A container is the wrong shape for that. The
-simulation pods are stock Rocky 9 on `emptyDir`, with no `sudo` and a wsadmin
-stub; nothing in them could carry a 2.5 GB IBM install. KubeVirt and CDI are
-already running on the cluster, so the VM costs nothing extra to operate and is
-destroyed by deleting one namespace.
-
-| Object | Name | Note |
-|---|---|---|
-| Namespace | `was-lab` | |
-| DataVolume | `was-lab-disk` | Rocky 9 GenericCloud imported by CDI, 40 Gi |
-| VirtualMachine | `was-lab-01` | 4 vCPU, 6 Gi — WAS 9.0 wants 2 Gi minimum and is miserable there |
-| Service | `was-lab-01` | `22`, `9043`, `9080`, reachable in-cluster without a Route |
-| Secret | `was-lab-cloudinit` | cloud-init user data. **Not in this repository**: it carries the SSH public key |
-
-Bring it up with [`ci/k3s/make-lab-vm.sh`](ci/k3s/make-lab-vm.sh), which builds
-the Secret from the key pair on the node, applies the manifest, waits for the
-image import and prints the address. Teardown is `kubectl delete ns was-lab`,
-and it leaves nothing behind.
-
-### Getting in
-
-**The VM runs inside a pod, and that pod is not the way in.** KubeVirt wraps it
-in `virt-launcher-was-lab-01-xxxxx`; `kubectl exec` on that pod lands in the
-virt-launcher container, next to the QEMU process, not in the Rocky guest.
-Installation Manager is unreachable by that route.
-
-```bash
-# On a k3s node /usr/local/bin/kubectl is a SYMLINK TO k3s, and that wrapper
-# reads /etc/rancher/k3s/k3s.yaml - root-owned, mode 0600 - unless KUBECONFIG
-# says otherwise. Without this line kubectl fails with a permission error that
-# reads like a broken cluster, the command substitution below returns empty,
-# and every command after it silently runs on the node instead of the VM.
-export KUBECONFIG=$HOME/.kube/config
-
-kubectl -n was-lab get vmi,pod          # vmi was-lab-01 must be Running
-
-IP=$(kubectl -n was-lab get vmi was-lab-01 -o jsonpath='{.status.interfaces[0].ipAddress}')
-[ -n "$IP" ] || echo "no address - do not run anything else"
-ssh -i ~/.ssh/was_lab ansible@"$IP"
+```sh
+ansible-playbook -i inventories/aix \
+    ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml
 ```
 
-`virtctl` would avoid the address lookup entirely, but it is **not installed on
-this node** - only `kubectl` and `k3s` are. `virtctl console` would be of no use
-anyway: cloud-init sets `ssh_pwauth: false`, `disable_root: true` and no
-password at all. The key is the only way in.
+1. the path exists and is a directory;
+2. it is a **mount point**: `df -P` names the filesystem the path lives on, and that filesystem must be mounted on the path itself. A directory of `/` that merely exists passes a `stat` and holds nothing, or a stale copy;
+3. the filesystem is of the declared type (`site_binaries_repository_type`: `nfs` matches `nfs3`/`nfs4`), and optionally the declared share (`forge_binaries_check_source`);
+4. the connecting account can read it — on NFS the usual failure is root squashing or a uid that differs between server and client;
+5. it carries the media: `install_im/*.zip` and a `repository.config` under `install_was90/`. Fix packs are counted, not required.
 
-AWX job pods run inside the cluster, so `was-lab-01.was-lab.svc.cluster.local`
-resolves and the inventory uses that name. From the node itself, pass
-`-e ansible_host=$IP`.
+The same checks run inside `forge_preflight`. `forge_binaries_require_mount: false` accepts a directory filled by hand.
 
-### The media, which nothing downloads
+## 16. The AIX server: ServeurAIX
 
-Neither artefact can be fetched without an IBMid, so both are staged by hand.
-In the lab inventory the globs are **on the controller** and the roles copy the
-archives across; in the estate the media arrives on a mounted share and the
-globs stay empty.
+One physical AIX server carries the whole ND cell: a deployment manager and a federated node, both on the same LPAR. [`inventories/aix`](inventories/aix/hosts.yml) declares it as three entries pointing at the same `ansible_host`, for the reasons given in section 17:
 
-| Artefact | Controller glob (`group_vars/was_lab.yml`) | Where it lands on the VM |
+| Entry | Group | Role |
 |---|---|---|
-| Installation Manager | `/mnt/binaries/IBM/install_im/*.zip` | `/mnt/binaries/IBM/install_im` |
-| WAS 9.0 for Developers | `/mnt/binaries/IBM/install_was90/*.zip` | `/mnt/binaries/IBM/install_was90` |
-| Fix packs | `/mnt/binaries/IBM/fixes/*.zip` | one repository directory per archive |
+| `ServeurAIX` | `was_install` | The machine: Installation Manager, WAS, fix packs — once |
+| `ServeurAIX-dmgr` | `dmgr` | The deployment manager profile (port base 30000) |
+| `ServeurAIX-node` | `nodeagents` | The federated node, its node agent and the cluster member (port base 30100) |
 
-Each fix pack archive is one Installation Manager repository and they must not
-be unpacked on top of each other: two `repository.config` files in one directory
-and `imcl` reads whichever it finds first. Under AWX the controller is the job
-pod, so these paths have to be mounted into the Execution Environment or the
-staging step finds nothing.
+There is no environment group, on purpose: the same server is built as any environment. The plays that act on the deployment manager are run with `-e config_dmgr_hosts=dmgr`.
 
-The base Developers install yields **9.0.0.0**. The 9.0.5.x level comes from the
-fix pack, which is a separate job — hence `was_expected_version: "9.0.0.0"`.
+### What the server needs before the first run
 
-### Filling the local repository from IBM
-
-The 9.0.0.0 zips are not the only route in. The live ILAN composite repository
-serves the **current** level, so Packaging Utility can mirror 9.0.5.x straight
-into the media directory, after which the VM never needs the internet again.
-[`ci/k3s/lab-mirror-was.sh`](ci/k3s/lab-mirror-was.sh) does exactly that, run
-from the node like `make-lab-vm.sh`:
-
-```bash
-bash ci/k3s/lab-mirror-was.sh --check    # preconditions only, changes nothing
-bash ci/k3s/lab-mirror-was.sh            # the whole thing
-```
-
-It verifies `KUBECONFIG`, the VMI phase, the key, passwordless sudo, the
-Installation Manager version, free space and egress **before** asking for
-anything. Then it prompts once for the IBMid through `imcl -prompt` — the
-mechanism Installation Manager itself recommends when it refuses a repository —
-which writes an encrypted credential store on the VM. No later run carries a
-secret, and the password never appears on a command line or in shell history.
-
-That interactive prompt is why this is a script and not a playbook: it needs a
-TTY, and an AWX job pod has none.
-
-Two things to know. ILAN is the licence the "for Developers" edition ships
-under; IBM's table has no entry called "Developers", so the composite is
-`V9WASILAN` and the individual repository is `com.ibm.websphere.ILAN.v90`. And a
-mirror taken from the live repository is **9.0.5.x, not 9.0.0.0** — so
-`was_expected_version` has to move with it, or the install job's closing assert
-fails on a perfectly good install.
-
-### Installation Manager on the VM
-
-The install role runs `imcl` with `become`, so this is an **administrator
-installation**: the binary is root-owned and `imcl` as the service account
-fails with `CRIMC1018E ERROR: Administrator privileges are required`. Only
-`version` works without privileges. Everything else needs `sudo`:
-
-```bash
-IMCL=/app/binaries/InstallationManager/eclipse/tools/imcl
-
-$IMCL version                                       # the one call that needs nothing
-sudo $IMCL listInstalledPackages -long
-sudo $IMCL listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long
-sudo $IMCL -c                                       # console mode
-```
-
-The agent data and the installation registry are under `/app/data/IM/agentdata`,
-not `/var/ibm/InstallationManager`, because the role passes `-dataLocation`. One
-mount therefore holds the whole installation.
-
-**There is no browser route.** Installation Manager has no web interface;
-`IBMIM` needs an X server, and the `ibm.com/software/repositorymanager/...`
-service repository URLs do not load in a browser either — they are consumable
-only by Installation Manager. A local repository *can* be served over HTTP by
-any web server and handed to `imcl` as
-`http://host/repo/repository.config`, which is the only place a browser has in
-this picture.
-
-The same query without opening a shell, which is also how AWX runs it:
-
-```bash
-ansible -i inventories/lab was_lab -m command \
-  -a "/app/binaries/InstallationManager/eclipse/tools/imcl \
-      listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long"
-```
-
-The offering id is never hardcoded. The editions differ only by that id —
-`com.ibm.websphere.ND.v90`, `.BASE.v90`, `.DEVELOPERS.v90` — and guessing it
-produces an `imcl` error that reads like a licence problem, so the role asks the
-repository what it contains.
-
-### The workflow
-
-| Node | Playbook | What it does |
+| | Where it comes from | Checked by |
 |---|---|---|
-| 1 | `lab_install_im.yml` | Installation Manager. Job 2 runs only if this succeeds |
-| 2 | `lab_apply_fixpacks.yml` | pass 1 — brings Installation Manager to the level WAS needs |
-| 3 | `lab_install_was.yml` | WAS for Developers and the SDK, in one `imcl` call |
-| 4 | `lab_apply_fixpacks.yml` | pass 2 — patches what node 3 just installed |
-| 5 | `lab_create_profiles.yml` | the profiles — deployment manager, then the federated node |
-| 6 | `traditional_cluster.yml` | the cluster |
-| 7 | `traditional_cluster_members.yml` | the application servers in it, vertical or horizontal |
+| Python 3, `sudo`, `unzip`, `zipinfo` | AIX Toolbox for Open Source Software, under `/opt/freeware`. `prereqs_os` installs the RPMs with the Toolbox's `dnf` when it is there | `forge_preflight`: the commands must be on the **default `PATH`** of a non-interactive session — `ansible.builtin.unarchive` looks for `unzip` and `zipinfo` there only. Add `/opt/freeware/bin` to `PATH` in `/etc/environment` or link them into `/usr/bin` |
+| `bos.adt.libm`, `bos.perf.perfstat`, `xlC.aix61.rte` | AIX installation media, `installp` | `lslpp -Lc`. `prereqs_os` refuses with their names; it does not install filesets |
+| The WAS account (`wasadmin`) with an SSH key and `sudo` | The system administrator | the connection itself |
+| `nofiles`, `nproc` limits | `prereqs_os`, with `chuser` — the AIX equivalent of `/etc/security/limits.d` | `lsuser`, only the attributes that differ are written |
+| `/app`, `/opt/exploit`, sized | JFS2 filesystems (`crfs`) | `forge_preflight`: free space through `df -Pk` |
+| The binaries share on `/mnt/binaries` | The system administrator | `binaries_mount_check.yml` |
 
-Nodes 6 and 7 are two job templates rather than one because each of them is
-replayable on its own — see section 18. On the lab they are launched with
-`-e config_dmgr_hosts=dmgr`, since this inventory declares no environment
-group.
+`ansible_python_interpreter` is `/opt/freeware/bin/python3` (interpreter discovery does not look there), and Ansible's temporary files go under the account's home, because `/tmp` is often small on AIX.
 
-One job template, two workflow nodes for the fix packs. That only works because
-the role **discovers** what is installed rather than being handed a list: on
-pass 1 only Installation Manager is there, on pass 2 everything is. Finding no
-fix pack repository is a normal outcome — the job says what it found, says where
-to put media, and exits green.
+### The DSI's environments: a family and an instance
 
-Job 3 checks for `imcl` itself rather than trusting node 1: a job template can
-be launched on its own, and the failure should name what is missing instead of
-dying inside a shell call.
+The DSI runs four environment families — **DEV** (development), **VAL** (validation), **PREPROD** and **PROD** — and each can be refined per project with a two-digit instance: `DEV01`, `DEV02`, `VAL01`, `PREPROD01`… They are declared as **site data** in [`inventories/aix/group_vars/all/10_environment.yml`](inventories/aix/group_vars/all/10_environment.yml), never in the collection:
+
+```yaml
+was_environment_families:
+  DEV:     {tier: non_prod, long_name: Developpement}
+  VAL:     {tier: non_prod, long_name: Validation}
+  PREPROD: {tier: non_prod, long_name: Preproduction}
+  PROD:    {tier: prod,     long_name: Production}
+was_environment_instance_pattern: "[0-9]{2}"
+```
+
+With families declared, the `model` role accepts a code only if it is a family, alone or followed by an instance (`DEV`, `DEV01`, `VAL02`, `PROD`), and refuses anything else (`XYZ01`, `DEV1`). **The family decides the tier**: only PROD is production — a PROD run still needs `model_allow_production` or the workflow's approval — and a `was_environment_tier` that contradicts the family is refused, not corrected. The long name follows (`Developpement 01`). An inventory that declares no families keeps the open behaviour: any usable code, tier as an input. Codes are up to ten characters (`PREPROD01` is nine).
+
+### Building it by hand
+
+```sh
+COL=ansible_collections/wasevo/websphere/playbooks
+E="-i inventories/aix -e was_environment=<code>"     # a family, alone or with an instance
+
+ansible-playbook -i inventories/aix $COL/binaries_mount_check.yml
+ansible-playbook $E $COL/forge_preflight.yml -e forge_preflight_hosts=was_install -e forge_preflight_check_dirs=false
+ansible-playbook $E $COL/lab_install_im.yml
+ansible-playbook $E $COL/lab_apply_fixpacks.yml
+ansible-playbook $E $COL/lab_install_was.yml
+ansible-playbook $E $COL/lab_apply_fixpacks.yml
+ansible-playbook $E $COL/lab_create_profiles.yml -e profile_hosts=was_install -e was_topology=nd -e @admin.json
+ansible-playbook $E $COL/traditional_cluster.yml -e config_dmgr_hosts=dmgr -e @admin.json
+ansible-playbook $E $COL/traditional_cluster_members.yml -e config_dmgr_hosts=dmgr -e @admin.json
+ansible-playbook $E $COL/traditional_start.yml -e config_dmgr_hosts=dmgr -e @admin.json
+```
+
+`admin.json` holds `was_admin_user` and `was_admin_password`, mode `0600`, outside the repository. The base install asserts **at least** `was_expected_version`, so a replay after the fix pack job still passes. Nothing here uses systemd: the processes are started by `traditional_start.yml` through the profile's own scripts, and the liveness check is a POSIX `kill -0`, which `/bin/sh` (ksh) runs as well as bash.
 
 ## 17. WAS object naming is an input, not a convention
 
@@ -708,19 +546,19 @@ name hardcoded to `ClusterEXT` in two of them. Three copies of a naming rule is
 three chances to disagree, and the disagreement surfaces as a cell that will
 not federate.
 
-### One machine, two roles: how the lab declares an ND cell
+### One machine, two roles: how the AIX inventory declares an ND cell
 
-An ND cell is a deployment manager plus at least one federated node. The lab
-owns one VM, so both profiles land on it. Ansible expresses "one machine
+An ND cell is a deployment manager plus at least one federated node.
+ServeurAIX is one machine, so both profiles land on it. Ansible expresses "one machine
 playing two roles" with **two inventory entries** pointing at the same
 `ansible_host` — not with one entry in two groups, which is the obvious
 shortcut and does not work here.
 
 | Entry | Group | What it carries |
 |---|---|---|
-| `was-lab-01` | `was_lab` | the installation — IM, WAS, the fix packs. Once only: `imcl` takes a lock |
-| `was-lab-01-dmgr` | `dmgr` | the deployment manager profile |
-| `was-lab-01-node` | `nodeagents` | the managed profile — so the node agent, and the cluster member, which is the application server |
+| `ServeurAIX` | `was_install` | the installation — IM, WAS, the fix packs. Once only: `imcl` takes a lock |
+| `ServeurAIX-dmgr` | `dmgr` | the deployment manager profile |
+| `ServeurAIX-node` | `nodeagents` | the managed profile — so the node agent, and the cluster member, which is the application server |
 
 Why not one entry in both groups:
 
@@ -744,13 +582,13 @@ node would look for the deployment manager's SOAP port 100 ports too high. It
 is only a fallback either way: `profile_dmgr` reads the created profile and
 publishes `was_dmgr_soap_port_actual`, which `profile_nodeagent` prefers.
 
-Where each name is written, for the lab:
+Where each name is written, for the AIX server:
 
 | Name | File |
 |---|---|
-| cell, cluster | `inventories/lab/group_vars/all/30_naming.yml` — both are cell-wide |
-| dmgr profile and node | `inventories/lab/group_vars/dmgr.yml` |
-| profile, node, cluster member | `inventories/lab/group_vars/nodeagents.yml` |
+| cell, cluster | `inventories/aix/group_vars/all/30_naming.yml` — both are cell-wide |
+| dmgr profile and node | `inventories/aix/group_vars/dmgr.yml` |
+| profile, node, cluster member | `inventories/aix/group_vars/nodeagents.yml` |
 
 No environment code is written in any of them: `was_env_upper` and
 `was_channel_name` are published by the `model` role from the survey answers,
@@ -1546,161 +1384,44 @@ refused deletion, and the applications are named.
 
 ## 20. AWX
 
-AWX runs inside k3s on the Ubuntu host, deployed by the AWX Operator, pinned.
-See [`ci/awx/README.md`](ci/awx/README.md).
-
-**No `sudo` anywhere.** The account's `~/.kube/config` is readable, so the whole
-install happens through the Kubernetes API; Ansible itself is installed per-user
-with `pipx`.
-
-Two things that bite on a first install, both fixed in the manifests:
-
-- `gcr.io/kubebuilder/kube-rbac-proxy` was **retired by Google** — the
-  repository is gone, not just the tag — so the operator pod sits in
-  `ImagePullBackOff` out of the box. The kustomization redirects it to
-  `quay.io/brancz/kube-rbac-proxy`, the component's upstream home.
-- Applying the operator and the `AWX` custom resource in one kustomization is a
-  race: the CR is rejected with `no matches for kind AWX` before the CRD is
-  established. Hence the two-step apply.
-
-`pipx install ansible` exposes only `ansible-community`; `--include-deps` is what
-puts `ansible-playbook` on `PATH`.
-
-The admin password is generated by the operator into a Secret. Nothing in this
-repository carries it.
-
-### A cell on k3s: deployment manager and two federated nodes
-
-A dedicated AWX workflow, **WAS cell - deployment manager and two federated
-nodes**, builds a cell from nothing on the k3s cluster - nothing is run by
-hand, and it stops at the cluster: no JDBC, no JMS, no security change.
-
-| Job | Playbook | What it does |
-|---|---|---|
-| 0 | `cell_prerequisites.yml` | on the k3s node: the platform jobs' cluster rights, the WAS administrator's password, the AWX credentials made from them |
-| 1 | `cell_machines.yml` | three KubeVirt virtual machines, through the Kubernetes API from the job pod |
-| 2 | `cell_media.yml` | the Installation Manager and WAS media, copied from the install lab VM |
-| 3 | `lab_install_im.yml` | Installation Manager on each machine |
-| 4 | `lab_install_was.yml` | WAS on each machine |
-| 5 | `lab_create_profiles.yml` | the deployment manager, started; then each node federated, one at a time |
-| 6 | `traditional_cluster.yml` | the cluster |
-| 7 | `traditional_cluster_members.yml` | one application server per node - a horizontal cluster of two |
-| 8 | `traditional_start.yml` | the node agents and the members started; what runs is left alone |
-| 9 | `cell_console.yml` | the console on the node address, checked through it |
-
-The survey is the lab workflow's: the environment (`poc`), the channel
-(`Extranet`), the topology (`nd`). They make the names - cell `Extranet_POC`,
-cluster `ClusterEXT`, nodes `<machine>Node`, members
-`ClusterEXT_<machine>Node_01`. The inventory, `inventories/cell`, names the
-machines and nothing else.
-
-**The console**: `http://lab.example.com:30000/ibm/console`. Port 30000 is a
-NodePort onto the deployment manager's `WC_adminhost`; the login then
-redirects to HTTPS on `WC_adminhost_secure`, published under its own number
-(9043) on the same address by the cluster's service load balancer. Both ports
-are read from the profile, not assumed.
-
-**What made it possible**, and is reusable:
-
-- `roles/platform/kubevirt_vms` - a machine per inventory host, its disk
-  imported once and never again, a headless Service so every WAS port of the
-  machine is reachable under a stable DNS name, the key of the AWX machine
-  credential installed by cloud-init. The machine resolves its own name to
-  its own interface - behind KubeVirt's masquerade the pod address is not
-  local to it.
-- `roles/platform/cell_media` - the WAS repository comes from IBM behind an
-  IBMid; the install lab holds it, so the cell copies it from there over a
-  transient HTTP server instead of asking for the IBMid again.
-- `roles/traditional/server_start` - starts the deployment manager, node
-  agents and members whose pid is not live, and nothing else. The deployment
-  manager profile role now starts it: a node cannot federate otherwise, and
-  nothing started it before.
-- The profile roles take the product's default ports when the inventory
-  gives no base port (`defaultPorts=true`): one profile per machine needs
-  nothing else.
-
-**Prerequisites are a job too.** Job 0 runs on the k3s node as its
-administrator (`roles/platform/cell_prerequisites`): it grants the platform
-jobs a ServiceAccount, `awx/awx-cell-platform` - create, read and patch on
-namespaces, virtual machines, disks, Secrets and Services, no delete; it
-generates the WAS administrator's password once, user `wasadmin`, into the
-Secret `awx/was-cell-admin`; and it makes the AWX credentials "k3s API - cell
-platform" and "WAS cell administrator" and attaches them to jobs 1 to 9.
-Nothing of it is in the repository:
+AWX is **hosted elsewhere** — this repository no longer installs it, and nothing in it needs Kubernetes. The scripts in [`ci/awx/`](ci/awx/README.md) declare what AWX holds through its API, from any host that reaches it:
 
 ```sh
-kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64 -d
+export AWX_API=https://<awx>/api/v2
+export AWX_TOKEN_FILE=~/.awx-token        # optional: a personal access token
+
+bash ci/awx/apply-cell-workflow.sh        # inventory "WAS AIX", templates 0-8, the workflow, the survey
+bash ci/awx/apply-templates.sh            # the configuration templates 9-23, appended to it
 ```
 
-`ci/awx/apply-cell-workflow.sh` declares the inventory, the templates and the
-workflow - configuration only, no secret and no cluster right. Job 0 logs in
-to the node with one AWX machine credential, **k3s node administrator**: the
-only thing made by hand, in AWX, because it holds the node's key.
+**Authentication.** A personal access token (AWX: User > Tokens), in a file named by `AWX_TOKEN_FILE`, is preferred: revocable, scoped, and no password typed. It is sent as `Authorization: Bearer` from a `0600` header file. Without it, `AWX_USER`'s password (`admin` by default) is typed at the prompt and written to a `0600` netrc. Either way the secret never reaches a command line, and the temporary directory is made by Python's `tempfile.mkdtemp` and removed on exit.
+
+**Network.** Every call is `curl -sS -k --noproxy '*'`: AWX is reached directly — through the site's HTTP proxy the API answers **504 Gateway Timeout** — and its certificate, usually from an internal authority, is accepted unverified. Set `AWX_CA_FILE` to that authority's certificate to verify it instead of `-k`.
+
+### The workflow: a cell on ServeurAIX
+
+"WAS AIX - cell on ServeurAIX", on the inventory "WAS AIX" sourced from `inventories/aix/hosts.yml`:
+
+| Node | Playbook | |
+|---|---|---|
+| 0. Binaries mount point | `binaries_mount_check.yml` | Stops the workflow before anything is unpacked if the share is not there |
+| 1. Installation Manager | `lab_install_im.yml` | with `prereqs_os` first |
+| 2. Fix packs: Installation Manager | `lab_apply_fixpacks.yml` | lifts IM to the level WAS needs |
+| 3. WAS | `lab_install_was.yml` | |
+| 4. Fix packs: WAS | `lab_apply_fixpacks.yml` | the same playbook, a second template |
+| 5. Profiles | `lab_create_profiles.yml` | deployment manager, then the federated node |
+| 6. Cluster · 7. Cluster members · 8. Start | | `config_dmgr_hosts: dmgr` |
+| 9 – 23 | J2C, JDBC, shared libraries, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, security, policy sets, dynamic cache, logging, PMI | by `apply-templates.sh` |
+
+Made by hand in AWX, once: the machine credential "ServeurAIX (ansible)" (the WAS account's SSH key) and a credential of the type "WAS administrative user", which `apply-templates.sh` creates. Until that credential exists, the templates that need it ask for it at launch.
 
 ### What AWX holds is declared, not clicked
 
-[`ci/awx/apply-templates.sh`](ci/awx/apply-templates.sh) creates the job
-templates that build a cell and chains them into the workflow in order; it is
-re-runnable, finding every object by name and patching it. A job template is
-configuration — which playbook, which inventory, which credential, whether
-`Job type` is selectable — and clicking it means nobody can say what AWX is
-supposed to hold. That is how three templates came to exist and the three that
-build a cell did not.
+The scripts are re-runnable: every object is found by name and patched. A job template is configuration — which playbook, which inventory, which credential, whether `Job type` is selectable — and clicking it means nobody can say what AWX is supposed to hold.
 
-It also declares the credential type for the WAS administrator, so
-`was_admin_user` and `was_admin_password` reach a playbook as injected extra
-vars — encrypted at rest, masked in the output — rather than sitting in a
-template's `extra_vars` in plain text. It creates no credential: a password does
-not come from a repository.
+The WAS administrator reaches a playbook through a **credential type** that injects `was_admin_user` and `was_admin_password` as extra vars — encrypted at rest, masked in the output — never through a template's `extra_vars` in plain text. No script creates a credential: a password does not come from a repository.
 
-**AWX validates `playbook` against the project's last successful update**, not
-against the repository, so the script updates the project and waits before
-naming a playbook. A playbook pushed since that update is otherwise refused
-with `Playbook not found for project.`, which reads like a path typo and is not
-one.
-
-### Resolved: AWX runs jobs on this Kubernetes, at 24.6.1
-
-> **There is nothing to upgrade to, and nothing needed upgrading.** On
-> 31 October 2026, inventory update 49 and ad hoc command 52 (`ping` on the
-> three lab hosts) both succeeded on AWX 24.6.1, receptor 1.4.8, Kubernetes
-> v1.37.0+k3s1.
->
-> An earlier note here blamed receptor's **SPDY** attach and called for an AWX
-> upgrade. Both halves were wrong, and were checked:
->
-> - this cluster still serves SPDY: `kubectl exec` and `kubectl attach -i` with
->   `KUBECTL_REMOTE_COMMAND_WEBSOCKETS=false` both work, the attach carrying
->   stdin into the pod;
-> - no upgrade exists: awx-operator 2.19.1 (AWX 24.6.1) is still the last
->   release, and every receptor up to 1.6.9 and its `devel` branch still
->   attach through `NewSPDYExecutor`;
-> - the job role already grants `pods/attach: create`, which WebSocket attach
->   requires.
->
-> **The cause of the October failures, found on 31 October**
-> (`EOF for pod awx/automation-job-NN-...`, then AWX's `Failed to JSON parse
-> a line from worker stream ... b''`): the node had run out of **inotify
-> instances**. The job pod runs and exits 0, but receptor follows its output
-> with `pods/log?follow=true`, and the kubelet answers that request with
-> `failed to create fsnotify watcher: too many open files` and closes it -
-> receptor reads EOF and AWX marks the job in error. The limit,
-> `fs.inotify.max_user_instances`, is 128 by default; KubeVirt, AWX and every
-> pod draw on it, so jobs work or fail depending on what else runs.
->
-> To see it: `kubectl logs -f <any pod>` returns at once instead of following,
-> and prints that line. The fix, on the node, as root - immediate and kept
-> across reboots:
->
-> ```sh
-> sudo tee /etc/sysctl.d/90-inotify.conf <<'END'
-> fs.inotify.max_user_instances = 8192
-> fs.inotify.max_user_watches = 524288
-> END
-> sudo sysctl --system
-> ```
->
-> AWX stays pinned.
+**AWX validates `playbook` against the project's last successful update**, not against the repository, so the scripts update the project and wait before naming a playbook. A playbook pushed since that update is otherwise refused with `Playbook not found for project.`, which reads like a path typo and is not one.
 
 ## 21. Sources
 
@@ -1732,7 +1453,7 @@ Copyright 2026 CGA. Licensed under the [Apache License, Version 2.0](LICENSE); a
 
 - The whole repository is under this licence: the `wasevo.websphere` collection, its roles, modules and plugins, the inventories, the CI and the documentation.
 - The collection carries its own copy of `LICENSE` and `NOTICE`, so a collection tarball built with `ansible-galaxy collection build` stays licensed once it leaves the repository. `galaxy.yml` and every role's `meta/main.yml` declare `Apache-2.0`, and every plugin starts with the licence header.
-- The licence covers this automation, **not the IBM products it installs**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager and the IBM SDK stay under IBM's own terms — for the "for Developers" edition, the ILAN (section 16). Nothing IBM ships is redistributed here: the playbooks fetch the media from a repository the operator provides.
+- The licence covers this automation, **not the IBM products it installs**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager and the IBM SDK stay under IBM's own terms — for the "for Developers" edition, the ILAN. Nothing IBM ships is redistributed here: the playbooks fetch the media from a repository the operator provides.
 
 ## 23. Certificates: inventory, renewal and the portal
 
@@ -1745,7 +1466,7 @@ the page holds no credential and no data of its own.
 |---|---|---|
 | `traditional_certificates.yml` | `traditional.certificates` | Read only. Every key store of the cell, every personal and signer certificate, its expiry, what uses it and how it is renewed. Published as AWX job artifacts under `wasevo_certificates.cells.<cell>`. |
 | `traditional_certificate_renewal.yml` | `traditional.certificate_renewal` | Renews ONE certificate, named by the `certificate_renewal` extra var, then inventories the cell again. |
-| `platform_certificate_portal.yml` | `platform.certificate_portal` | The page, on the k3s node: a ConfigMap, an unprivileged nginx and an Ingress for `/wasevo/certificates` on AWX's own host. |
+| `platform_certificate_portal.yml` | `platform.certificate_portal` | The page, on the web server in front of AWX: static files copied to a directory served at `/wasevo/certificates` on AWX's own host, and the nginx or httpd location block to include once. |
 
 **Renewal follows the issuer**, so the page offers only what is possible:
 
@@ -1772,8 +1493,8 @@ their name, and shows for each cell the newest successful report.
 AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" \
     bash ci/awx/apply-certificates.sh
 
-# once per AWX: the portal template, on the k3s node's inventory
-AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS cell lab" \
+# once per AWX: the portal template, on the inventory holding the awx_web group
+AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS AIX" \
     bash ci/awx/apply-certificates.sh
 ```
 
@@ -1787,6 +1508,71 @@ inventory daily. The portal is then at `https://<awx host>/wasevo/certificates/`
 replays to `changed=false`, and `ci/portal-tests.js` checks what the page
 decides - the status for today, the newest report per cell, the actions per
 issuer and the extra vars of a launch.
+
+## 24. Applications: deployment and decommissioning
+
+One role, [`traditional/application`](ansible_collections/wasevo/websphere/roles/traditional/application/defaults/main.yml), deploys an EAR, a WAR or an EJB JAR on a cluster or on one application server **with the WebSphere resources it needs**, and decommissions it **with them**.
+
+### The catalogue
+
+Every application is declared once — in the inventory ([`inventories/aix/group_vars/all/70_applications.yml`](inventories/aix/group_vars/all/70_applications.yml)) — with what it needs in the cell. A run acts on one of them, named by `application_name` (the AWX survey answer).
+
+```yaml
+was_applications:
+  - name: OrdersApp
+    archive: orders/OrdersApp-1.4.2.ear       # under application_binaries_dir
+    target: cluster                           # or {type: server, node: N, server: S}
+    shared_libraries: [ordersCommonLibrary]   # bound to every module
+    resources:
+      variables:        [{name: ORDERS_HOME, value: /app/data/orders}]
+      j2c_aliases:      [{name: ordersDbAlias, user: orders, password_env: ORDERS_DB_PASSWORD}]
+      datasources:      [{name: ordersDS, jndi_name: jdbc/orders, vendor: db2_luw, ...}]
+      shared_libraries: [{name: ordersCommonLibrary, dir: /mnt/binaries/applications/orders/lib}]
+      jms:              {queues: [{name: OrdersQueue, jndi_name: jms/orders, ...}]}
+```
+
+Each resource family takes the shape of its own role, because it is **handed to that role** — `j2c_alias`, `jdbc`, `shared_library`, `jms`; WebSphere variables go through the new module `was_variable`. Nothing is reimplemented.
+
+### Where the archives come from
+
+From a **mount point** today: `application_binaries_dir` (`/mnt/binaries/applications`), read on the deployment manager, where wsadmin runs. The role refuses a directory that is not on a mounted share (`application_require_mount`). The **artifact repository** (Nexus, Artifactory) is prepared and left **commented** in [`tasks/archive.yml`](ansible_collections/wasevo/websphere/roles/traditional/application/tasks/archive.yml): download to the deployment manager, verified against the repository's checksum; switching is a matter of uncommenting.
+
+### Deployment
+
+```sh
+ansible-playbook -i inventories/aix ansible_collections/wasevo/websphere/playbooks/traditional_application_deploy.yml \
+    -e was_environment=<code> -e config_dmgr_hosts=dmgr -e application_name=OrdersApp -e @admin.json
+```
+
+1. the archive found on the share;
+2. the resources created, by their roles: variables, J2C aliases, shared libraries, datasources, JMS;
+3. the application — module `was_application`, one wsadmin session: installed with `-cluster` or `-node/-server`, `-MapWebModToVH`, `-MapSharedLibForMod`, `-contextroot` for a WAR; the nodes synchronised; started on every running member once `AdminApp.isAppReady`.
+
+**An update is an uninstall then an install** — the site's choice. The application is reinstalled when **no archive the cell stores** under `applications/<name>.ear/` in its configuration repository carries the checksum of the declared archive, or when its target changed. Same archive, same target: `changed=0`. `application_force_reinstall` forces it.
+
+### Decommissioning: an AWX workflow
+
+[`ci/awx/apply-application-workflows.sh`](ci/awx/apply-application-workflows.sh) declares "WAS AIX - Application: decommission", one node per step — the same playbook, [`traditional_application_decommission.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_application_decommission.yml), with `application_step` set per template:
+
+| Node | Step | |
+|---|---|---|
+| 0 | `plan` | What goes, what stays and **why**; passed to the next nodes with `set_stats` |
+| — | **approval** | A person reads the plan and approves. Nothing is removed before |
+| 1 | `uninstall` | Stopped on its members, uninstalled |
+| 2 – 6 | `jms`, `jdbc`, `j2c`, `libraries`, `variables` | What listens before what it listens on; datasources before the aliases they present |
+| 7 | `cluster` | **Only if asked** (survey) and no other application is mapped to it |
+| 8 | node agent | [`traditional_application_remove_node.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_application_remove_node.yml), on the node host — **only if asked**, the cluster removed, and the node has **no application server and no resource left** |
+
+**A declared resource is kept** when another application of the catalogue declares it too, when another *installed* application is bound to it in the cell (its JNDI name, its library — read by the new `was_application_refs_info`), or, for a J2C alias, when a datasource or connection factory that stays still presents it.
+
+**The node is removed** only when, once the cluster's members are gone, it carries no application server — clustered or standalone — no application mapped to one of its servers, and no resource scoped to it or to a server that stays (JDBC, JMS, libraries, resource adapters…). Then `removeNode.sh` runs from the node's profile; it stops the node agent and takes the node out of the cell. Its credentials go into `soap.client.props` for the duration of the command only — never on a command line — and the original file is always put back. `application_decommission_delete_profile` then deletes the profile.
+
+On the command line, `application_step: all` (the default) runs steps 0 to 7 in order; run `-e application_step=plan` first to read the plan.
+
+### Tested
+
+`ci/run-stub-tests.sh` drives the three new handlers against the fake cell — variables, install, replay, reinstall on a changed archive (stopped then started on every member), the references of the other applications, uninstall — and the fake cell refuses an install over an installed name, a missing cluster or a missing library.
+
 
 ---
 
@@ -1873,9 +1659,8 @@ inventories/                     un inventaire tout YAML ; l environnement est u
 model/                           le modele declaratif partage
 docs/                            architecture et notes par phase
 ci/
-  k3s/                           pods de simulation, la VM de lab, RBAC,
-                                 make-lab-vm.sh, lab-mirror-was.sh
-  awx/                           l'operateur AWX et ses kustomizations
+  awx/                           ce que contient AWX, declare par son API
+  assert-idempotent.sh           le rejeu d'un job doit rapporter changed=0
 ```
 
 **Ne jamais fusionner `config_render` et `deploy`.** `config_render` ne touche pas le cluster : il s'exécute hors ligne, est testable sans OpenShift, et c'est la frontière GitOps. Si Argo CD est adopté, `config_render` produit et commite, `deploy` est débranché, et rien d'autre ne change.
@@ -2161,275 +1946,105 @@ L'espace libre est vérifié avant une installation ou un fixpack à dessein : u
 fixpack qui tombe en panne d'espace en cours d'application laisse l'installation
 dans un état bien plus coûteux à récupérer qu'un playbook refusé.
 
-## 15. CI : simulation sur k3s
+## 15. CI : validation, build et deploy sur le serveur AIX
 
-La chaîne prouve trois choses, de la moins coûteuse à la plus coûteuse.
+Aucun Kubernetes dans le pipeline. [`.gitlab-ci.yml`](.gitlab-ci.yml) a trois étapes, dans l'ordre où une installation WAS sur un serveur AIX physique peut échouer :
 
-**Statique, sans cluster.** `yamllint`, `ansible-lint`, contrôles de syntaxe,
-puis : `site-vars-drift` compare le SHA-256 de `00_site.yml` entre
-environnements ; `model-matrix` valide chaque environnement, vérifie que la
-production est refusée sans `-e model_allow_production=true` et passe une fois
-acquittée, et que le JDK de diagnostic est refusé ; `pilot-render` rend un
-datasource pour les trois phases.
-
-**Toute la chaîne traditionnelle, contre un faux référentiel, sans cluster.**
-`stub-unit` exécute `ci/run-stub-tests.sh`, qui fait tourner le vrai
-`driver.py` et le vrai handler de cluster derrière un substitut de
-`wsadmin.sh`. WAS ND ne peut pas être embarqué dans une image de CI — licence,
-droits, plusieurs gigaoctets — mais presque rien de ce qui casse dans le plan
-traditionnel n'est du comportement WAS. C'est la plomberie : validation des
-arguments, fichier de payload, lancement, routage, read/plan/write, réponse
-JSON, `changed` et `diff`. Tout cela tourne réellement. Vingt-six contrôles,
-dont deux garde-fous qui cassent le build si des identifiants réapparaissent
-sur une ligne de commande wsadmin ou si le fichier de propriétés n'est pas en
-`0600`, et un qui vérifie que la synchronisation des nœuds ne part que sur un
-vrai changement.
-
-La plupart de ces contrôles sont la vie entière d'un membre de cluster : créé,
-rejoué, vidé à poids 0, son port épinglé puis le port épinglé rejoué, supprimé,
-et refusé quand le cluster n'existe pas ou quand deux JVM d'un même nœud
-réclameraient le même port. Le handler des membres est le premier à porter une
-**liste** et non un objet unique, et c'est là qu'une copie de dictionnaire de
-surface dans le planificateur sautait silencieusement l'écriture pendant que le
-`diff` annonçait le changement comme fait — pris ici, par un rejeu qui devait
-annoncer aucun changement et ne le faisait pas.
-
-**La même chaîne contre de vrais hôtes sur k3s.** Deux namespaces :
-
-| Namespace | Contient | Pourquoi séparé |
+| Étape | Jobs | Ce qu'elle prouve |
 |---|---|---|
-| `was-sim-dmgr` | un pod Rocky 9 tenant le rôle du deployment manager | La DMGR détient le référentiel maître et le pousse |
-| `was-sim-nodeagents` | deux pods Rocky 9 tenant le rôle de node agents | Un node agent reçoit. Autre zone de confiance |
+| **validation** | `yamllint`, `ansible-lint`, `syntax`, `model-matrix`, `pilot-render`, `stub-unit`, `portal-unit` | Les contrôles statiques, sans serveur : le modèle refuse les couples produit × JDK invalides et la production non acquittée, toute la chaîne traditionnelle fonctionne contre une fausse cellule, la logique du portail tient |
+| | `aix:mount` | Sur ServeurAIX, en lecture seule : le **point de montage des binaires** est bien un point de montage, du type déclaré, lisible, et porte l'archive d'Installation Manager et un dépôt WAS |
+| | `aix:preflight` | Le preflight de la forge sur ServeurAIX : filesets AIX (`lslpp`), commandes de l'AIX Toolbox dans le `PATH` par défaut, espace libre |
+| **build** | `aix:install` | Installation Manager, sa passe de fix packs, WAS, la passe de fix packs de WAS — lus sur le montage. Puis les quatre **rejoués** : chaque rejeu doit rapporter `changed=0` (`ci/assert-idempotent.sh`) |
+| **deploy** | `aix:cell` *(manuel)* | Un run en check des profils, puis le gestionnaire de déploiement et le nœud fédéré, le cluster, ses membres, démarrés — et rejoués, `changed=0` encore. Le mot de passe d'administration ne doit apparaître dans aucun log |
 
-Rocky Linux 9 parce que c'est l'équivalent librement redistribuable le plus
-proche du RHEL du parc : même gestionnaire de paquets, même systemd, même
-sémantique de `/etc/security/limits.d`. L'image est **standard** — aucune
-dépendance à un registre, rien à maintenir. Les paquets, le driver Jython et le
-substitut wsadmin sont tous mis en place par les mêmes rôles qui tourneront
-contre le parc réel : la CI exerce donc le chemin de production, pas un chemin
-spécial.
+Les jobs serveur joignent ServeurAIX en SSH depuis une simple image `python:3.12-slim`, avec `inventories/aix`. Ils sont **sautés, pas en échec**, quand `AIX_SSH_PRIVATE_KEY` est absente : un fork garde les contrôles statiques. Build et deploy ne tournent que sur la branche par défaut, un pipeline à la fois (`resource_group: serveur-aix`) : deux pipelines installant sur un même serveur se disputeraient le verrou d'Installation Manager.
 
-Il n'y a ni `sshd` ni clé privée dans ces pods. Ansible les atteint par le
-plugin de connexion `kubernetes.core.kubectl`, via `pods/exec`.
+Variables CI/CD, aucune dans le dépôt :
 
-`sim:configure` exécute le play trois fois : `--check --diff`, puis
-application, puis à nouveau. **Le troisième passage doit reporter `changed=0`
-sur chaque hôte.** Ce rejeu est la seule preuve réelle d'idempotence, et c'est
-une affirmation que l'approche historique ne pouvait pas tenir : ses fichiers
-témoins annonçaient « rien à faire » que la cellule corresponde encore ou non.
+| Variable | |
+|---|---|
+| `AIX_SSH_PRIVATE_KEY` | Fichier. La clé du compte WAS sur ServeurAIX |
+| `AIX_SSH_KNOWN_HOSTS` | La ligne de clé d'hôte de ServeurAIX. Sans elle, la clé est acceptée au premier contact, et le job le signale |
+| `WAS_ENVIRONMENT` | Le code d'environnement sous lequel ServeurAIX est construit — ce que demande le survey AWX : une famille, seule ou avec une instance (`DEV01`, `VAL02`…). Aucun défaut |
+| `WAS_ADMIN_USER`, `WAS_ADMIN_PASSWORD` | L'administrateur de la console WAS. Masquées ; écrites dans un fichier de variables `0600`, dans un répertoire créé par `tempfile.mkdtemp` de Python, jamais sur une ligne de commande |
 
-`sim:members` est l'axe vertical et le second rejeu. `sim:configure` construit
-un membre par nœud, soit un cluster horizontal ; ce job lance
-`traditional_cluster_members.yml` **seul** — être lançable séparément est tout
-l'intérêt de l'avoir découpé — avec deux membres par nœud sur deux nœuds, soit
-quatre JVM. Il vérifie ensuite la forme dans les mots du rôle lui-même, qu'aucun
-couple de serveurs d'un même nœud ne détient le même port, qu'un compteur
-au-dessus de la borne est refusé, et qu'un nom de membre imposé contre un
-compteur de deux est refusé en nommant les deux sorties.
+### Valider le point de montage
 
-`sim:isolation` vérifie la frontière plutôt que de la décrire : l'identité CI ne
-doit **pas** pouvoir faire d'exec dans `kube-system`, `ci` ou `default`, et la
-frontière doit tenir - vérifiée par le **trafic**, et non en lisant les objets
-de politique. [`ci/assert-network-boundary.sh`](ci/assert-network-boundary.sh)
-démarre une écoute sur la cible, puis se connecte à travers la frontière : un
-agent de nœud atteint le gestionnaire de déploiement sur le port autorisé, et
-est refusé sur tout autre ; le gestionnaire ne peut pas atteindre un agent de
-nœud ; un agent ne peut pas en atteindre un autre. Une NetworkPolicy existante
-prouve qu'un objet YAML existe, pas que quoi que ce soit est bloqué - un
-cluster dont le contrôleur de politiques est éteint contient les mêmes objets
-et n'applique rien. Et vérifier le trafic ne demande que `pods/exec`, que
-l'identité CI détient déjà : le test tourne sur un cluster construit depuis ce
-dépôt, sans rien accorder à la main. Le ServiceAccount est lié par des
-Roles namespacés, jamais par un ClusterRole, donc un token CI fuité n'atteint
-exactement que deux namespaces jetables.
+Les médias IBM ne peuvent pas être téléchargés par un playbook — chaque artefact exige un IBMid — ils vivent donc sur un partage que l'administrateur système monte sur le serveur à `was_install_binaries_base_dir` (`/mnt/binaries`). [`binaries_mount_check.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml) le vérifie avant que quoi que ce soit le lise :
 
-`sim:teardown` supprime les pods et laisse les namespaces : ce sont des
-ressources d'infrastructure appliquées une fois, et une chaîne qui les supprime
-se rend elle-même inexécutable.
-
-## 16. Le lab d'installation : une VM KubeVirt
-
-La simulation ci-dessus n'installe rien. Installation Manager a besoin d'un
-endroit réel pour atterrir, et c'est une machine distincte : **une VM
-KubeVirt**, `was-lab-01` dans le namespace `was-lab`, déclarée dans
-[`ci/k3s/20-was-lab-vm.yml`](ci/k3s/20-was-lab-vm.yml).
-
-**Pourquoi une VM et pas un pod de plus.** Installation Manager écrit dans les
-répertoires d'installation, tient un registre d'installation, attend une vraie
-arborescence et assez de disque, et `manageprofiles` attend un arbre de
-processus qui fonctionne — il appelle `killall`. Un conteneur n'a pas cette
-forme. Les pods de simulation sont du Rocky 9 d'origine sur `emptyDir`, sans
-`sudo` et avec un stub wsadmin ; rien là-dedans ne pourrait porter une
-installation IBM de 2,5 Go. KubeVirt et CDI tournent déjà sur le cluster, donc
-la VM ne coûte rien de plus à exploiter et se détruit en supprimant un seul
-namespace.
-
-| Objet | Nom | Remarque |
-|---|---|---|
-| Namespace | `was-lab` | |
-| DataVolume | `was-lab-disk` | Rocky 9 GenericCloud importée par CDI, 40 Gi |
-| VirtualMachine | `was-lab-01` | 4 vCPU, 6 Gi — WAS 9.0 réclame 2 Gi au minimum et y est misérable |
-| Service | `was-lab-01` | `22`, `9043`, `9080`, joignable depuis le cluster sans Route |
-| Secret | `was-lab-cloudinit` | données cloud-init. **Pas dans ce dépôt** : il porte la clé publique SSH |
-
-On la monte avec [`ci/k3s/make-lab-vm.sh`](ci/k3s/make-lab-vm.sh), qui construit
-le Secret depuis la paire de clés présente sur le nœud, applique le manifeste,
-attend l'import de l'image et affiche l'adresse. La destruction est
-`kubectl delete ns was-lab`, et elle ne laisse rien derrière.
-
-### Y entrer
-
-**La VM tourne dans un pod, et ce pod n'est pas la porte d'entrée.** KubeVirt
-l'enveloppe dans `virt-launcher-was-lab-01-xxxxx` ; un `kubectl exec` sur ce pod
-vous dépose dans le conteneur virt-launcher, à côté du processus QEMU, pas dans
-le Rocky invité. Installation Manager est inatteignable par ce chemin.
-
-```bash
-# Sur un noeud k3s, /usr/local/bin/kubectl est un LIEN SYMBOLIQUE VERS k3s, et
-# ce wrapper lit /etc/rancher/k3s/k3s.yaml - possede par root, mode 0600 - sauf
-# si KUBECONFIG dit autre chose. Sans cette ligne, kubectl echoue sur une erreur
-# de permission qui ressemble a un cluster casse, la substitution ci-dessous
-# rend une chaine vide, et toutes les commandes suivantes tournent en silence
-# sur le noeud au lieu de la VM.
-export KUBECONFIG=$HOME/.kube/config
-
-kubectl -n was-lab get vmi,pod          # vmi was-lab-01 doit etre Running
-
-IP=$(kubectl -n was-lab get vmi was-lab-01 -o jsonpath='{.status.interfaces[0].ipAddress}')
-[ -n "$IP" ] || echo "pas d'adresse - ne rien lancer d'autre"
-ssh -i ~/.ssh/was_lab ansible@"$IP"
+```sh
+ansible-playbook -i inventories/aix \
+    ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml
 ```
 
-`virtctl` éviterait la recherche d'adresse, mais il **n'est pas installé sur ce
-nœud** — il n'y a que `kubectl` et `k3s`. `virtctl console` ne servirait de toute
-façon à rien : cloud-init pose `ssh_pwauth: false`, `disable_root: true` et aucun
-mot de passe. La clé est la seule entrée.
+1. le chemin existe et c'est un répertoire ;
+2. c'est un **point de montage** : `df -P` nomme le système de fichiers qui porte le chemin, et ce système de fichiers doit être monté sur le chemin lui-même. Un répertoire de `/` qui existe simplement passe un `stat` et ne contient rien, ou une copie périmée ;
+3. le système de fichiers est du type déclaré (`site_binaries_repository_type` : `nfs` accepte `nfs3`/`nfs4`), et en option le partage déclaré (`forge_binaries_check_source`) ;
+4. le compte de connexion peut le lire — sur NFS, l'échec habituel est le root squashing ou un uid différent entre serveur et client ;
+5. il porte les médias : `install_im/*.zip` et un `repository.config` sous `install_was90/`. Les fix packs sont comptés, pas exigés.
 
-Les pods de job AWX tournent dans le cluster, donc
-`was-lab-01.was-lab.svc.cluster.local` résout et c'est ce nom que l'inventaire
-emploie. Depuis le nœud lui-même, passer `-e ansible_host=$IP`.
+Les mêmes contrôles tournent dans `forge_preflight`. `forge_binaries_require_mount: false` accepte un répertoire rempli à la main.
 
-### Les médias, que rien ne télécharge
+## 16. Le serveur AIX : ServeurAIX
 
-Aucun des deux artefacts ne s'obtient sans un IBMid, donc les deux sont déposés
-à la main. Dans l'inventaire du lab les motifs sont **sur le contrôleur** et les
-rôles recopient les archives ; sur le parc le média arrive par un partage monté
-et les motifs restent vides.
+Un serveur AIX physique porte toute la cellule ND : un gestionnaire de déploiement et un nœud fédéré, sur la même LPAR. [`inventories/aix`](inventories/aix/hosts.yml) le déclare en trois entrées pointant vers le même `ansible_host`, pour les raisons données en section 17 :
 
-| Artefact | Motif côté contrôleur (`group_vars/was_lab.yml`) | Où il atterrit sur la VM |
+| Entrée | Groupe | Rôle |
 |---|---|---|
-| Installation Manager | `/mnt/binaries/IBM/install_im/*.zip` | `/mnt/binaries/IBM/install_im` |
-| WAS 9.0 for Developers | `/mnt/binaries/IBM/install_was90/*.zip` | `/mnt/binaries/IBM/install_was90` |
-| Fix packs | `/mnt/binaries/IBM/fixes/*.zip` | un répertoire de dépôt par archive |
+| `ServeurAIX` | `was_install` | La machine : Installation Manager, WAS, fix packs — une fois |
+| `ServeurAIX-dmgr` | `dmgr` | Le profil du gestionnaire de déploiement (base de ports 30000) |
+| `ServeurAIX-node` | `nodeagents` | Le nœud fédéré, son agent et le membre de cluster (base de ports 30100) |
 
-Chaque archive de fix pack est un dépôt Installation Manager à elle seule et
-elles ne doivent pas être décompressées l'une sur l'autre : deux
-`repository.config` dans un même répertoire et `imcl` lit celui qu'il trouve en
-premier. Sous AWX le contrôleur est le pod de job, donc ces chemins doivent être
-montés dans l'Execution Environment, sinon l'étape de dépôt ne trouve rien.
+Pas de groupe d'environnement, volontairement : le même serveur se construit sous n'importe quel environnement. Les plays qui agissent sur le gestionnaire de déploiement sont lancés avec `-e config_dmgr_hosts=dmgr`.
 
-L'installation de base Developers donne **9.0.0.0**. Le niveau 9.0.5.x vient du
-fix pack, qui est un job séparé — d'où `was_expected_version: "9.0.0.0"`.
+### Ce qu'il faut au serveur avant le premier run
 
-### Remplir le dépôt local depuis IBM
-
-Les zips 9.0.0.0 ne sont pas la seule entrée. Le dépôt composite ILAN en ligne
-sert le niveau **courant**, donc Packaging Utility peut recopier du 9.0.5.x
-directement dans le répertoire de média, après quoi la VM n'a plus jamais besoin
-d'Internet. [`ci/k3s/lab-mirror-was.sh`](ci/k3s/lab-mirror-was.sh) fait
-exactement cela, lancé depuis le nœud comme `make-lab-vm.sh` :
-
-```bash
-bash ci/k3s/lab-mirror-was.sh --check    # preconditions seules, ne change rien
-bash ci/k3s/lab-mirror-was.sh            # la totalite
-```
-
-Il vérifie `KUBECONFIG`, la phase du VMI, la clé, le sudo sans mot de passe, la
-version d'Installation Manager, l'espace libre et la sortie réseau **avant** de
-demander quoi que ce soit. Puis il demande une seule fois l'IBMid via
-`imcl -prompt` — le mécanisme qu'Installation Manager recommande lui-même quand
-il refuse un dépôt — ce qui écrit un coffre chiffré sur la VM. Aucune exécution
-ultérieure ne porte de secret, et le mot de passe n'apparaît ni dans une ligne
-de commande ni dans l'historique du shell.
-
-Cette invite interactive est la raison pour laquelle c'est un script et pas un
-playbook : elle exige un TTY, et un pod de job AWX n'en a pas.
-
-Deux choses à savoir. ILAN est la licence sous laquelle l'édition « for
-Developers » est livrée ; la table IBM ne comporte aucune entrée « Developers »,
-donc le composite est `V9WASILAN` et le dépôt individuel
-`com.ibm.websphere.ILAN.v90`. Et un miroir pris sur le dépôt en ligne est du
-**9.0.5.x, pas du 9.0.0.0** — `was_expected_version` doit donc suivre, sinon
-l'assertion finale du job échoue sur une installation parfaitement saine.
-
-### Installation Manager sur la VM
-
-Le rôle d'installation lance `imcl` avec `become`, donc c'est une installation
-**en mode administrateur** : le binaire appartient à root et `imcl` sous le
-compte de service échoue sur `CRIMC1018E ERROR: Administrator privileges are
-required`. Seul `version` passe sans privilèges. Tout le reste demande `sudo` :
-
-```bash
-IMCL=/app/binaries/InstallationManager/eclipse/tools/imcl
-
-$IMCL version                                       # le seul appel qui ne demande rien
-sudo $IMCL listInstalledPackages -long
-sudo $IMCL listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long
-sudo $IMCL -c                                       # mode console
-```
-
-Les données d'agent et le registre d'installation sont sous
-`/app/data/IM/agentdata`, pas sous `/var/ibm/InstallationManager`, parce que le
-rôle passe `-dataLocation`. Un seul montage porte donc toute l'installation.
-
-**Il n'y a aucun chemin par navigateur.** Installation Manager n'a pas
-d'interface web ; `IBMIM` exige un serveur X, et les URL de dépôt de service
-`ibm.com/software/repositorymanager/...` ne s'ouvrent pas davantage dans un
-navigateur — elles ne sont consommables que par Installation Manager. Un dépôt
-local *peut* en revanche être servi en HTTP par n'importe quel serveur web et
-donné à `imcl` sous la forme `http://hote/depot/repository.config` : c'est la
-seule place d'un navigateur dans ce tableau.
-
-La même interrogation sans ouvrir de shell, qui est aussi la façon dont AWX
-l'exécute :
-
-```bash
-ansible -i inventories/lab was_lab -m command \
-  -a "/app/binaries/InstallationManager/eclipse/tools/imcl \
-      listAvailablePackages -repositories /mnt/binaries/IBM/install_was90 -long"
-```
-
-L'offering id n'est jamais codé en dur. Les éditions ne diffèrent que par cet id
-— `com.ibm.websphere.ND.v90`, `.BASE.v90`, `.DEVELOPERS.v90` — et le devenir
-produit une erreur `imcl` qui ressemble à un problème de licence ; le rôle
-demande donc au dépôt ce qu'il contient.
-
-### Le workflow
-
-| Nœud | Playbook | Ce qu'il fait |
+| | D'où ça vient | Vérifié par |
 |---|---|---|
-| 1 | `lab_install_im.yml` | Installation Manager. Le job 2 ne part que si celui-ci réussit |
-| 2 | `lab_apply_fixpacks.yml` | passe 1 — amène Installation Manager au niveau que WAS exige |
-| 3 | `lab_install_was.yml` | WAS for Developers et le SDK, dans un seul appel `imcl` |
-| 4 | `lab_apply_fixpacks.yml` | passe 2 — corrige ce que le nœud 3 vient d'installer |
-| 5 | `lab_create_profiles.yml` | les profils — gestionnaire de déploiement, puis le nœud fédéré |
-| 6 | `traditional_cluster.yml` | le cluster |
-| 7 | `traditional_cluster_members.yml` | les serveurs d'application qu'il contient, vertical ou horizontal |
+| Python 3, `sudo`, `unzip`, `zipinfo` | AIX Toolbox for Open Source Software, sous `/opt/freeware`. `prereqs_os` installe les RPM avec le `dnf` de la Toolbox quand il est là | `forge_preflight` : les commandes doivent être dans le **`PATH` par défaut** d'une session non interactive — `ansible.builtin.unarchive` n'y cherche `unzip` et `zipinfo` que là. Ajouter `/opt/freeware/bin` au `PATH` dans `/etc/environment`, ou les lier dans `/usr/bin` |
+| `bos.adt.libm`, `bos.perf.perfstat`, `xlC.aix61.rte` | Médias d'installation AIX, `installp` | `lslpp -Lc`. `prereqs_os` refuse en les nommant ; il n'installe pas de filesets |
+| Le compte WAS (`wasadmin`) avec une clé SSH et `sudo` | L'administrateur système | la connexion elle-même |
+| Limites `nofiles`, `nproc` | `prereqs_os`, avec `chuser` — l'équivalent AIX de `/etc/security/limits.d` | `lsuser` ; seuls les attributs différents sont écrits |
+| `/app`, `/opt/exploit`, dimensionnés | Systèmes de fichiers JFS2 (`crfs`) | `forge_preflight` : espace libre par `df -Pk` |
+| Le partage des binaires sur `/mnt/binaries` | L'administrateur système | `binaries_mount_check.yml` |
 
-Les nœuds 6 et 7 sont deux job templates et non un seul parce que chacun est
-rejouable seul — voir la section 18. Sur le lab, ils se lancent avec
-`-e config_dmgr_hosts=dmgr`, cet inventaire ne déclarant aucun groupe
-d'environnement.
+`ansible_python_interpreter` vaut `/opt/freeware/bin/python3` (la découverte d'interpréteur n'y regarde pas), et les fichiers temporaires d'Ansible vont sous le home du compte, car `/tmp` est souvent petit sur AIX.
 
-Un seul job template, deux nœuds de workflow pour les fix packs. Cela ne
-fonctionne que parce que le rôle **découvre** ce qui est installé au lieu qu'on
-lui donne une liste : à la passe 1 seul Installation Manager est là, à la passe 2
-tout l'est. Ne trouver aucun dépôt de fix pack est un résultat normal — le job
-dit ce qu'il a trouvé, dit où déposer le média, et sort en vert.
+### Les environnements de la DSI : une famille et une instance
 
-Le nœud 3 vérifie `imcl` lui-même plutôt que de faire confiance au nœud 1 : un
-job template peut être lancé seul, et l'échec doit nommer ce qui manque plutôt
-que de mourir dans un appel shell.
+La DSI a quatre familles d'environnements — **DEV** (développement), **VAL** (validation), **PREPROD** et **PROD** — et chacune peut être déclinée par projet avec une instance sur deux chiffres : `DEV01`, `DEV02`, `VAL01`, `PREPROD01`… Elles sont déclarées comme **donnée du site** dans [`inventories/aix/group_vars/all/10_environment.yml`](inventories/aix/group_vars/all/10_environment.yml), jamais dans la collection :
+
+```yaml
+was_environment_families:
+  DEV:     {tier: non_prod, long_name: Developpement}
+  VAL:     {tier: non_prod, long_name: Validation}
+  PREPROD: {tier: non_prod, long_name: Preproduction}
+  PROD:    {tier: prod,     long_name: Production}
+was_environment_instance_pattern: "[0-9]{2}"
+```
+
+Quand des familles sont déclarées, le rôle `model` n'accepte un code que s'il est une famille, seule ou suivie d'une instance (`DEV`, `DEV01`, `VAL02`, `PROD`), et refuse le reste (`XYZ01`, `DEV1`). **La famille décide du palier** : seul PROD est en production — un run PROD exige toujours `model_allow_production` ou l'approbation du workflow — et un `was_environment_tier` qui contredit la famille est refusé, pas corrigé. Le libellé suit (`Developpement 01`). Un inventaire sans familles garde le comportement ouvert : tout code utilisable, palier en entrée. Les codes font jusqu'à dix caractères (`PREPROD01` en fait neuf).
+
+### Le construire à la main
+
+```sh
+COL=ansible_collections/wasevo/websphere/playbooks
+E="-i inventories/aix -e was_environment=<code>"     # a family, alone or with an instance
+
+ansible-playbook -i inventories/aix $COL/binaries_mount_check.yml
+ansible-playbook $E $COL/forge_preflight.yml -e forge_preflight_hosts=was_install -e forge_preflight_check_dirs=false
+ansible-playbook $E $COL/lab_install_im.yml
+ansible-playbook $E $COL/lab_apply_fixpacks.yml
+ansible-playbook $E $COL/lab_install_was.yml
+ansible-playbook $E $COL/lab_apply_fixpacks.yml
+ansible-playbook $E $COL/lab_create_profiles.yml -e profile_hosts=was_install -e was_topology=nd -e @admin.json
+ansible-playbook $E $COL/traditional_cluster.yml -e config_dmgr_hosts=dmgr -e @admin.json
+ansible-playbook $E $COL/traditional_cluster_members.yml -e config_dmgr_hosts=dmgr -e @admin.json
+ansible-playbook $E $COL/traditional_start.yml -e config_dmgr_hosts=dmgr -e @admin.json
+```
+
+`admin.json` contient `was_admin_user` et `was_admin_password`, en mode `0600`, hors du dépôt. L'installation de base vérifie **au moins** `was_expected_version`, donc un rejeu après le job de fix packs passe toujours. Rien ici n'utilise systemd : les processus sont démarrés par `traditional_start.yml` via les scripts du profil, et le test de vie est un `kill -0` POSIX, que `/bin/sh` (ksh) exécute aussi bien que bash.
 
 ## 17. Le nommage des objets WAS est une entrée, pas une convention
 
@@ -2485,19 +2100,19 @@ vivaient dans trois inventaires, écrits trois fois, avec le nom du cluster fig�
 sont trois occasions de divergence, et la divergence se manifeste par une
 cellule qui refuse de se fédérer.
 
-### Une machine, deux rôles : comment le lab déclare une cellule ND
+### Une machine, deux rôles : comment l'inventaire AIX déclare une cellule ND
 
 Une cellule ND, c'est un gestionnaire de déploiement plus au moins un nœud
-fédéré. Le lab possède une seule VM, donc les deux profils y atterrissent.
+fédéré. ServeurAIX est une seule machine, donc les deux profils y atterrissent.
 Ansible exprime « une machine qui joue deux rôles » avec **deux entrées
 d'inventaire** pointant vers le même `ansible_host` — pas avec une entrée dans
 deux groupes, qui est le raccourci évident et qui ne marche pas ici.
 
 | Entrée | Groupe | Ce qu'elle porte |
 |---|---|---|
-| `was-lab-01` | `was_lab` | l'installation — IM, WAS, les fix packs. Une seule fois : `imcl` prend un verrou |
-| `was-lab-01-dmgr` | `dmgr` | le profil du gestionnaire de déploiement |
-| `was-lab-01-node` | `nodeagents` | le profil managé — donc l'agent de nœud, et le membre de cluster, qui est le serveur d'application |
+| `ServeurAIX` | `was_install` | l'installation — IM, WAS, les fix packs. Une seule fois : `imcl` prend un verrou |
+| `ServeurAIX-dmgr` | `dmgr` | le profil du gestionnaire de déploiement |
+| `ServeurAIX-node` | `nodeagents` | le profil managé — donc l'agent de nœud, et le membre de cluster, qui est le serveur d'application |
 
 Pourquoi pas une entrée dans les deux groupes :
 
@@ -2521,13 +2136,13 @@ un nœud fédéré chercherait le port SOAP du dmgr 100 ports trop haut. Il ne
 reste de toute façon qu'un repli : `profile_dmgr` lit le profil créé et publie
 `was_dmgr_soap_port_actual`, que `profile_nodeagent` préfère.
 
-Où chaque nom est écrit, pour le lab :
+Où chaque nom est écrit, pour le serveur AIX :
 
 | Nom | Fichier |
 |---|---|
-| cellule, cluster | `inventories/lab/group_vars/all/30_naming.yml` — ils sont communs à la cellule |
-| profil et nœud du dmgr | `inventories/lab/group_vars/dmgr.yml` |
-| profil, nœud, membre de cluster | `inventories/lab/group_vars/nodeagents.yml` |
+| cellule, cluster | `inventories/aix/group_vars/all/30_naming.yml` — ils sont communs à la cellule |
+| profil et nœud du dmgr | `inventories/aix/group_vars/dmgr.yml` |
+| profil, nœud, membre de cluster | `inventories/aix/group_vars/nodeagents.yml` |
 
 Aucun code d'environnement n'y est écrit : `was_env_upper` et
 `was_channel_name` sont publiés par le rôle `model` d'après les réponses du
@@ -3363,165 +2978,44 @@ comme `{clé=valeur, ...}`, la façon dont wsadmin imprime des `Properties` Java
 
 ## 20. AWX
 
-AWX tourne dans k3s sur l'hôte Ubuntu, déployé par l'AWX Operator, en version
-figée. Voir [`ci/awx/README.md`](ci/awx/README.md).
-
-**Aucun `sudo`.** Le `~/.kube/config` du compte est lisible, donc toute
-l'installation passe par l'API Kubernetes ; Ansible lui-même est installé par
-utilisateur avec `pipx`.
-
-Deux pièges à la première installation, tous deux corrigés dans les manifests :
-
-- `gcr.io/kubebuilder/kube-rbac-proxy` a été **retiré par Google** — le dépôt a
-  disparu, pas seulement le tag — donc le pod de l'opérateur reste en
-  `ImagePullBackOff` d'origine. La kustomization le redirige vers
-  `quay.io/brancz/kube-rbac-proxy`, le domicile amont du composant.
-- Appliquer l'opérateur et la ressource `AWX` dans une seule kustomization est
-  une course : la CR est rejetée avec `no matches for kind AWX` avant que la CRD
-  ne soit établie. D'où l'application en deux étapes.
-
-`pipx install ansible` n'expose que `ansible-community` ; c'est `--include-deps`
-qui met `ansible-playbook` dans le `PATH`.
-
-Le mot de passe admin est généré par l'opérateur dans un Secret. Rien dans ce
-dépôt ne le porte.
-
-### Une cellule sur k3s : gestionnaire de déploiement et deux nœuds fédérés
-
-Un workflow AWX dédié, **WAS cell - deployment manager and two federated
-nodes**, construit une cellule à partir de rien sur le cluster k3s - rien
-n'est lancé à la main, et il s'arrête au cluster : pas de JDBC, pas de JMS,
-pas de changement de sécurité.
-
-| Job | Playbook | Ce qu'il fait |
-|---|---|---|
-| 0 | `cell_prerequisites.yml` | sur le nœud k3s : les droits des jobs plateforme sur le cluster, le mot de passe de l'administrateur WAS, les credentials AWX qui en découlent |
-| 1 | `cell_machines.yml` | trois machines virtuelles KubeVirt, par l'API Kubernetes depuis le pod du job |
-| 2 | `cell_media.yml` | le média Installation Manager et WAS, copié depuis la VM du lab |
-| 3 | `lab_install_im.yml` | Installation Manager sur chaque machine |
-| 4 | `lab_install_was.yml` | WAS sur chaque machine |
-| 5 | `lab_create_profiles.yml` | le gestionnaire de déploiement, démarré ; puis chaque nœud fédéré, un à la fois |
-| 6 | `traditional_cluster.yml` | le cluster |
-| 7 | `traditional_cluster_members.yml` | un serveur d'application par nœud - un cluster horizontal de deux |
-| 8 | `traditional_start.yml` | les agents de nœud et les membres démarrés ; ce qui tourne est laissé tel quel |
-| 9 | `cell_console.yml` | la console sur l'adresse du nœud, vérifiée par elle |
-
-Le formulaire est celui du workflow du lab : l'environnement (`poc`), le canal
-(`Extranet`), la topologie (`nd`). Ils font les noms - cellule `Extranet_POC`,
-cluster `ClusterEXT`, nœuds `<machine>Node`, membres
-`ClusterEXT_<machine>Node_01`. L'inventaire, `inventories/cell`, nomme les
-machines et rien d'autre.
-
-**La console** : `http://lab.example.com:30000/ibm/console`. Le port 30000 est un
-NodePort vers le `WC_adminhost` du gestionnaire de déploiement ; la connexion
-redirige ensuite vers HTTPS sur `WC_adminhost_secure`, publié sous son propre
-numéro (9043) sur la même adresse par le répartiteur de services du cluster.
-Les deux ports sont lus dans le profil, pas supposés.
-
-**Ce qui l'a rendu possible**, et resservira :
-
-- `roles/platform/kubevirt_vms` - une machine par hôte d'inventaire, son
-  disque importé une fois et jamais plus, un Service headless pour que chaque
-  port WAS de la machine soit joignable sous un nom DNS stable, la clé du
-  credential machine d'AWX installée par cloud-init. La machine résout son
-  propre nom vers sa propre interface - derrière le masquerade de KubeVirt,
-  l'adresse du pod ne lui est pas locale.
-- `roles/platform/cell_media` - le dépôt WAS vient d'IBM derrière un IBMid ;
-  la VM du lab le détient, donc la cellule le copie depuis elle par un serveur
-  HTTP éphémère au lieu de redemander l'IBMid.
-- `roles/traditional/server_start` - démarre le gestionnaire de déploiement,
-  les agents de nœud et les membres dont le pid n'est pas vivant, et rien
-  d'autre. Le rôle du profil du gestionnaire de déploiement le démarre
-  désormais : un nœud ne peut pas se fédérer sinon, et rien ne le démarrait.
-- Les rôles de profil prennent les ports par défaut du produit quand
-  l'inventaire ne donne pas de port de base (`defaultPorts=true`) : un profil
-  par machine n'a besoin de rien d'autre.
-
-**Les prérequis sont un job aussi.** Le job 0 tourne sur le nœud k3s en
-tant que son administrateur (`roles/platform/cell_prerequisites`) : il donne
-aux jobs plateforme un ServiceAccount, `awx/awx-cell-platform` - créer, lire
-et modifier namespaces, machines virtuelles, disques, Secrets et Services, pas
-de suppression ; il génère une fois le mot de passe de l'administrateur WAS,
-l'utilisateur `wasadmin`, dans le Secret `awx/was-cell-admin` ; et il crée les
-credentials AWX « k3s API - cell platform » et « WAS cell administrator » et
-les attache aux jobs 1 à 9. Rien de tout cela n'est dans le dépôt :
+AWX est **hébergé ailleurs** — ce dépôt ne l'installe plus, et rien n'y demande Kubernetes. Les scripts de [`ci/awx/`](ci/awx/README.md) déclarent ce que contient AWX par son API, depuis n'importe quel hôte qui le joint :
 
 ```sh
-kubectl -n awx get secret was-cell-admin -o jsonpath='{.data.password}' | base64 -d
+export AWX_API=https://<awx>/api/v2
+export AWX_TOKEN_FILE=~/.awx-token        # optionnel : un jeton d'accès personnel
+
+bash ci/awx/apply-cell-workflow.sh        # inventaire "WAS AIX", templates 0-8, le workflow, le survey
+bash ci/awx/apply-templates.sh            # les templates de configuration 9-23, ajoutés à sa suite
 ```
 
-`ci/awx/apply-cell-workflow.sh` déclare l'inventaire, les templates et le
-workflow - de la configuration seulement, ni secret ni droit sur le cluster.
-Le job 0 se connecte au nœud avec un credential machine AWX, **k3s node
-administrator** : la seule chose faite à la main, dans AWX, parce qu'il
-contient la clé du nœud.
+**Authentification.** Un jeton d'accès personnel (AWX : Utilisateur > Tokens), dans un fichier désigné par `AWX_TOKEN_FILE`, est préférable : révocable, limité en portée, aucun mot de passe saisi. Il est envoyé en `Authorization: Bearer` depuis un fichier d'en-tête `0600`. Sans lui, le mot de passe de `AWX_USER` (`admin` par défaut) est saisi à l'invite et écrit dans un netrc `0600`. Dans les deux cas le secret n'atteint jamais une ligne de commande, et le répertoire temporaire est créé par `tempfile.mkdtemp` de Python et supprimé à la sortie.
+
+**Réseau.** Chaque appel est `curl -sS -k --noproxy '*'` : AWX est joint en direct — à travers le proxy HTTP du site, l'API répond **504 Gateway Timeout** — et son certificat, en général émis par une autorité interne, est accepté sans vérification. Renseigner `AWX_CA_FILE` avec le certificat de cette autorité pour le vérifier au lieu de `-k`.
+
+### Le workflow : une cellule sur ServeurAIX
+
+« WAS AIX - cell on ServeurAIX », sur l'inventaire « WAS AIX » alimenté par `inventories/aix/hosts.yml` :
+
+| Nœud | Playbook | |
+|---|---|---|
+| 0. Point de montage des binaires | `binaries_mount_check.yml` | Arrête le workflow avant tout dépaquetage si le partage n'est pas là |
+| 1. Installation Manager | `lab_install_im.yml` | avec `prereqs_os` d'abord |
+| 2. Fix packs : Installation Manager | `lab_apply_fixpacks.yml` | monte IM au niveau dont WAS a besoin |
+| 3. WAS | `lab_install_was.yml` | |
+| 4. Fix packs : WAS | `lab_apply_fixpacks.yml` | le même playbook, un second template |
+| 5. Profils | `lab_create_profiles.yml` | gestionnaire de déploiement, puis nœud fédéré |
+| 6. Cluster · 7. Membres · 8. Démarrage | | `config_dmgr_hosts: dmgr` |
+| 9 – 23 | J2C, JDBC, bibliothèques partagées, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, sécurité, policy sets, cache dynamique, logging, PMI | par `apply-templates.sh` |
+
+Créés à la main dans AWX, une fois : la credential machine « ServeurAIX (ansible) » (la clé SSH du compte WAS) et une credential du type « WAS administrative user », que `apply-templates.sh` crée. Tant qu'elle n'existe pas, les templates qui en ont besoin la demandent au lancement.
 
 ### Ce que contient AWX est déclaré, pas cliqué
 
-[`ci/awx/apply-templates.sh`](ci/awx/apply-templates.sh) crée les job templates
-qui construisent une cellule et les chaîne dans le workflow dans l'ordre ; il
-est rejouable, trouvant chaque objet par son nom et le corrigeant. Un job
-template est de la configuration — quel playbook, quel inventaire, quelle
-credential, si `Job type` est sélectionnable — et le cliquer signifie que
-personne ne peut dire ce qu'AWX est censé contenir. C'est ainsi que trois
-templates existaient et que les trois qui construisent une cellule manquaient.
+Les scripts sont rejouables : chaque objet est retrouvé par son nom et mis à jour. Un job template est de la configuration — quel playbook, quel inventaire, quelle credential, si le `Job type` est sélectionnable — et le cliquer, c'est ne plus pouvoir dire ce qu'AWX est censé contenir.
 
-Il déclare aussi le type de credential de l'administrateur WAS, pour que
-`was_admin_user` et `was_admin_password` arrivent au playbook en extra vars
-injectées — chiffrées au repos, masquées en sortie — au lieu de figurer en
-clair dans les `extra_vars` d'un template. Il ne crée aucune credential : un
-mot de passe ne vient pas d'un dépôt.
+L'administrateur WAS atteint un playbook par un **type de credential** qui injecte `was_admin_user` et `was_admin_password` en extra vars — chiffrés au repos, masqués dans la sortie — jamais par les `extra_vars` d'un template en clair. Aucun script ne crée de credential : un mot de passe ne vient pas d'un dépôt.
 
-**AWX valide `playbook` contre la dernière mise à jour réussie du projet**, et
-non contre le dépôt ; le script met donc le projet à jour et l'attend avant de
-nommer un playbook. Un playbook poussé depuis cette mise à jour est sinon
-refusé par `Playbook not found for project.`, qui ressemble à une faute de
-chemin et n'en est pas une.
-
-### Résolu : AWX exécute les jobs sur ce Kubernetes, en 24.6.1
-
-> **Il n'y a rien vers quoi monter, et rien ne l'exigeait.** Le 31 octobre
-> 2026, la mise à jour d'inventaire 49 et la commande ad hoc 52 (`ping` sur
-> les trois hôtes du lab) ont réussi sur AWX 24.6.1, receptor 1.4.8,
-> Kubernetes v1.37.0+k3s1.
->
-> Une note précédente accusait l'attache **SPDY** de receptor et réclamait une
-> montée de version d'AWX. Les deux moitiés étaient fausses, et ont été
-> vérifiées :
->
-> - ce cluster sert encore SPDY : `kubectl exec` et `kubectl attach -i` avec
->   `KUBECTL_REMOTE_COMMAND_WEBSOCKETS=false` fonctionnent, l'attache portant
->   bien stdin jusqu'au pod ;
-> - aucune montée n'existe : awx-operator 2.19.1 (AWX 24.6.1) reste la
->   dernière version, et tous les receptor jusqu'à 1.6.9, comme sa branche
->   `devel`, s'attachent encore par `NewSPDYExecutor` ;
-> - le rôle des jobs accorde déjà `pods/attach: create`, que l'attache en
->   WebSocket exige.
->
-> **La cause des échecs d'octobre, trouvée le 31 octobre**
-> (`EOF for pod awx/automation-job-NN-...`, puis `Failed to JSON parse a line
-> from worker stream ... b''` côté AWX) : le nœud avait épuisé ses
-> **instances inotify**. Le pod du job tourne et sort en 0, mais receptor suit
-> sa sortie par `pods/log?follow=true`, et le kubelet répond à cette requête
-> par `failed to create fsnotify watcher: too many open files` puis la ferme -
-> receptor lit EOF et AWX marque le job en erreur. La limite,
-> `fs.inotify.max_user_instances`, vaut 128 par défaut ; KubeVirt, AWX et
-> chaque pod y puisent, donc les jobs marchent ou échouent selon ce qui tourne
-> à côté.
->
-> Pour le voir : `kubectl logs -f <n'importe quel pod>` rend la main tout de
-> suite au lieu de suivre, et affiche cette ligne. Le correctif, sur le nœud,
-> en root - immédiat et conservé au redémarrage :
->
-> ```sh
-> sudo tee /etc/sysctl.d/90-inotify.conf <<'END'
-> fs.inotify.max_user_instances = 8192
-> fs.inotify.max_user_watches = 524288
-> END
-> sudo sysctl --system
-> ```
->
-> AWX reste épinglé.
+**AWX valide `playbook` contre la dernière mise à jour réussie du projet**, pas contre le dépôt : les scripts mettent donc le projet à jour et attendent avant de nommer un playbook. Sinon, un playbook poussé depuis cette mise à jour est refusé avec `Playbook not found for project.`, qui ressemble à une faute de chemin et n'en est pas une.
 
 ## 21. Sources
 
@@ -3553,7 +3047,7 @@ Copyright 2026 CGA. Sous [licence Apache, version 2.0](LICENSE) ; l'attribution 
 
 - Tout le dépôt est sous cette licence : la collection `wasevo.websphere`, ses rôles, modules et plugins, les inventaires, la CI et la documentation.
 - La collection porte sa propre copie de `LICENSE` et `NOTICE`, si bien qu'une archive construite par `ansible-galaxy collection build` reste sous licence une fois sortie du dépôt. `galaxy.yml` et le `meta/main.yml` de chaque rôle déclarent `Apache-2.0`, et chaque plugin commence par l'en-tête de licence.
-- La licence couvre cette automatisation, **pas les produits IBM qu'elle installe**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager et l'IBM SDK restent sous les conditions d'IBM — pour l'édition « for Developers », l'ILAN (section 16). Rien de ce qu'IBM livre n'est redistribué ici : les playbooks récupèrent les médias depuis un dépôt fourni par l'exploitant.
+- La licence couvre cette automatisation, **pas les produits IBM qu'elle installe**. WebSphere Application Server, Liberty, IBM HTTP Server, Installation Manager et l'IBM SDK restent sous les conditions d'IBM — pour l'édition « for Developers », l'ILAN. Rien de ce qu'IBM livre n'est redistribué ici : les playbooks récupèrent les médias depuis un dépôt fourni par l'exploitant.
 
 ## 23. Certificats : inventaire, renouvellement et portail
 
@@ -3566,7 +3060,7 @@ par AWX : la page ne détient ni identifiant ni donnée propre.
 |---|---|---|
 | `traditional_certificates.yml` | `traditional.certificates` | Lecture seule. Chaque keystore de la cellule, chaque certificat personnel et signataire, son échéance, ce qui l'utilise et comment il se renouvelle. Publié en artefacts de job AWX sous `wasevo_certificates.cells.<cellule>`. |
 | `traditional_certificate_renewal.yml` | `traditional.certificate_renewal` | Renouvelle UN certificat, nommé par la variable `certificate_renewal`, puis refait l'inventaire de la cellule. |
-| `platform_certificate_portal.yml` | `platform.certificate_portal` | La page, sur le nœud k3s : une ConfigMap, un nginx non privilégié et un Ingress pour `/wasevo/certificates` sur l'hôte même d'AWX. |
+| `platform_certificate_portal.yml` | `platform.certificate_portal` | La page, sur le serveur web placé devant AWX : des fichiers statiques copiés dans un répertoire servi à `/wasevo/certificates` sur l'hôte même d'AWX, et le bloc location nginx ou httpd à inclure une fois. |
 
 **Le renouvellement suit l'émetteur**, la page ne propose donc que le possible :
 
@@ -3594,8 +3088,8 @@ chaque cellule le rapport réussi le plus récent.
 AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" \
     bash ci/awx/apply-certificates.sh
 
-# une fois par AWX : le template du portail, sur l'inventaire du noeud k3s
-AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS cell lab" \
+# une fois par AWX : le template du portail, sur l'inventaire qui porte le groupe awx_web
+AWX_ORGANIZATION=Default AWX_PORTAL_INVENTORY="WAS AIX" \
     bash ci/awx/apply-certificates.sh
 ```
 
@@ -3611,3 +3105,68 @@ renouvelle par chaque méthode et rejoue jusqu'à `changed=false`, et
 `ci/portal-tests.js` vérifie ce que la page décide - le statut du jour, le
 rapport le plus récent par cellule, les actions par émetteur et les variables
 d'un lancement.
+
+## 24. Applications : déploiement et décommissionnement
+
+Un rôle, [`traditional/application`](ansible_collections/wasevo/websphere/roles/traditional/application/defaults/main.yml), déploie un EAR, un WAR ou un JAR EJB sur un cluster ou sur un serveur d'application **avec les ressources WebSphere dont il a besoin**, et le décommissionne **avec elles**.
+
+### Le catalogue
+
+Chaque application est déclarée une fois — dans l'inventaire ([`inventories/aix/group_vars/all/70_applications.yml`](inventories/aix/group_vars/all/70_applications.yml)) — avec ce qu'il lui faut dans la cellule. Un run agit sur l'une d'elles, nommée par `application_name` (la réponse du survey AWX).
+
+```yaml
+was_applications:
+  - name: OrdersApp
+    archive: orders/OrdersApp-1.4.2.ear       # sous application_binaries_dir
+    target: cluster                           # ou {type: server, node: N, server: S}
+    shared_libraries: [ordersCommonLibrary]   # liée à chaque module
+    resources:
+      variables:        [{name: ORDERS_HOME, value: /app/data/orders}]
+      j2c_aliases:      [{name: ordersDbAlias, user: orders, password_env: ORDERS_DB_PASSWORD}]
+      datasources:      [{name: ordersDS, jndi_name: jdbc/orders, vendor: db2_luw, ...}]
+      shared_libraries: [{name: ordersCommonLibrary, dir: /mnt/binaries/applications/orders/lib}]
+      jms:              {queues: [{name: OrdersQueue, jndi_name: jms/orders, ...}]}
+```
+
+Chaque famille de ressources a la forme de son propre rôle, parce qu'elle **est confiée à ce rôle** — `j2c_alias`, `jdbc`, `shared_library`, `jms` ; les variables WebSphere passent par le nouveau module `was_variable`. Rien n'est réimplémenté.
+
+### D'où viennent les archives
+
+D'un **point de montage** aujourd'hui : `application_binaries_dir` (`/mnt/binaries/applications`), lu sur le gestionnaire de déploiement, là où wsadmin tourne. Le rôle refuse un répertoire qui n'est pas sur un partage monté (`application_require_mount`). Le **dépôt d'artefacts** (Nexus, Artifactory) est préparé et laissé **en commentaire** dans [`tasks/archive.yml`](ansible_collections/wasevo/websphere/roles/traditional/application/tasks/archive.yml) : téléchargement sur le gestionnaire de déploiement, vérifié contre l'empreinte publiée par le dépôt ; basculer, c'est décommenter.
+
+### Déploiement
+
+```sh
+ansible-playbook -i inventories/aix ansible_collections/wasevo/websphere/playbooks/traditional_application_deploy.yml \
+    -e was_environment=<code> -e config_dmgr_hosts=dmgr -e application_name=OrdersApp -e @admin.json
+```
+
+1. l'archive trouvée sur le partage ;
+2. les ressources créées, par leurs rôles : variables, alias J2C, bibliothèques partagées, datasources, JMS ;
+3. l'application — module `was_application`, une session wsadmin : installée avec `-cluster` ou `-node/-server`, `-MapWebModToVH`, `-MapSharedLibForMod`, `-contextroot` pour un WAR ; les nœuds synchronisés ; démarrée sur chaque membre actif dès qu'`AdminApp.isAppReady` le permet.
+
+**Une mise à jour, c'est désinstaller puis réinstaller** — le choix du site. L'application est réinstallée quand **aucune archive conservée par la cellule** sous `applications/<nom>.ear/` dans son référentiel de configuration ne porte l'empreinte de l'archive déclarée, ou quand sa cible a changé. Même archive, même cible : `changed=0`. `application_force_reinstall` force la réinstallation.
+
+### Décommissionnement : un workflow AWX
+
+[`ci/awx/apply-application-workflows.sh`](ci/awx/apply-application-workflows.sh) déclare « WAS AIX - Application: decommission », un nœud par étape — le même playbook, [`traditional_application_decommission.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_application_decommission.yml), avec `application_step` fixé par template :
+
+| Nœud | Étape | |
+|---|---|---|
+| 0 | `plan` | Ce qui part, ce qui reste et **pourquoi** ; transmis aux nœuds suivants par `set_stats` |
+| — | **approbation** | Une personne lit le plan et approuve. Rien n'est supprimé avant |
+| 1 | `uninstall` | Arrêtée sur ses membres, désinstallée |
+| 2 – 6 | `jms`, `jdbc`, `j2c`, `libraries`, `variables` | Ce qui écoute avant ce qu'il écoute ; les datasources avant les alias qu'elles présentent |
+| 7 | `cluster` | **Seulement si demandé** (survey) et si aucune autre application n'y est mappée |
+| 8 | agent de nœud | [`traditional_application_remove_node.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_application_remove_node.yml), sur l'hôte du nœud — **seulement si demandé**, le cluster supprimé, et si le nœud **ne porte plus aucun serveur d'application ni aucune ressource** |
+
+**Une ressource déclarée est conservée** quand une autre application du catalogue la déclare aussi, quand une autre application *installée* y est liée dans la cellule (son nom JNDI, sa bibliothèque — lu par le nouveau `was_application_refs_info`), ou, pour un alias J2C, quand une datasource ou une fabrique de connexions qui reste le présente encore.
+
+**Le nœud n'est supprimé** que si, une fois les membres du cluster partis, il ne porte plus aucun serveur d'application — en cluster ou isolé —, aucune application mappée sur l'un de ses serveurs, et aucune ressource à la portée du nœud ou d'un serveur qui reste (JDBC, JMS, bibliothèques, adaptateurs de ressources…). Alors `removeNode.sh` est lancé depuis le profil du nœud ; il arrête l'agent de nœud et sort le nœud de la cellule. Ses identifiants passent par `soap.client.props` le temps de la commande seulement — jamais sur une ligne de commande — et le fichier d'origine est toujours remis en place. `application_decommission_delete_profile` supprime ensuite le profil.
+
+En ligne de commande, `application_step: all` (le défaut) enchaîne les étapes 0 à 7 ; lancer d'abord `-e application_step=plan` pour lire le plan.
+
+### Testé
+
+`ci/run-stub-tests.sh` exerce les trois nouveaux handlers contre la fausse cellule — variables, installation, rejeu, réinstallation sur archive modifiée (arrêtée puis redémarrée sur chaque membre), références des autres applications, désinstallation — et la fausse cellule refuse une installation sur un nom déjà installé, un cluster ou une bibliothèque absents.
+

@@ -1,4 +1,4 @@
-# Suivi du travail — état au 15 novembre 2026
+# Suivi du travail — état au 17 novembre 2026
 
 Note de reprise **publique** : elle est publiée sur GitHub pour pouvoir reprendre
 depuis un autre poste. Elle ne contient aucune adresse, aucun nom de machine et
@@ -8,7 +8,25 @@ aucun identifiant ; ceux-là restent dans les notes privées du dépôt GitLab.
 
 ## 1. Où on en est
 
-**Dernière fonctionnalité livrée : la gestion des certificats** — README
+**Dernière transformation : plus de Kubernetes, un serveur AIX physique.**
+k3s, KubeVirt, l'installation d'AWX sur k3s et la simulation CI sur k3s sont
+retirés. La cellule ND entière tourne sur **un serveur AIX physique** (`inventories/aix`) ;
+AWX est hébergé ailleurs et piloté par les scripts `ci/awx` (jeton ou mot de
+passe, `curl -sS -k --noproxy '*'`). La CI est en trois étapes :
+**validation** (statique + point de montage des binaires + preflight AIX),
+**build** (IM, WAS, fix packs, rejoués à `changed=0`), **deploy** (manuel :
+profils, cluster, membres, démarrage, rejoués). README sections 15, 16, 20.
+
+Livrés avec : le **déploiement et le décommissionnement d'application**
+(rôle `traditional/application`, workflow AWX avec approbation, README section
+24) et les **familles d'environnements** de la DSI — une famille, seule ou
+avec une instance sur deux chiffres, qui décide du palier (README section 16).
+
+À vérifier sur le vrai serveur : les filesets AIX attendus, la présence de
+`unzip`/`zipinfo` dans le `PATH` par défaut, la sortie de `lslpp -Lc` et de
+`mount` sur ce niveau d'AIX, et les variables CI/CD (section 15).
+
+Précédemment : **Dernière fonctionnalité livrée : la gestion des certificats** — README
 section 23 (anglais et français). Commits *Certificates: inventory, renewal by
 issuer and a portal on AWX's host* puis *Lint stage green again*.
 
@@ -33,11 +51,9 @@ Choix validés pour les certificats :
   font l'isolation ;
 - échéance affichée : **3 mois** (90 jours), critique sous 30 jours.
 
-**CI** : le stage lint était rouge depuis plusieurs commits (validate et simulate
-sautés). Corrigé : yamllint, syntax, model-matrix, pilot-render, stub-unit,
-portal-unit et sim:deploy sont verts. Les simulations suivantes (preflight,
-configure, profiles, members, isolation) tournaient encore au moment de cette
-note : **relire le pipeline en premier**.
+**CI** : la simulation k3s est remplacée par validation / build / deploy sur le
+serveur AIX. yamllint, les 41 syntax-checks et les tests stub passent en local ; **le premier
+pipeline sur le vrai serveur reste à lire en premier**.
 
 ---
 
@@ -52,8 +68,14 @@ note : **relire le pipeline en premier**.
    la locale de la JVM. Le handler lit les trois formes connues (noms de mois,
    numérique US, ISO) ; une date illisible ressort en statut `unknown` — si le
    portail en montre, il faut ajouter la forme rencontrée.
-3. **Prochaine fonctionnalité prévue** : le **déploiement d'application**, avec
-   les attachements de policy sets. MicroProfile vient en phase 2 (Liberty).
+3. **Applications sur une vraie cellule** (README section 24) : déployer une
+   petite application déclarée dans `was_applications`, la rejouer
+   (`changed=0`), puis la décommissionner par le workflow AWX. À vérifier sur
+   WAS réel : les libellés de `AdminApp.view` (cibles, bibliothèques, JNDI),
+   l'emplacement de l'archive d'un WAR dans `applications/<nom>.ear/`, et
+   `removeNode.sh` avec les identifiants posés le temps de la commande dans
+   `soap.client.props`. Reste à faire ensuite : les attachements de policy sets
+   au déploiement. MicroProfile vient en phase 2 (Liberty).
 4. `WAS-Evolution.code-workspace` a un reformatage local non commité, sans
    rapport avec le reste — à jeter ou à commiter à part.
 
@@ -70,7 +92,8 @@ note : **relire le pipeline en premier**.
 - **Un rôle = un playbook = un job template AWX**, rejouable seul (une session
   wsadmin, pas toute la chaîne). Les **8 familles d'API** cataloguent les rôles
   (README section 19) : on regroupe par playbook, on ne fusionne jamais.
-- **La CI simule, elle ne déploie jamais.**
+- **La CI valide, construit, puis déploie sur le serveur AIX** — le deploy est
+  manuel, sur la branche par défaut seulement.
 - **Chaque fonctionnalité** : README dans les **deux langues**, puis commit et
   push avec un message qui la nomme.
 
@@ -104,7 +127,7 @@ Conséquences :
   normale (le dernier push forcé, pour le changement d'adresse d'auteur, est
   fait).
 
-Tests sans cluster, sur n'importe quel poste avec Python 3 et Node :
+Tests sans serveur, sur n'importe quel poste avec Python 3 et Node :
 
 ```sh
 PYTHON=python bash ci/run-stub-tests.sh     # ALL CHECKS PASSED attendu

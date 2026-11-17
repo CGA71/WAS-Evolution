@@ -1,7 +1,7 @@
 ---
 # J2C authentication aliases, and nothing else.
 #
-#   ansible-playbook -i inventories/lab <this> \
+#   ansible-playbook -i inventories/aix <this> \
 #       -e was_environment=<code> -e config_dmgr_hosts=dmgr
 #
 #   ansible-playbook -i inventories/was <this> -e was_environment=RA

@@ -1,7 +1,7 @@
 ---
 # Job 1 of the install workflow: IBM Installation Manager.
 #
-#   ansible-playbook -i inventories/lab \
+#   ansible-playbook -i inventories/aix \
 #       ansible_collections/wasevo/websphere/playbooks/lab_install_im.yml
 #
 # In AWX this is "WAS lab - 1. Install IBM Installation Manager", and the
@@ -10,7 +10,7 @@
 # a half-installed Installation Manager is worse than none.
 
 - name: Install IBM Installation Manager
-  hosts: "{{ lab_hosts | default('was_lab') }}"
+  hosts: "{{ lab_hosts | default('was_install') }}"
   gather_facts: true
 
   pre_tasks:

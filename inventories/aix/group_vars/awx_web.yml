@@ -1,0 +1,16 @@
+---
+# The web front of AWX, for the certificate portal only.
+#
+# The AWX API URL decides the host name the portal is served on - the same
+# origin as AWX, so the browser sends the viewer's AWX session. A placeholder:
+# use the URL of the AWX this site runs.
+awx_api_url: https://awx.example.internal/api/v2/
+
+# Which web server fronts it (nginx or httpd), and the directory it serves at
+# /wasevo/certificates/. See roles/platform/certificate_portal/defaults/main.yml.
+certportal_web_server: nginx
+certportal_web_root: /var/www/wasevo/certificates
+
+# Not the WAS account: this is another machine.
+ansible_user: "{{ awx_web_user | default('ansible') }}"
+ansible_python_interpreter: auto_silent

@@ -43,38 +43,45 @@
 # Packages
 # ---------------------------------------------------------------------------
 
-- name: Install the required packages
-  ansible.builtin.package:
-    name: "{{ forge_os_packages[ansible_facts.os_family] }}"
-    state: present
-  become: true
-  register: prereqs_packages
-  # One retry: a cloud image often races its first repository refresh, and a
-  # transient mirror failure should not fail a whole workflow node.
-  retries: 2
-  delay: 10
-  until: prereqs_packages is succeeded
+- name: Linux packages
+  when: ansible_facts.os_family != 'AIX'
   tags: [prereqs, packages]
+  block:
 
-- name: Read the package facts back
-  ansible.builtin.package_facts:
-    manager: auto
-  check_mode: false
-  tags: [prereqs, packages]
+    - name: Install the required packages
+      ansible.builtin.package:
+        name: "{{ forge_os_packages[ansible_facts.os_family] }}"
+        state: present
+      become: true
+      register: prereqs_packages
+      # One retry: a transient mirror failure should not fail a whole workflow
+      # node.
+      retries: 2
+      delay: 10
+      until: prereqs_packages is succeeded
 
-- name: Report any package still missing
-  ansible.builtin.assert:
-    that:
-      - item in ansible_facts.packages
-    fail_msg: >-
-      {{ item }} is still not installed after the package task reported
-      success. That usually means the name is wrong for this distribution -
-      python3-libdnf5, for instance, exists on dnf5 systems and not on
-      Rocky 9, and one bad name fails the whole transaction.
-  loop: "{{ forge_os_packages[ansible_facts.os_family] }}"
-  loop_control:
-    label: "{{ item }}"
-  tags: [prereqs, packages]
+    - name: Read the package facts back
+      ansible.builtin.package_facts:
+        manager: auto
+      check_mode: false
+
+    - name: Report any package still missing
+      ansible.builtin.assert:
+        that:
+          - item in ansible_facts.packages
+        fail_msg: >-
+          {{ item }} is still not installed after the package task reported
+          success. That usually means the name is wrong for this distribution -
+          python3-libdnf5, for instance, exists on dnf5 systems and not on
+          Rocky 9, and one bad name fails the whole transaction.
+      loop: "{{ forge_os_packages[ansible_facts.os_family] }}"
+      loop_control:
+        label: "{{ item }}"
+
+- name: AIX filesets and AIX Toolbox commands
+  ansible.builtin.include_tasks: aix.yml
+  when: ansible_facts.os_family == 'AIX'
+  tags: [prereqs, packages, limits]
 
 # ---------------------------------------------------------------------------
 # Limits
@@ -82,7 +89,8 @@
 
 - name: Set the shell limits WAS needs
   # Declared as data rather than as a file, so AIX can be given its own values
-  # instead of silently inheriting the Linux ones.
+  # instead of silently inheriting the Linux ones - tasks/aix.yml sets them
+  # with chuser.
   community.general.pam_limits:
     domain: "{{ item.domain }}"
     limit_type: "{{ item.type }}"
@@ -116,6 +124,8 @@
     msg:
       - "host     : {{ inventory_hostname }} ({{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }})"
       - "packages : {{ forge_os_packages[ansible_facts.os_family] | join(', ') }}"
-      - "limits   : {{ forge_limits | length }} entries in /etc/security/limits.d/90-was.conf"
+      - "limits   : {{ forge_limits | length }} entries in
+         {{ '/etc/security/limits (chuser)' if ansible_facts.os_family == 'AIX'
+            else '/etc/security/limits.d/90-was.conf' }}"
       - "changed  : {{ prereqs_packages.changed | default(false) }}"
   tags: [prereqs]

@@ -1,0 +1,27 @@
+---
+# Site facts for the AIX server.
+#
+# THE BINARIES SHARE. The IBM media - the Installation Manager archive, the WAS
+# repository, the fix packs - lives on a share mounted on ServeurAIX at
+# was_install_binaries_base_dir (group_vars/all/20_paths.yml). Mounting it is
+# the system administrator's job, not this collection's: forge_preflight and
+# binaries_mount_check.yml only VERIFY that it is mounted, of the declared
+# type, readable, and that it carries the media. Credentials for the share
+# never appear here.
+#
+# Replace the export below with the site's own. It is only reported, and
+# compared with the mount when binaries_mount_check_source is true.
+site_binaries_repository: "nfsserver:/export/binaries"
+# nfs, cifs, jfs2 (a local filesystem), or none to skip the type check.
+site_binaries_repository_type: nfs
+
+site_dns_domain: example.internal
+site_timezone: Europe/Paris
+
+# The AIX account that owns the installation and runs the processes, and the
+# one Ansible connects as. It needs sudo (AIX Toolbox) for the tasks that
+# become root - Installation Manager's administrator install, the directory
+# layout, the user limits.
+site_was_user: wasadmin
+site_was_group: wasadmin
+site_jython_dirname: jython-ansible
