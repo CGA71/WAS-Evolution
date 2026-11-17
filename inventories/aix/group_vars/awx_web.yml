@@ -14,3 +14,11 @@ certportal_web_root: /var/www/wasevo/certificates
 # Not the WAS account: this is another machine.
 ansible_user: "{{ awx_web_user | default('ansible') }}"
 ansible_python_interpreter: auto_silent
+
+# The application portal, beside it on the same web front: served at
+# /wasevo/applications/. The workflow names are the ones
+# ci/awx/apply-application-workflows.sh creates.
+appportal_web_server: nginx
+appportal_web_root: /var/www/wasevo/applications
+appportal_deploy_workflow: "WAS AIX - Application: deploy"
+appportal_decommission_workflow: "WAS AIX - Application: decommission"

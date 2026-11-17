@@ -1,0 +1,73 @@
+---
+# On the web host that fronts AWX's host name. Static files only: no process of
+# its own, nothing to restart - a replay with the same page changes nothing.
+
+- name: AWX must be declared - the page is served on its host
+  ansible.builtin.assert:
+    that:
+      - appportal_awx_api | length > 0
+      - appportal_awx_api | urlsplit('hostname') | default('', true) | length > 0
+    fail_msg: >-
+      appportal_awx_api is empty or has no host name. It is the AWX API URL,
+      from the inventory (awx_api_url), and the portal must be served on
+      the same host for the browser to send the viewer's AWX session.
+    success_msg: "portal at {{ _appportal_url }}"
+
+- name: The page's directory
+  ansible.builtin.file:
+    path: "{{ appportal_web_root }}"
+    state: directory
+    owner: "{{ appportal_web_owner }}"
+    group: "{{ appportal_web_group }}"
+    mode: "0755"
+  become: "{{ appportal_become }}"
+
+- name: The page
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ appportal_web_root }}/{{ item.key }}"
+    owner: "{{ appportal_web_owner }}"
+    group: "{{ appportal_web_group }}"
+    mode: "0644"
+  loop: "{{ _appportal_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  become: "{{ appportal_become }}"
+
+- name: The web server's location block, beside the page
+  ansible.builtin.template:
+    src: "location.{{ appportal_web_server }}.conf.j2"
+    dest: "{{ appportal_web_snippet }}"
+    owner: "{{ appportal_web_owner }}"
+    group: "{{ appportal_web_group }}"
+    mode: "0644"
+  become: "{{ appportal_become }}"
+  register: _appportal_snippet
+  when: appportal_web_server | length > 0
+
+- name: The page answers on AWX's host
+  ansible.builtin.uri:
+    url: "{{ _appportal_url }}portal.json"
+    return_content: true
+    # Directly, like the ci/awx scripts: through the HTTP proxy AWX answers 504.
+    use_proxy: false
+    # AWX behind a certificate from an internal authority, like the -k of the
+    # ci/awx scripts. Set true once the controller trusts that authority.
+    validate_certs: "{{ appportal_validate_certs | default(false) }}"
+  register: _appportal_answer
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Where it is
+  ansible.builtin.debug:
+    msg:
+      - "portal : {{ _appportal_url }}"
+      - "files  : {{ appportal_web_root }}"
+      - "server : {{ ('include ' ~ appportal_web_snippet ~ ' in the ' ~ appportal_web_server
+                     ~ ' configuration of ' ~ _appportal_host ~ ', once')
+                     if appportal_web_server | length > 0 else 'serve ' ~ appportal_web_root
+                     ~ ' at ' ~ appportal_path ~ '/' }}"
+      - "answer : {{ 'yes' if (_appportal_answer.status | default(0)) == 200
+                     else 'not yet - the location block is not included, or the server not reloaded' }}"
+      - "reads  : the job template whose playbook is traditional_applications.yml, and"
+      - "         launches the deploy and decommission workflows, with the viewer's AWX rights"

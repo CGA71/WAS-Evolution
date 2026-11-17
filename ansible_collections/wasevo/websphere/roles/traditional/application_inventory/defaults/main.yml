@@ -1,0 +1,16 @@
+---
+# The applications of a cell, read - for the application portal.
+#
+# READ ONLY. One wsadmin session lists every installed application with its
+# targets, shared libraries and JNDI bindings; the catalogue (was_applications)
+# says which of them this repository declares and which declared ones are not
+# installed yet. The result is published as job artifacts (set_stats), which is
+# what the portal reads with the viewer's AWX session.
+#
+# In AWX, "WAS AIX - Applications: inventory": scheduled daily, and the last
+# node of the deploy and decommission workflows, so the page shows the cell as
+# the last change left it.
+
+# Publish the report as job artifacts. Off for a run that only wants to read
+# the log.
+application_inventory_publish: true

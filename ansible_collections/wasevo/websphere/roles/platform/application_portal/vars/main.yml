@@ -1,0 +1,16 @@
+---
+_appportal_host: "{{ appportal_awx_api | urlsplit('hostname') }}"
+_appportal_url: >-
+  {{ appportal_awx_api | urlsplit('scheme') }}://{{ appportal_awx_api | urlsplit('netloc') }}{{ appportal_path }}/
+# What the page reads at load: no secret, nothing a viewer could not see in
+# the page itself.
+_appportal_config:
+  awx_ui: "/"
+  deploy_workflow: "{{ appportal_deploy_workflow }}"
+  decommission_workflow: "{{ appportal_decommission_workflow }}"
+_appportal_files:
+  index.html: "{{ lookup('ansible.builtin.file', 'site/index.html') }}"
+  portal.css: "{{ lookup('ansible.builtin.file', 'site/portal.css') }}"
+  portal.js: "{{ lookup('ansible.builtin.file', 'site/portal.js') }}"
+  applications.js: "{{ lookup('ansible.builtin.file', 'site/applications.js') }}"
+  portal.json: "{{ _appportal_config | to_json }}"

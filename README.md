@@ -652,6 +652,8 @@ Ports: an empty `profile_dmgr_ports` / `profile_node_ports` /
 in and a `-portsFile` is rendered instead, keyed exactly as `portdef.props`
 names each endpoint - whatever keys the inventory declares are what is written.
 
+**The response files are the site's templates.** Each profile role takes its Jinja2 template from a variable — `profile_dmgr_responsefile_template`, `profile_node_responsefile_template`, `profile_standalone_responsefile_template` — and the role's own is only the default. The AIX inventory points them at [`inventories/aix/templates/`](inventories/aix/templates/) ([`group_vars/all/35_profiles.yml`](inventories/aix/group_vars/all/35_profiles.yml)): `dmgr.responsefile.j2` (management), `managed.responsefile.j2` (the federated node and its node agent), `standalone.responsefile.j2` (a standalone application server). Edit them there, without touching the collection. A single key needs no template edit: `profile_*_extra_options` **replaces** a key the template writes, or appends a new one — never a key twice. In an ND cell the application servers are the cluster members, created by `AdminTask.createClusterMember`, not by `manageprofiles`: their settings stay inventory variables. A check run shows the rendered file with **every** `…Password` key masked, whichever template added it.
+
 ### What the form does not ask for, deliberately
 
 **The deployment manager's host and SOAP port.** The inventory already says
@@ -1574,6 +1576,28 @@ On the command line, `application_step: all` (the default) runs steps 0 to 7 in 
 `ci/run-stub-tests.sh` drives the three new handlers against the fake cell — variables, install, replay, reinstall on a changed archive (stopped then started on every member), the references of the other applications, uninstall — and the fake cell refuses an install over an installed name, a missing cluster or a missing library.
 
 
+## 25. The application portal
+
+An AWX survey cannot list what is in a cell: its choices are fixed when the template is saved, and one answer cannot narrow another. So a page does it instead — `/wasevo/applications/` on AWX's own host — and **fills the survey** of the application workflows when it launches them.
+
+| Piece | Where |
+|---|---|
+| The cell, read: every installed application with its targets, libraries and JNDI bindings, and the catalogue — published as job artifacts | role `traditional/application_inventory`, playbook [`traditional_applications.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_applications.yml) — read only |
+| The page | role `platform/application_portal`, playbook [`platform_application_portal.yml`](ansible_collections/wasevo/websphere/playbooks/platform_application_portal.yml) |
+| Its logic, tested without a browser | `files/site/applications.js`, [`ci/application-portal-tests.js`](ci/application-portal-tests.js) |
+| AWX: the inventory template, last node of both workflows, a daily schedule per environment, the portal template | [`ci/awx/apply-application-workflows.sh`](ci/awx/apply-application-workflows.sh) |
+
+**What it shows.** Per environment and cell, one row per application: **installed** (in the cell and in the catalogue — *Redeploy*, *Decommission*), **not installed** (declared in `was_applications`, absent from the cell — *Deploy*), **outside the catalogue** (installed by hand — shown, no action: the roles act on declarations). Filters by environment, state, and any text — a cluster, a library, a JNDI name.
+
+**What it launches.** The deploy or decommission workflow, with the survey answered: `was_environment`, `application_name`, and the options as the survey's choices spell them (`"true"`/`"false"`). Decommissioning asks for the application name to be typed again, offers the cluster and node removal (the node implies the cluster, the profile implies the node), and **still stops at the workflow's approval node**: the page says the workflow is waiting for an approval and links to it. Nothing is removed from the page without a person reading the plan in AWX.
+
+**Same origin, no token.** As for the certificate portal: the page runs on AWX's host with the viewer's AWX session (CSRF cookie for the launches), so AWX's rights apply unchanged — a viewer sees the cells whose inventory job they may read and launches only the workflows they may execute. Workflows are found by name (`appportal_deploy_workflow`, `appportal_decommission_workflow`); the inventory template by its playbook.
+
+**Fresh.** The inventory job is the last node of both workflows and runs daily per environment (`AWX_APP_INVENTORY_ENVIRONMENTS`), and each cell has a *Read the cell again* button — an application changed by hand in the console appears the next morning at the latest.
+
+Installing it: run `apply-application-workflows.sh`, launch "Applications - portal" once (the `awx_web` group: the web server in front of AWX), include the rendered `applications.nginx.conf` — or `.httpd.conf` — in that server's configuration, reload it, open `https://<awx>/wasevo/applications/`.
+
+
 ---
 
 <a name="français"></a>
@@ -2207,6 +2231,8 @@ Les ports : un `profile_dmgr_ports` / `profile_node_ports` /
 `was_base_port`. Rempli, c'est un `-portsFile` qui est rendu, clé par clé comme
 `portdef.props` nomme chaque point d'écoute — ce que l'inventaire déclare est
 ce qui est écrit, ni plus ni moins.
+
+**Les response files sont les templates du site.** Chaque rôle de profil prend son template Jinja2 dans une variable — `profile_dmgr_responsefile_template`, `profile_node_responsefile_template`, `profile_standalone_responsefile_template` — et celui du rôle n'est que le défaut. L'inventaire AIX les fait pointer vers [`inventories/aix/templates/`](inventories/aix/templates/) ([`group_vars/all/35_profiles.yml`](inventories/aix/group_vars/all/35_profiles.yml)) : `dmgr.responsefile.j2` (management), `managed.responsefile.j2` (le nœud fédéré et son agent), `standalone.responsefile.j2` (un serveur d'application autonome). On les modifie là, sans toucher à la collection. Une clé isolée n'exige aucune modification de template : `profile_*_extra_options` **remplace** une clé que le template écrit, ou en ajoute une nouvelle — jamais une clé en double. Dans une cellule ND, les serveurs d'application sont les membres du cluster, créés par `AdminTask.createClusterMember` et non par `manageprofiles` : leurs réglages restent des variables d'inventaire. Un run en check montre le fichier rendu avec **toutes** les clés `…Password` masquées, quel que soit le template qui les a ajoutées.
 
 ### Ce que le formulaire ne demande pas, délibérément
 
@@ -3169,4 +3195,25 @@ En ligne de commande, `application_step: all` (le défaut) enchaîne les étapes
 ### Testé
 
 `ci/run-stub-tests.sh` exerce les trois nouveaux handlers contre la fausse cellule — variables, installation, rejeu, réinstallation sur archive modifiée (arrêtée puis redémarrée sur chaque membre), références des autres applications, désinstallation — et la fausse cellule refuse une installation sur un nom déjà installé, un cluster ou une bibliothèque absents.
+
+## 25. Le portail des applications
+
+Un survey AWX ne sait pas lister le contenu d'une cellule : ses choix sont figés à l'enregistrement du template, et une réponse ne peut pas en filtrer une autre. Une page le fait donc à sa place — `/wasevo/applications/` sur l'hôte même d'AWX — et **remplit le survey** des workflows d'application au moment de les lancer.
+
+| Pièce | Où |
+|---|---|
+| La cellule, lue : chaque application installée avec ses cibles, bibliothèques et liaisons JNDI, et le catalogue — publiés en artefacts de job | rôle `traditional/application_inventory`, playbook [`traditional_applications.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_applications.yml) — lecture seule |
+| La page | rôle `platform/application_portal`, playbook [`platform_application_portal.yml`](ansible_collections/wasevo/websphere/playbooks/platform_application_portal.yml) |
+| Sa logique, testée sans navigateur | `files/site/applications.js`, [`ci/application-portal-tests.js`](ci/application-portal-tests.js) |
+| AWX : le template d'inventaire, dernier nœud des deux workflows, une planification quotidienne par environnement, le template du portail | [`ci/awx/apply-application-workflows.sh`](ci/awx/apply-application-workflows.sh) |
+
+**Ce qu'elle montre.** Par environnement et par cellule, une ligne par application : **installée** (dans la cellule et au catalogue — *Redéployer*, *Décommissionner*), **non installée** (déclarée dans `was_applications`, absente de la cellule — *Déployer*), **hors catalogue** (installée à la main — affichée, sans action : les rôles agissent sur des déclarations). Filtres par environnement, par état, et par texte libre — un cluster, une bibliothèque, un nom JNDI.
+
+**Ce qu'elle lance.** Le workflow de déploiement ou de décommissionnement, survey rempli : `was_environment`, `application_name`, et les options telles que le survey écrit ses choix (`"true"`/`"false"`). Le décommissionnement demande de recopier le nom de l'application, propose la suppression du cluster et du nœud (le nœud implique le cluster, le profil implique le nœud), et **s'arrête toujours au nœud d'approbation du workflow** : la page indique que le workflow attend une approbation et y renvoie. Rien n'est supprimé depuis la page sans qu'une personne lise le plan dans AWX.
+
+**Même origine, aucun jeton.** Comme le portail des certificats : la page tourne sur l'hôte d'AWX avec la session AWX de l'utilisateur (cookie CSRF pour les lancements), donc les droits AWX s'appliquent tels quels — on voit les cellules dont on peut lire le job d'inventaire, et on ne lance que les workflows qu'on peut exécuter. Les workflows sont retrouvés par leur nom (`appportal_deploy_workflow`, `appportal_decommission_workflow`) ; le template d'inventaire, par son playbook.
+
+**À jour.** Le job d'inventaire est le dernier nœud des deux workflows et tourne chaque jour par environnement (`AWX_APP_INVENTORY_ENVIRONMENTS`), et chaque cellule a un bouton *Relire la cellule* — une application modifiée à la main dans la console apparaît au plus tard le lendemain matin.
+
+Mise en place : lancer `apply-application-workflows.sh`, lancer une fois « Applications - portal » (le groupe `awx_web` : le serveur web placé devant AWX), inclure le `applications.nginx.conf` — ou `.httpd.conf` — rendu dans la configuration de ce serveur, le recharger, ouvrir `https://<awx>/wasevo/applications/`.
 

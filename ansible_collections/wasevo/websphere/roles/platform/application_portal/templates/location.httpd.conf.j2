@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# The application portal, on AWX's host name, for Apache httpd or IBM HTTP
+# Server (mod_alias and mod_headers). Include this file in the virtual host
+# that serves {{ _appportal_host }}, then reload the server. If that virtual
+# host proxies / to AWX, exclude this path first:
+#   ProxyPass {{ appportal_path }} !
+RedirectMatch 301 ^{{ appportal_path }}$ {{ appportal_path }}/
+Alias {{ appportal_path }}/ "{{ appportal_web_root }}/"
+<Directory "{{ appportal_web_root }}">
+    Options -Indexes
+    DirectoryIndex index.html
+    Require all granted
+    Header set Cache-Control "no-cache"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "same-origin"
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+</Directory>

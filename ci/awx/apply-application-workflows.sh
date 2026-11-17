@@ -16,6 +16,13 @@
 #                           to it
 #        8. node            only if asked, the cluster removed, and the node
 #                           has no application server and no resource left
+#        9. inventory       the applications of the cell read again, for the
+#                           application portal - also the last node of deploy
+#
+# And the application portal itself: the template "WAS AIX - Applications:
+# inventory" with a daily schedule per environment named in
+# AWX_APP_INVENTORY_ENVIRONMENTS, and the template "Applications - portal" that
+# copies the page behind AWX's web front.
 #
 #   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-application-workflows.sh
 #   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-application-workflows.sh --show
@@ -252,6 +259,15 @@ print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]), "invent
 }
 
 # ---------------------------------------------------------------------------
+say "Applications inventory"
+# ---------------------------------------------------------------------------
+# Read only: the applications of the cell, published as job artifacts for the
+# application portal. The last node of both workflows, so the portal shows the
+# cell as the last change left it.
+JT_INV="$(template "WAS AIX - Applications: inventory" "$COL/traditional_applications.yml" \
+    "config_dmgr_hosts: dmgr")"
+
+# ---------------------------------------------------------------------------
 say "Deploy"
 # ---------------------------------------------------------------------------
 JT_DEPLOY="$(template "WAS AIX - Application: deploy" "$COL/traditional_application_deploy.yml" \
@@ -259,7 +275,7 @@ JT_DEPLOY="$(template "WAS AIX - Application: deploy" "$COL/traditional_applicat
 WF="$(workflow "$DEPLOY_WF" \
     "The resources the application declares, then its archive from the applications share - installed, or uninstalled and installed again when it changed." \
     "$HERE/surveys/application-deploy.json")"
-chain "$WF" "$JT_DEPLOY"
+chain "$WF" "$JT_DEPLOY" "$JT_INV"
 
 # ---------------------------------------------------------------------------
 say "Decommission"
@@ -288,7 +304,57 @@ JT_NODE="$(template "WAS AIX - Application: decommission - 8. node agent and nod
 WF="$(workflow "$DECOM_WF" \
     "The plan, an approval, then the application and the resources it declared, step by step - and, if asked and nothing else needs them, its cluster and its node." \
     "$HERE/surveys/application-decommission.json")"
-chain "$WF" "${IDS[0]}" "approval:Approve the decommissioning plan" "${IDS[@]:1}" "$JT_NODE"
+chain "$WF" "${IDS[0]}" "approval:Approve the decommissioning plan" "${IDS[@]:1}" "$JT_NODE" "$JT_INV"
+
+# ---------------------------------------------------------------------------
+say "Daily reading of each cell"
+# ---------------------------------------------------------------------------
+# One schedule per environment the portal should show, so a change made by
+# hand in the console appears on the page the next morning at the latest.
+#   AWX_APP_INVENTORY_ENVIRONMENTS="<code> <code>"
+SCHED_RRULE="${AWX_APP_INVENTORY_RRULE:-DTSTART;TZID=Europe/Paris:20261118T063000 RRULE:FREQ=DAILY;INTERVAL=1}"
+if [ -z "${AWX_APP_INVENTORY_ENVIRONMENTS:-}" ]; then
+    note "AWX_APP_INVENTORY_ENVIRONMENTS is empty - no daily reading scheduled"
+fi
+for env_code in ${AWX_APP_INVENTORY_ENVIRONMENTS:-}; do
+    sched_name="Applications inventory - $env_code"
+    py 'import json,sys
+print(json.dumps({"name": sys.argv[1], "rrule": sys.argv[2], "enabled": True,
+                  "extra_data": {"was_environment": sys.argv[3]}}))' "$sched_name" "$SCHED_RRULE" "$env_code" > "$BODY"
+    sched_id="$(api GET "/job_templates/$JT_INV/schedules/?name=$(py 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$sched_name")" \
+        | py 'import sys,json
+d=json.load(sys.stdin)
+print(d["results"][0]["id"] if d.get("count") else "")')"
+    if [ -n "$sched_id" ]; then
+        api PATCH "/schedules/$sched_id/" --data-binary "@$BODY" >/dev/null || die "could not update $sched_name"
+        ok "updated  $sched_name"
+    else
+        api POST "/job_templates/$JT_INV/schedules/" --data-binary "@$BODY" >/dev/null || die "could not create $sched_name"
+        ok "created  $sched_name"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+say "Portal template"
+# ---------------------------------------------------------------------------
+# The page itself, copied behind AWX's web front - the awx_web group of the
+# inventory, reached with that host's own machine credential.
+WEB_CRED="${AWX_WEB_MACHINE_CRED:-AWX web front (ansible)}"
+py 'import json,sys
+inv, proj, ee, playbook = sys.argv[1:5]
+print(json.dumps({"name": "Applications - portal", "job_type": "run", "inventory": int(inv),
+  "project": int(proj), "playbook": playbook, "execution_environment": int(ee),
+  "become_enabled": False, "verbosity": 1, "ask_variables_on_launch": False}))' \
+    "$INV_ID" "$PROJECT_ID" "$EE_ID" "$COL/platform_application_portal.yml" > "$BODY"
+JT_PORTAL="$(upsert job_templates "Applications - portal")"
+WEB_CRED_ID="$(id_of credentials "$WEB_CRED")"
+if [ -n "$WEB_CRED_ID" ]; then
+    api POST "/job_templates/$JT_PORTAL/credentials/" -d "{\"id\": $WEB_CRED_ID}" >/dev/null || true
+else
+    note "no credential named \"$WEB_CRED\" - attach the web front's machine credential to template $JT_PORTAL"
+fi
+note "launch \"Applications - portal\" once (id $JT_PORTAL), then open $(printf '%s' "$API" | sed 's#/api/v2##')/wasevo/applications/"
+
 
 say "Done"
 printf '   %s/#/templates/workflow_job_template/%s/visualizer\n' "$(printf '%s' "$API" | sed 's#/api/v2##')" "$WF"

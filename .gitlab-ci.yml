@@ -146,6 +146,9 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_certificates.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/traditional_certificate_renewal.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/platform_certificate_portal.yml
+    # Applications: the inventory the portal reads, and the portal.
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_applications.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/platform_application_portal.yml
 
 # The environment is a launch input, so the loop passes it as one - exactly as
 # the AWX survey does. There is no list of environment codes to iterate: what
@@ -291,7 +294,7 @@ stub-unit:
   script:
     - bash ci/run-stub-tests.sh
 
-# The certificate portal's logic - status for today, newest report per cell,
+# The certificate and application portals' logic - status for today, newest report per cell,
 # actions per issuer, extra vars of a launch - without a browser and without
 # AWX. Node only: the page has no build step and no dependency.
 portal-unit:
@@ -299,6 +302,7 @@ portal-unit:
   stage: validation
   script:
     - node ci/portal-tests.js
+    - node ci/application-portal-tests.js
 
 
 # ---------------------------------------------------------------------------

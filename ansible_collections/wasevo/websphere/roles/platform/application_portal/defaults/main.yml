@@ -1,0 +1,40 @@
+---
+# The application portal: a static page, served on AWX's own host name under
+# appportal_path, that shows the applications of every cell the viewer may see
+# - read by the job template whose playbook is traditional_applications.yml -
+# and fills the survey of the deploy and decommission workflows, with the
+# viewer's AWX session.
+#
+# SAME ORIGIN IS THE DESIGN, as for the certificate portal: on AWX's host the
+# browser sends the viewer's AWX session with every API call, so the page
+# needs no token and no server of its own, and AWX's rights apply unchanged -
+# a viewer sees and launches what AWX lets them. A decommissioning launched
+# from the page still stops at the workflow's approval node.
+#
+# AWX is hosted elsewhere. What this role needs is the web server that fronts
+# AWX's host name and a directory it serves at appportal_path: it copies the
+# page there and renders the server's location block next to it, to include
+# once in the server configuration.
+
+# AWX, as the inventory declares it. The page is served on its host.
+appportal_awx_api: "{{ awx_api_url | default(prereq_awx_api | default('')) }}"
+
+appportal_path: /wasevo/applications
+
+# On the web host: where the page is copied, and who owns it.
+appportal_web_root: /var/www/wasevo/applications
+appportal_web_owner: root
+appportal_web_group: root
+
+# The location block for the web server, rendered beside the page. nginx or
+# httpd (Apache httpd and IBM HTTP Server share the syntax). Empty to skip.
+appportal_web_server: nginx
+appportal_web_snippet: "{{ appportal_web_root | dirname }}/applications.{{ appportal_web_server }}.conf"
+
+# The workflows the page launches, by name - as ci/awx/apply-application-workflows.sh
+# creates them. A workflow template has no playbook to recognise it by.
+appportal_deploy_workflow: "WAS AIX - Application: deploy"
+appportal_decommission_workflow: "WAS AIX - Application: decommission"
+
+# Copying into the web root normally needs root.
+appportal_become: true

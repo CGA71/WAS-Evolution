@@ -1,0 +1,91 @@
+---
+# The applications of the cell, on the deployment manager. Read only.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [applications, always]
+
+- name: Administrative credentials must be supplied to reach the cell
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | default('') | length > 0
+      - was_admin_password | default('') | length > 0
+    fail_msg: >-
+      Reading the applications of a cell needs was_admin_user and
+      was_admin_password - the deployment manager's administrator. Supply them
+      from an AWX credential or a vault.
+    success_msg: "administrative credentials supplied"
+  tags: [applications]
+
+- name: Stage the Jython driver on the deployment manager
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.config
+  tags: [applications]
+
+# Every application: nothing excluded. The handler is the one the
+# decommissioning plan reads, so the portal and the plan see the same cell.
+- name: Read the applications of the cell
+  wasevo.websphere.was_application_refs_info:
+    exclude: []
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: _apps_read
+  tags: [applications]
+
+- name: The report
+  ansible.builtin.set_fact:
+    application_inventory: >-
+      {%- set catalogue = was_applications | default([]) -%}
+      {%- set declared = catalogue | map(attribute='name') | list -%}
+      {%- set installed = [] -%}
+      {%- for name, info in _apps_read.applications | dictsort -%}
+      {%-   set _ = installed.append({'name': name, 'declared': name in declared,
+                                      'targets': info.targets, 'libraries': info.libraries,
+                                      'jndi': info.jndi}) -%}
+      {%- endfor -%}
+      {%- set entries = [] -%}
+      {%- for app in catalogue -%}
+      {%-   set res = app.resources | default({}) -%}
+      {%-   set _ = entries.append({
+              'name': app.name,
+              'archive': app.archive | default(''),
+              'target': app.target | default('cluster'),
+              'installed': app.name in _apps_read.applications,
+              'resources': {
+                'variables': res.variables | default([]) | length,
+                'j2c_aliases': res.j2c_aliases | default([]) | length,
+                'datasources': res.datasources | default([]) | length,
+                'shared_libraries': res.shared_libraries | default([]) | length,
+                'jms': (res.jms | default({})).keys() | list | length,
+              }}) -%}
+      {%- endfor -%}
+      {{ {'cell': was_cell_name, 'environment': was_env_code, 'cluster': was_cluster_name,
+          'host': inventory_hostname, 'scanned_on': now(utc=true).strftime('%Y-%m-%d'),
+          'scanned_at': now(utc=true).isoformat(),
+          'applications': installed, 'catalogue': entries,
+          'clusters': _apps_read.cluster_members} }}
+  tags: [applications]
+
+- name: Publish it for the portal
+  ansible.builtin.set_stats:
+    aggregate: true
+    per_host: false
+    data:
+      wasevo_applications:
+        cells: "{{ {was_cell_name: application_inventory} }}"
+  when: application_inventory_publish | bool
+  tags: [applications]
+
+- name: What the cell holds
+  ansible.builtin.debug:
+    msg:
+      - "cell       : {{ was_cell_name }} ({{ was_env_code }})"
+      - "installed  : {{ application_inventory.applications | map(attribute='name') | join(', ') | default('none', true) }}"
+      - "not declared in the catalogue :
+         {{ application_inventory.applications | rejectattr('declared') | map(attribute='name') | join(', ') | default('none', true) }}"
+      - "declared, not installed :
+         {{ application_inventory.catalogue | rejectattr('installed') | map(attribute='name') | join(', ') | default('none', true) }}"
+  tags: [applications]

@@ -1,0 +1,25 @@
+---
+# The applications of a cell, and nothing else. Read only.
+#
+#   ansible-playbook -i inventories/aix <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr
+#
+# ONE ROLE, ONE PLAYBOOK, ONE JOB TEMPLATE. In AWX, "WAS AIX - Applications:
+# inventory", scheduled daily and run as the last node of the application
+# workflows. Its job artifacts are what the application portal shows - the
+# portal recognises the template by this playbook, not by its name.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: The applications of the cell, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The application inventory
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.application_inventory

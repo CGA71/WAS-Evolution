@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: platform_application_portal
+  author: neo
+  description: >-
+    The application portal - a static page served on AWX's own host that lists the applications of
+    every cell the viewer may see and launches their deployment or decommissioning workflow through AWX,
+    its survey filled in. Replayable on its own.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+
+dependencies: []

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Applications WAS</title>
+  <link rel="stylesheet" href="portal.css">
+</head>
+<body>
+  <header class="bar">
+    <div>
+      <h1>Applications WAS</h1>
+      <p class="sub">Les applications des cellules WAS traditionnel, lues par AWX — déployer, redéployer, décommissionner</p>
+    </div>
+    <div class="bar-right">
+      <span id="who" class="who"></span>
+      <button id="reload" type="button">Actualiser</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="login" class="notice" hidden>
+      <p>Le portail lit AWX avec <strong>votre</strong> session : connectez-vous à AWX, puis revenez ici.</p>
+      <p><a id="login-link" href="/#/login">Se connecter à AWX</a></p>
+    </section>
+
+    <section id="error" class="notice error" hidden></section>
+
+    <section class="tiles" id="tiles" aria-label="Synthèse"></section>
+
+    <section class="cells" id="cells" aria-label="Cellules"></section>
+
+    <section class="filters" aria-label="Filtres">
+      <label>Environnement
+        <select id="f-env"><option value="">Tous</option></select>
+      </label>
+      <label>État
+        <select id="f-state">
+          <option value="">Tous</option>
+          <option value="installed">Installée</option>
+          <option value="missing">Déclarée, non installée</option>
+          <option value="foreign">Installée, hors catalogue</option>
+        </select>
+      </label>
+      <label class="grow">Recherche
+        <input id="f-text" type="search" placeholder="application, cellule, cluster, bibliothèque, JNDI…">
+      </label>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>État</th><th>Application</th><th>Environnement</th><th>Cellule</th>
+            <th>Cible</th><th>Bibliothèques</th><th>Ressources JNDI</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="empty" hidden></p>
+    </section>
+
+    <section class="jobs" id="jobs-section" hidden>
+      <h2>Lancés depuis cette page</h2>
+      <ul id="jobs"></ul>
+    </section>
+  </main>
+
+  <dialog id="dlg">
+    <form method="dialog" id="dlg-form">
+      <h2 id="dlg-title"></h2>
+      <p id="dlg-what" class="what"></p>
+      <dl id="dlg-app" class="cert"></dl>
+      <div id="dlg-fields"></div>
+      <p id="dlg-missing" class="error" hidden></p>
+      <div class="dlg-actions">
+        <button value="cancel" type="submit" formnovalidate>Annuler</button>
+        <button id="dlg-launch" value="launch" type="submit" class="primary">Lancer le workflow AWX</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="applications.js"></script>
+  <script src="portal.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+---
+# The application portal, on the web server that fronts AWX's host name.
+#
+#   ansible-playbook -i inventories/aix <this>
+#
+# In AWX, "Applications - portal", with the machine credential of that web
+# host. AWX itself is hosted elsewhere and is not touched: the role copies a
+# static page into a directory the web server serves at /wasevo/applications/
+# and renders the location block to include, once, in its configuration.
+# Replayable: a replay with the same page changes nothing.
+
+- name: The application portal, on AWX's web front
+  hosts: "{{ appportal_hosts | default('awx_web') }}"
+  gather_facts: false
+
+  roles:
+    - wasevo.websphere.platform.application_portal
