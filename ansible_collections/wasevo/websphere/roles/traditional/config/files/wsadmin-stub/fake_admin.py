@@ -44,6 +44,8 @@ TEMPLATE_ENDPOINTS = [
 # no fake implements, rather than answering "none" and hiding a handler bug.
 GENERIC_TYPES = (
     "JAASAuthData",
+    "VariableMap",
+    "VariableSubstitutionEntry",
     "JDBCProvider",
     "DataSource",
     "ConnectionPool",
@@ -408,6 +410,7 @@ ATTRIBUTE_DEFAULTS = {
     "SIBMessagingEngine": {"fileStore": "", "dataStore": ""},
     "SIBQueue": {"exceptionDestination": "", "description": ""},
     "SIBTopicSpace": {"exceptionDestination": "", "description": ""},
+    "VariableSubstitutionEntry": {"description": ""},
 }
 
 # What a new connection pool holds before anything is set: WAS's defaults, so a
@@ -423,6 +426,10 @@ POOL_DEFAULTS = {
 
 EMPTY = {
     "clusters": {},
+    # Installed applications: name -> {archive, target, libraries, jndi}, and
+    # what was started or stopped where, in order.
+    "applications": {},
+    "app_events": [],
     "members": {},
     "indexes": {},
     "entries": {},
@@ -2170,6 +2177,15 @@ class FakeAdminControl(object):
     def queryNames(self, query):
         if "NodeSync" in query:
             return "WebSphere:name=nodeSync,type=NodeSync,node=TestNode,*"
+        if "type=ApplicationManager" in query:
+            # Every member of the fake cell runs: its application manager
+            # answers, so starting and stopping are observable.
+            fields = dict(part.split("=", 1) for part in query.split(",") if "=" in part)
+            node, process = fields.get("node", ""), fields.get("process", "")
+            for member in _load()["members"].values():
+                if member["nodeName"] == node and member["memberName"] == process:
+                    return "WebSphere:type=ApplicationManager,node=%s,process=%s" % (node, process)
+            return ""
         return ""
 
     def invoke(self, mbean, operation, *args):
@@ -2178,15 +2194,131 @@ class FakeAdminControl(object):
             state["syncs"] = state.get("syncs", 0) + 1
             _store(state)
             return "true"
+        if operation in ("startApplication", "stopApplication"):
+            fields = dict(part.split("=", 1) for part in mbean.split(":", 1)[1].split(",") if "=" in part)
+            state = _load()
+            if operation == "startApplication" and args[0] not in state["applications"]:
+                raise RuntimeError("cannot start %s: it is not installed" % args[0])
+            state["app_events"] = list(state.get("app_events", [])) + [
+                "%s %s on %s/%s" % (operation[:-len("Application")], args[0],
+                                    fields.get("node"), fields.get("process"))]
+            _store(state)
+            # Mirrored into the configuration's copy: an uninstall that follows
+            # in the same session stores that copy, and would erase the event.
+            self.config.state["app_events"] = list(state["app_events"])
+            return ""
         raise NotImplementedError("fake AdminControl.invoke: %r" % operation)
 
 
+def _app_options(options):
+    """AdminApp options, as the handler passes them: a flat list of flags,
+    each followed by its value - a string or a list of rows - when it has one."""
+    parsed = {}
+    index = 0
+    while index < len(options):
+        flag = options[index]
+        if not str(flag).startswith("-"):
+            raise ValueError("expected an option flag, got %r in %r" % (flag, options))
+        following = options[index + 1] if index + 1 < len(options) else None
+        if following is not None and not (isinstance(following, str) and following.startswith("-")):
+            parsed[flag] = following
+            index += 2
+        else:
+            parsed[flag] = True
+            index += 1
+    return parsed
+
+
 class FakeAdminApp(object):
-    def install(self, earfile, options):
-        raise NotImplementedError(
-            "was_application is scheduled for wave 1; the simulation will "
-            "gain an AdminApp fake at the same time"
-        )
+    """Installed applications, strict like the rest of the fake cell: an
+    install over an installed name, a target cluster or a shared library that
+    does not exist, are refused instead of tolerated."""
+
+    def __init__(self, config):
+        self.config = config
+
+    def _apps(self):
+        return self.config.state.setdefault("applications", {})
+
+    def _app(self, name):
+        if name not in self._apps():
+            raise RuntimeError("WASX7280E: An application with name %s does not exist." % name)
+        return self._apps()[name]
+
+    def _libraries(self, options):
+        rows = options.get("-MapSharedLibForMod") or []
+        names = []
+        for row in rows:
+            names.extend([n for n in str(row[-1]).split("+") if n])
+        known = [o["attrs"].get("name") for o in self.config.state["objects"].values() if o["type"] == "Library"]
+        missing = [n for n in names if n not in known]
+        if missing:
+            raise RuntimeError("shared library %s does not exist in the cell" % ", ".join(missing))
+        return names
+
+    def list(self, *args):
+        return "\n".join(sorted(self._apps().keys()))
+
+    def install(self, archive, options):
+        options = _app_options(options)
+        name = options.get("-appname")
+        if not name:
+            raise ValueError("the fake requires -appname")
+        if name in self._apps():
+            raise RuntimeError("ADMA5016E: %s is already installed - the handler should have "
+                               "uninstalled it first" % name)
+        if "-cluster" in options:
+            try:
+                self.config._cluster_by_name(options["-cluster"])
+            except KeyError:
+                raise RuntimeError("cluster %s does not exist" % options["-cluster"])
+            target = "WebSphere:cell=%s,cluster=%s" % (FAKE_CELL, options["-cluster"])
+        elif "-node" in options and "-server" in options:
+            target = "WebSphere:cell=%s,node=%s,server=%s" % (FAKE_CELL, options["-node"], options["-server"])
+        else:
+            raise ValueError("the fake requires -cluster, or -node and -server")
+        jndi = [str(row[-1]) for row in (options.get("-MapResRefToEJB") or [])]
+        self._apps()[name] = {
+            "archive": archive,
+            "target": target,
+            "libraries": self._libraries(options),
+            "jndi": jndi,
+            "context_root": options.get("-contextroot", ""),
+        }
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return ""
+
+    def uninstall(self, name, *args):
+        self._app(name)
+        del self._apps()[name]
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return ""
+
+    def edit(self, name, options):
+        app = self._app(name)
+        app["libraries"] = self._libraries(_app_options(options))
+        self.config.state["saved"] = False
+        _store(self.config.state)
+        return ""
+
+    def view(self, name, tasks):
+        app = self._app(name)
+        task = tasks[0]
+        if task == "-MapModulesToServers":
+            return "Module:  web\nURI:  web.war,WEB-INF/web.xml\nServer:  %s\n" % app["target"]
+        if task == "-MapSharedLibForMod":
+            return "Module:  web\nURI:  web.war,WEB-INF/web.xml\nShared Libraries:  %s\n" % "+".join(app["libraries"])
+        if task == "-MapResRefToEJB" and app["jndi"]:
+            return "".join("Module:  web\nResource Reference:  ref%d\nTarget Resource JNDI Name:  %s\n" % (i, j)
+                           for i, j in enumerate(app["jndi"]))
+        # What wsadmin says for a task the application has nothing for.
+        raise RuntimeError("WASX7015E: task %s is not applicable to %s" % (task, name))
+
+    def isAppReady(self, name, *args):
+        self._app(name)
+        return "true"
 
 
 def build():
@@ -2196,5 +2328,5 @@ def build():
         "AdminConfig": config,
         "AdminTask": FakeAdminTask(config),
         "AdminControl": FakeAdminControl(config),
-        "AdminApp": FakeAdminApp(),
+        "AdminApp": FakeAdminApp(config),
     }

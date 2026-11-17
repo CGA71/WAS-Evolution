@@ -1,0 +1,121 @@
+---
+# The node agent and its node, removed from the cell - on the node host.
+#
+# Only when the plan says so: asked for (application_decommission_node), the
+# cluster removed, and no member of another cluster nor another application
+# left on the node. The plan is the one the dmgr play or the workflow's plan
+# node computed; this file does not decide anything on its own.
+#
+# removeNode.sh, from the node's own profile, is IBM's way: it stops the node
+# agent and the servers of the node, takes the node out of the cell, and puts
+# the profile back to the configuration it had before federation. Then, if
+# asked, the profile is deleted.
+#
+# THE CREDENTIALS. removeNode takes them either on its command line - where
+# every account on the host reads them in ps - or from the profile's
+# properties/soap.client.props. They are written there for the duration of the
+# command and the original file is put back in every case, success or not.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_tasks: select.yml
+
+- name: The plan - from the workflow, or from the play that computed it
+  ansible.builtin.set_fact:
+    _node_plan: >-
+      {{ application_decommission_plan if application_decommission_plan is defined
+         else (hostvars[application_plan_host].application_decommission_plan | default({})) }}
+
+- name: Is this node to be removed
+  ansible.builtin.set_fact:
+    _node_remove: >-
+      {{ (_node_plan.node.remove | default(false) | bool)
+         and was_node_name in (_node_plan.node.names | default([])) }}
+
+- name: Nothing to do on this node
+  ansible.builtin.debug:
+    msg: >-
+      {{ was_node_name }} stays:
+      {{ _node_plan.node.reason | default('no plan') }}
+      {{ '' if was_node_name in (_node_plan.node.names | default([]))
+         else '(the application did not run on this node)' }}.
+  when: not _node_remove
+
+- name: Remove the node
+  when: _node_remove
+  block:
+
+    - name: Is the profile still federated into this cell
+      ansible.builtin.stat:
+        path: "{{ was_profile_path }}/config/cells/{{ was_cell_name }}/nodes/{{ was_node_name }}/node.xml"
+      register: _node_federated
+      check_mode: false
+
+    - name: removeNode, with the credentials in soap.client.props for its duration
+      when: _node_federated.stat.exists
+      block:
+
+        - name: Keep the original soap.client.props
+          ansible.builtin.copy:
+            src: "{{ was_profile_path }}/properties/soap.client.props"
+            dest: "{{ was_profile_path }}/properties/soap.client.props.wasevo-orig"
+            remote_src: true
+            mode: preserve
+
+        - name: Put the administrator in it
+          ansible.builtin.lineinfile:
+            path: "{{ was_profile_path }}/properties/soap.client.props"
+            regexp: "^{{ item.key | regex_escape }}="
+            line: "{{ item.key }}={{ item.value }}"
+          loop:
+            - {key: com.ibm.SOAP.securityEnabled, value: "true"}
+            - {key: com.ibm.SOAP.loginUserid, value: "{{ was_admin_user }}"}
+            - {key: com.ibm.SOAP.loginPassword, value: "{{ was_admin_password }}"}
+          loop_control:
+            label: "{{ item.key }}"
+          no_log: true
+
+        - name: removeNode
+          ansible.builtin.command:
+            cmd: "{{ was_profile_path }}/bin/removeNode.sh -logfile {{ was_logs_base_dir }}/removeNode-{{ was_node_name }}.log"
+          register: _node_removed
+          changed_when: true
+
+      always:
+        - name: Put the original soap.client.props back
+          ansible.builtin.copy:
+            src: "{{ was_profile_path }}/properties/soap.client.props.wasevo-orig"
+            dest: "{{ was_profile_path }}/properties/soap.client.props"
+            remote_src: true
+            mode: preserve
+          failed_when: false
+
+        - name: And remove the copy
+          ansible.builtin.file:
+            path: "{{ was_profile_path }}/properties/soap.client.props.wasevo-orig"
+            state: absent
+
+    - name: Delete the profile
+      when: application_decommission_delete_profile | bool
+      block:
+
+        - name: manageprofiles -delete
+          ansible.builtin.command:
+            cmd: "{{ was_manageprofiles_cmd }} -delete -profileName {{ was_profile_name }}"
+            removes: "{{ was_profile_path }}/bin/startNode.sh"
+
+        - name: Its directory
+          ansible.builtin.file:
+            path: "{{ was_profile_path }}"
+            state: absent
+
+        - name: The profile registry, made consistent again
+          ansible.builtin.command:
+            cmd: "{{ was_manageprofiles_cmd }} -validateAndUpdateRegistry"
+          changed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ was_node_name }}:
+          {{ 'removed from ' ~ was_cell_name if _node_federated.stat.exists else 'already out of the cell' }}{{
+             ', profile ' ~ was_profile_name ~ ' deleted' if application_decommission_delete_profile | bool else '' }}.

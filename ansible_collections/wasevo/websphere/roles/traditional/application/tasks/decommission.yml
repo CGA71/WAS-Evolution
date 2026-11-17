@@ -1,0 +1,139 @@
+---
+# Decommission, one step per AWX workflow node - application_step names it -
+# or every step in order (all) on the command line.
+#
+# Order matters: the application first, so nothing is bound to what follows;
+# then what listens before what it listens on (JMS), the datasources before the
+# aliases they present, the libraries and the variables last; the cluster once
+# it hosts nothing; the node - on its own host - after that.
+
+- name: The step must be one this role knows
+  ansible.builtin.assert:
+    that:
+      - application_step in _steps + ['all', 'node']
+    fail_msg: >-
+      application_step is "{{ application_step }}". It is one of
+      {{ (_steps + ['all']) | join(', ') }}; the node removal is its own
+      playbook, traditional_application_remove_node.yml, because it runs on the
+      node host.
+    success_msg: "step {{ application_step }}"
+  vars:
+    _steps: [plan, uninstall, jms, jdbc, j2c, libraries, variables, cluster]
+
+- name: Connect to the deployment manager
+  ansible.builtin.include_tasks: connect.yml
+
+# The plan node computes it; any other node reads it from the workflow's
+# artifacts (set_stats), and computes it only when run alone.
+- name: The plan
+  ansible.builtin.include_tasks: plan.yml
+  when: >-
+    application_step in ['plan', 'all']
+    or application_decommission_plan is not defined
+    or (application_decommission_plan.application | default('')) != application.name
+
+- name: Shorthand
+  ansible.builtin.set_fact:
+    _remove: "{{ application_decommission_plan.remove }}"
+    _do: "{{ application_step }}"
+
+# ---------------------------------------------------------------------------
+
+- name: Stop and uninstall the application
+  wasevo.websphere.was_application:
+    name: "{{ application.name }}"
+    target: "{{ application.target }}"
+    state: absent
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  when: _do in ['uninstall', 'all']
+
+- name: Forget the recorded checksum
+  ansible.builtin.file:
+    path: "{{ _app_record }}"
+    state: absent
+  when: _do in ['uninstall', 'all']
+
+- name: JMS resources
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.jms
+  vars:
+    jms: "{{ _remove.jms }}"
+    jms_scope: "{{ application_scope }}"
+    jms_state: absent
+  when:
+    - _do in ['jms', 'all']
+    - _remove.jms | length > 0
+
+- name: JDBC providers and datasources
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.jdbc
+  vars:
+    datasources: "{{ _remove.datasources }}"
+    jdbc_scope: "{{ application_scope }}"
+    jdbc_state: absent
+  when:
+    - _do in ['jdbc', 'all']
+    - _remove.datasources | length > 0
+
+- name: J2C authentication aliases
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.j2c_alias
+  vars:
+    j2c_aliases: "{{ _remove.j2c_aliases }}"
+    j2c_state: absent
+  when:
+    - _do in ['j2c', 'all']
+    - _remove.j2c_aliases | length > 0
+
+- name: Shared libraries
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.shared_library
+  vars:
+    # Removal needs the name and the scope only. An explicit jar list keeps the
+    # role from expanding a directory that may already be gone with the
+    # application's binaries - and an empty match is a refusal there.
+    shared_libraries: >-
+      {%- set out = [] -%}
+      {%- for lib in _remove.shared_libraries -%}
+      {%-   set entry = {'name': lib.name, 'jars': ['-']} -%}
+      {%-   if lib.scope is defined -%}{%- set _ = entry.update({'scope': lib.scope}) -%}{%- endif -%}
+      {%-   set _ = out.append(entry) -%}
+      {%- endfor -%}{{ out }}
+    library_scope: "{{ application_scope }}"
+    library_state: absent
+  when:
+    - _do in ['libraries', 'all']
+    - _remove.shared_libraries | length > 0
+
+- name: WebSphere variables
+  ansible.builtin.include_tasks: variables.yml
+  vars:
+    _variables_state: absent
+    _variables: "{{ _remove.variables }}"
+  when:
+    - _do in ['variables', 'all']
+    - _remove.variables | length > 0
+
+- name: The cluster and its members
+  wasevo.websphere.was_cluster:
+    name: "{{ application_decommission_plan.cluster.name }}"
+    cell_name: "{{ was_cell_name }}"
+    state: absent
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  when:
+    - _do in ['cluster', 'all']
+    - application_decommission_plan.cluster.remove | bool
+
+- name: What this step did
+  ansible.builtin.debug:
+    msg: >-
+      {{ application.name }}, step {{ _do }} done.
+      {{ ('Kept: ' ~ application_decommission_plan.keep | join(' | ')) if application_decommission_plan.keep else 'Nothing kept.' }}
+      Cluster: {{ application_decommission_plan.cluster.reason }}.
+      Node: {{ application_decommission_plan.node.reason }}.

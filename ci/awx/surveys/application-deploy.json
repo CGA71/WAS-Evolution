@@ -1,0 +1,35 @@
+{
+  "name": "Application deployment",
+  "description": "Deploy one application of the catalogue (was_applications) on the AIX cell.",
+  "spec": [
+    {
+      "question_name": "Target environment",
+      "question_description": "The environment code the cell is built as.",
+      "variable": "was_environment",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 32,
+      "default": ""
+    },
+    {
+      "question_name": "Application",
+      "question_description": "A name declared in was_applications.",
+      "variable": "application_name",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 128,
+      "default": ""
+    },
+    {
+      "question_name": "Reinstall even if the archive is unchanged",
+      "question_description": "Uninstall and install again - drops any setting made by hand in the console.",
+      "variable": "application_force_reinstall",
+      "type": "multiplechoice",
+      "choices": ["false", "true"],
+      "required": true,
+      "default": "false"
+    }
+  ]
+}

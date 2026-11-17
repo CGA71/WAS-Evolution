@@ -1,0 +1,116 @@
+---
+# Applications: an EAR, a WAR or an EJB JAR, deployed on a cluster or on one
+# application server with the WebSphere resources it needs - and decommissioned
+# with them.
+#
+# THE CATALOGUE. Every application is declared once, in the inventory or the
+# shared model, with what it needs in the cell. The run acts on ONE of them,
+# named by application_name - in AWX, the survey answer.
+#
+#   was_applications:
+#     - name: OrdersApp
+#       archive: orders/OrdersApp-1.4.2.ear     # under application_binaries_dir,
+#                                               # or an absolute path
+#       target: cluster                         # the run's cluster - the default
+#       # target: {type: server, node: EXTNode01, server: ClusterEXT01_EXTNode01_01}
+#       # target: {type: cluster, cluster: ClusterOTHER01}
+#       context_root: /orders                   # a standalone WAR only
+#       virtual_host: default_host
+#       start: true
+#       install_options: []                     # further AdminApp.install tokens
+#       shared_libraries: [ordersCommonLibrary] # bound to every module
+#       resources:                              # created before the install,
+#         variables:                            # removed at decommissioning
+#           - {name: ORDERS_HOME, value: /app/data/orders}
+#         j2c_aliases:                          # roles/traditional/j2c_alias shape
+#           - {name: ordersDbAlias, user: orders, password_env: ORDERS_DB_PASSWORD}
+#         datasources:                          # roles/traditional/jdbc shape
+#           - {name: ordersDS, jndi_name: jdbc/orders, vendor: db2_luw, ...}
+#         shared_libraries:                     # roles/traditional/shared_library shape
+#           - {name: ordersCommonLibrary, dir: /app/binaries/orders/lib}
+#         jms:                                  # roles/traditional/jms shape
+#           queues: [{name: OrdersQueue, jndi_name: jms/orders, queue: OrdersQueue, bus: OrdersBus}]
+#
+# Every resource family takes exactly the shape of its own role, because the
+# application role hands it to that role: a datasource declared here is created
+# by roles/traditional/jdbc, nothing is reimplemented.
+was_applications: []
+
+# Which application this run acts on. No default: a run with no answer must not
+# pick one.
+application_name: ""
+
+# ---------------------------------------------------------------------------
+# Where the archives come from
+# ---------------------------------------------------------------------------
+# mount: a directory on a mounted share - on the AIX server the same NFS share
+# as the IBM media, or another one. The archive is read where wsadmin runs, on
+# the deployment manager, so the share must be mounted there.
+application_source: mount
+application_binaries_dir: "{{ was_install_binaries_base_dir | default('/mnt/binaries') }}/applications"
+
+# The mount must be a mount point, like the IBM media's (forge_preflight's
+# binaries check). False for a directory filled by hand.
+application_require_mount: true
+
+# REPOSITORY - for later, when the archives come from an artifact repository
+# (Nexus, Artifactory) instead of a share. Not active: tasks/archive.yml carries
+# the matching tasks, commented. The archive is then downloaded to
+# application_staging_dir on the deployment manager, checked against the
+# repository's checksum, and installed from there.
+#
+# application_source: repository
+# application_repository_url: https://nexus.example.internal/repository/releases
+# application_repository_auth_env: ARTIFACT_REPO_TOKEN    # the NAME of the variable
+# application_staging_dir: "{{ was_data_base_dir }}/applications"
+#   and per application, instead of archive:
+#     artifact: {group: com.example.orders, id: orders-ear, version: 1.4.2, type: ear}
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+# Update is uninstall then install: the site's choice. An installed application
+# is reinstalled when its archive differs from the copy the cell stores in its
+# configuration repository (checksum), or when its target changed. True forces
+# it, e.g. to drop settings made by hand in the console.
+application_force_reinstall: false
+
+# Seconds the nodes get to expand the application before it is started.
+application_ready_timeout: 300
+
+# ---------------------------------------------------------------------------
+# Decommissioning - an AWX workflow, one step per node
+# ---------------------------------------------------------------------------
+# plan       what will be removed and what is kept, and why; passed on to the
+#            next nodes with set_stats
+# uninstall  stopped on its members, uninstalled
+# jms        connection factories, queues, topics, activation specifications
+# jdbc       datasources (and the providers declared with them)
+# j2c        J2C aliases
+# libraries  shared libraries
+# variables  WebSphere variables
+# cluster    the cluster and its members - only if application_decommission_cluster
+# node       the node agent and its node, on the node host - only if
+#            application_decommission_node; traditional_application_remove_node.yml
+#
+# all        every step above but the node, in order - a command-line run
+application_step: all
+
+# A resource the application declared is KEPT when another application of the
+# catalogue declares it too, or when another installed application is bound to
+# it in the cell - its JNDI name, its library - or, for a J2C alias, when a
+# datasource or a connection factory that stays presents it. The plan says
+# which, and why.
+
+# Remove the cluster the application ran on, with its members, once nothing
+# else is mapped to it. Off by default: a cluster usually outlives one
+# application. In AWX, a survey question.
+application_decommission_cluster: false
+
+# Then remove the node agent and its node from the cell - removeNode on the
+# node host - when no member of any other cluster and no other application is
+# left on it. Requires the cluster removal. Off by default.
+application_decommission_node: false
+
+# And delete the managed profile on disk after removeNode.
+application_decommission_delete_profile: false

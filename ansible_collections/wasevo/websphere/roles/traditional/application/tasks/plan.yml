@@ -1,0 +1,176 @@
+---
+# The decommissioning plan: what goes, what stays, and why.
+#
+# A resource the application declared is removed unless something else still
+# needs it:
+#
+#   * another application of the catalogue declares it too (same name);
+#   * another INSTALLED application is bound to it in the cell - a datasource
+#     or a JMS resource by its JNDI name, a shared library by its name;
+#   * for a J2C alias: a datasource or a connection factory that STAYS still
+#     presents it.
+#
+# The cluster goes only if asked (application_decommission_cluster) and no
+# other application is mapped to it. The node goes only if asked
+# (application_decommission_node), with the cluster, and when nothing else
+# needs it: no application server left on it once the cluster's members are
+# gone - clustered or standalone - no application mapped to one of its
+# servers, and no resource (JDBC, JMS, library, resource adapter...) scoped to
+# the node or to a server that stays. Resources scoped to the members being
+# removed go with them and do not hold the node.
+#
+# In an AWX workflow this is node 0: the plan is passed to the next nodes with
+# set_stats, so every node removes exactly what this one decided - even if a
+# later node is relaunched alone, it reads the same plan from the workflow's
+# artifacts. A step run with no plan in its variables computes it again.
+
+- name: What the other installed applications still use
+  wasevo.websphere.was_application_refs_info:
+    exclude: ["{{ application.name }}"]
+    cluster: "{{ application.target.cluster if application.target.type == 'cluster' else omit }}"
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: _refs
+
+- name: Compute the plan
+  ansible.builtin.set_fact:
+    application_decommission_plan: >-
+      {%- set kinds = ['connection_factories', 'queues', 'topics', 'activation_specs'] -%}
+      {%- set others = was_applications | rejectattr('name', 'equalto', application.name) | list -%}
+      {%- set o = {'variables': [], 'j2c_aliases': [], 'datasources': [], 'shared_libraries': [], 'jms': []} -%}
+      {%- for other in others -%}
+      {%-   set r = other.resources | default({}) -%}
+      {%-   for fam in ['variables', 'j2c_aliases', 'datasources', 'shared_libraries'] -%}
+      {%-     set _ = o[fam].extend(r[fam] | default([]) | map(attribute='name') | list) -%}
+      {%-   endfor -%}
+      {%-   for kind in kinds -%}
+      {%-     set _ = o['jms'].extend((r.jms | default({}))[kind] | default([]) | map(attribute='name') | list) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- set res = application.resources -%}
+      {%- set remove = {'variables': [], 'j2c_aliases': [], 'datasources': [], 'shared_libraries': [], 'jms': {}} -%}
+      {%- set keep = [] -%}
+      {%- for v in res.variables -%}
+      {%-   if v.name in o.variables -%}{%- set _ = keep.append('variable ' ~ v.name ~ ': declared by another application') -%}
+      {%-   else -%}{%- set _ = remove.variables.append(v) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- for lib in res.shared_libraries -%}
+      {%-   if lib.name in o.shared_libraries -%}
+      {%- set _ = keep.append('shared library ' ~ lib.name ~ ': declared by another application') -%}
+      {%-   elif lib.name in _refs.libraries -%}
+      {%- set _ = keep.append('shared library ' ~ lib.name ~ ': bound to another installed application') -%}
+      {%-   else -%}{%- set _ = remove.shared_libraries.append(lib) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- for ds in res.datasources -%}
+      {%-   if ds.name in o.datasources -%}{%- set _ = keep.append('datasource ' ~ ds.name ~ ': declared by another application') -%}
+      {%-   elif ds.jndi_name | default('') in _refs.jndi -%}
+      {%- set _ = keep.append('datasource ' ~ ds.name ~ ': ' ~ ds.jndi_name ~ ' is bound to another installed application') -%}
+      {%-   else -%}{%- set _ = remove.datasources.append(ds) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- for key, value in res.jms.items() -%}
+      {%-   if key in kinds -%}
+      {%-     set kept_list = [] -%}
+      {%-     for item in value -%}
+      {%-       if item.name in o.jms -%}{%- set _ = keep.append('JMS ' ~ item.name ~ ': declared by another application') -%}
+      {%-       elif item.jndi_name | default('') in _refs.jndi -%}
+      {%- set _ = keep.append('JMS ' ~ item.name ~ ': ' ~ item.jndi_name ~ ' is bound to another installed application') -%}
+      {%-       else -%}{%- set _ = kept_list.append(item) -%}{%- endif -%}
+      {%-     endfor -%}
+      {%-     if kept_list | length > 0 -%}{%- set _ = remove.jms.update({key: kept_list}) -%}{%- endif -%}
+      {%-   else -%}
+      {%-     set _ = remove.jms.update({key: value}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- if (remove.jms.keys() | list | intersect(kinds) | length) == 0 -%}{%- set _ = remove.update({'jms': {}}) -%}{%- endif -%}
+      {%- set leaving = (remove.datasources | map(attribute='name') | list)
+                        + ((remove.jms.connection_factories | default([])) | map(attribute='name') | list) -%}
+      {%- for alias in res.j2c_aliases -%}
+      {%-   set users = (_refs.auth_aliases[alias.name] | default([])) | reject('in', leaving) | list -%}
+      {%-   if alias.name in o.j2c_aliases -%}{%- set _ = keep.append('J2C alias ' ~ alias.name ~ ': declared by another application') -%}
+      {%-   elif users | length > 0 -%}{%- set _ = keep.append('J2C alias ' ~ alias.name ~ ': still presented by ' ~ users | join(', ')) -%}
+      {%-   else -%}{%- set _ = remove.j2c_aliases.append({'name': alias.name, 'user': alias.user | default('')}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set cluster = {'name': '', 'remove': false, 'reason': 'not asked'} -%}
+      {%- set node = {'names': [], 'remove': false, 'reason': 'not asked'} -%}
+      {%- if application.target.type == 'cluster' -%}
+      {%-   set cname = application.target.cluster -%}
+      {%-   set mapped = [] -%}
+      {%-   for other, info in _refs.applications.items() -%}
+      {%-     if ('cluster=' ~ cname) in info.targets -%}{%- set _ = mapped.append(other) -%}{%- endif -%}
+      {%-   endfor -%}
+      {%-   set _ = cluster.update({'name': cname}) -%}
+      {%-   if application_decommission_cluster | bool -%}
+      {%-     if mapped | length > 0 -%}{%- set _ = cluster.update({'reason': 'kept: ' ~ mapped | join(', ') ~ ' still mapped to it'}) -%}
+      {%-     else -%}{%- set _ = cluster.update({'remove': true, 'reason': 'no other application is mapped to it'}) -%}{%- endif -%}
+      {%-   endif -%}
+      {%-   set nodes = (_refs.cluster_members[cname] | default([])) | map('regex_replace', '/.*$', '') | unique | list -%}
+      {%-   set _ = node.update({'names': nodes}) -%}
+      {%-   if application_decommission_node | bool -%}
+      {%-     set busy = [] -%}
+      {%-     set leaving_members = _refs.cluster_members[cname] | default([]) -%}
+      {%-     for n in nodes -%}
+      {%-       set inspected = _refs.nodes[n] | default({'servers': [], 'resources': []}) -%}
+      {%-       set going = leaving_members | select('match', '^' ~ (n | regex_escape) ~ '/')
+                                         | map('regex_replace', '^[^/]*/', '') | list -%}
+      {%-       for s in inspected.servers -%}
+      {%-         if s not in going -%}{%- set _ = busy.append('application server ' ~ n ~ '/' ~ s) -%}{%- endif -%}
+      {%-       endfor -%}
+      {%-       for r in inspected.resources -%}
+      {%-         set on = r | regex_search(' on (\\S+)$', '\\1') -%}
+      {%-         if not (on and on[0] in going) -%}{%- set _ = busy.append(r ~ ' (node ' ~ n ~ ')') -%}{%- endif -%}
+      {%-       endfor -%}
+      {%-     endfor -%}
+      {%-     for other_cluster, members in _refs.cluster_members.items() -%}
+      {%-       if other_cluster != cname -%}
+      {%-         for m in members -%}
+      {%- if (m | regex_replace('/.*$', '')) in nodes -%}
+      {%- set _ = busy.append(other_cluster ~ ' (' ~ m ~ ')') -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     for other, info in _refs.applications.items() -%}
+      {%-       for t in info.targets -%}
+      {%-         if t.startswith('node=') and (t | regex_replace('^node=([^,]*),.*$', '\\1')) in nodes -%}
+      {%- set _ = busy.append(other ~ ' on ' ~ t) -%}
+      {%- endif -%}
+      {%-       endfor -%}
+      {%-     endfor -%}
+      {%-     if not cluster.remove -%}{%- set _ = node.update({'reason': 'kept: the cluster stays (' ~ cluster.reason ~ ')'}) -%}
+      {%-     elif busy | length > 0 -%}{%- set _ = node.update({'reason': 'kept: still hosts ' ~ busy | join(', ')}) -%}
+      {%-     else -%}{%- set _ = node.update({'remove': true, 'reason': 'nothing else runs on it'}) -%}{%- endif -%}
+      {%-   endif -%}
+      {%- elif application_decommission_cluster | bool or application_decommission_node | bool -%}
+      {%-   set _ = cluster.update({'reason': 'kept: the application ran on a server, not on a cluster'}) -%}
+      {%-   set _ = node.update({'reason': 'kept: the application ran on a server, not on a cluster'}) -%}
+      {%- endif -%}
+      {{ {'application': application.name, 'target': application.target, 'remove': remove, 'keep': keep,
+          'cluster': cluster, 'node': node} }}
+
+- name: Pass the plan on to the next workflow nodes
+  ansible.builtin.set_stats:
+    data:
+      application_decommission_plan: "{{ application_decommission_plan }}"
+    per_host: false
+
+- name: The plan
+  ansible.builtin.debug:
+    msg:
+      - "application : {{ application.name }} on {{ application.target }}"
+      - "remove      : {{ application_decommission_plan.remove.variables | length }} variable(s)
+         {{ application_decommission_plan.remove.variables | map(attribute='name') | list }},
+         {{ application_decommission_plan.remove.j2c_aliases | length }} alias(es)
+         {{ application_decommission_plan.remove.j2c_aliases | map(attribute='name') | list }},
+         {{ application_decommission_plan.remove.datasources | length }} datasource(s)
+         {{ application_decommission_plan.remove.datasources | map(attribute='name') | list }},
+         {{ application_decommission_plan.remove.shared_libraries | length }} librar(ies)
+         {{ application_decommission_plan.remove.shared_libraries | map(attribute='name') | list }},
+         JMS {{ application_decommission_plan.remove.jms | dict2items | rejectattr('key', 'equalto', 'mq_connection')
+                | map(attribute='value') | flatten | map(attribute='name') | list }}"
+      - "keep        : {{ application_decommission_plan.keep | join(' | ') | default('nothing', true) }}"
+      - "cluster     : {{ application_decommission_plan.cluster.name | default('-', true) }} -
+         {{ 'REMOVED' if application_decommission_plan.cluster.remove else application_decommission_plan.cluster.reason }}"
+      - "node        : {{ application_decommission_plan.node.names | join(', ') | default('-', true) }} -
+         {{ 'REMOVED' if application_decommission_plan.node.remove else application_decommission_plan.node.reason }}"

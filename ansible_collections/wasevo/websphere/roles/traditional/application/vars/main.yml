@@ -1,0 +1,5 @@
+---
+# The checksum of the archive last deployed, for an application whose archive
+# the cell does not keep as a file in its configuration repository. Next to the
+# rest of the WAS data, not in the repository and not in /tmp.
+_app_record: "{{ was_data_base_dir }}/applications/{{ application.name }}.sha1"

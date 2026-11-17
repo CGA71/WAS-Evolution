@@ -280,6 +280,104 @@ payload lib_absent <<'JSON'
  "check_mode":false,"save_config":true,"sync_nodes":true}
 JSON
 
+# --------------------------------------------------------------------------
+# WebSphere variables and applications
+# --------------------------------------------------------------------------
+payload var_create <<'JSON'
+{"resource":"variable","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "variables":[{"name":"ORDERS_HOME","value":"/app/data/orders","description":""},
+                        {"name":"ORDERS_URL","value":"https://orders.example","description":"backend"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload var_change <<'JSON'
+{"resource":"variable","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "variables":[{"name":"ORDERS_HOME","value":"/app/data/orders2","description":""},
+                        {"name":"ORDERS_URL","value":"https://orders.example","description":"backend"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload var_absent <<'JSON'
+{"resource":"variable","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "variables":[{"name":"ORDERS_HOME"},{"name":"ORDERS_URL"}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_lib <<'JSON'
+{"resource":"shared_library","state":"present",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "libraries":[{"name":"appLib","class_path":["/s/app.jar"],"native_path":[],
+                         "description":"","isolated":false}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_lib_absent <<'JSON'
+{"resource":"shared_library","state":"absent",
+ "params":{"scope":{"type":"cluster","cluster":"ClusterEXT"},
+           "libraries":[{"name":"appLib","class_path":[]}]},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+# The resource reference is what a real EAR carries in its deployment
+# descriptor; the fake takes it as an install option so a binding exists.
+payload app_install <<'JSON'
+{"resource":"application","state":"present",
+ "params":{"name":"StubApp","archive":"/s/StubApp-1.0.ear",
+           "target":{"type":"cluster","cluster":"ClusterEXT"},
+           "virtual_host":"default_host","map_web_modules":true,"shared_libraries":["appLib"],
+           "install_options":["-MapResRefToEJB",[["web","","web.war","jdbc/ref","javax.sql.DataSource","jdbc/stubDS"]]],
+           "reinstall":false,"start":true,"ready_timeout":5},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_reinstall <<'JSON'
+{"resource":"application","state":"present",
+ "params":{"name":"StubApp","archive":"/s/StubApp-1.1.ear",
+           "target":{"type":"cluster","cluster":"ClusterEXT"},
+           "virtual_host":"default_host","map_web_modules":true,"shared_libraries":["appLib"],
+           "install_options":[],"reinstall":true,"start":true,"ready_timeout":5},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_other <<'JSON'
+{"resource":"application","state":"present",
+ "params":{"name":"OtherApp","archive":"/s/other.war","context_root":"/other",
+           "target":{"type":"server","node":"STUBNode01","server":"ClusterEXT_STUBNode01_01"},
+           "virtual_host":"default_host","map_web_modules":true,"shared_libraries":["appLib"],
+           "install_options":["-MapResRefToEJB",[["web","","web.war","jdbc/ref","javax.sql.DataSource","jdbc/sharedDS"]]],
+           "reinstall":false,"start":true,"ready_timeout":5},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_refs <<'JSON'
+{"resource":"application_refs","state":"present",
+ "params":{"exclude":["StubApp"]},
+ "check_mode":false,"save_config":false,"sync_nodes":false}
+JSON
+
+payload app_absent <<'JSON'
+{"resource":"application","state":"absent",
+ "params":{"name":"StubApp","start":true},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_other_absent <<'JSON'
+{"resource":"application","state":"absent",
+ "params":{"name":"OtherApp","start":true},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
+payload app_no_cluster <<'JSON'
+{"resource":"application","state":"present",
+ "params":{"name":"NopeApp","archive":"/s/nope.ear",
+           "target":{"type":"cluster","cluster":"ClusterNOPE"},
+           "shared_libraries":[],"install_options":[],"reinstall":false,"start":true},
+ "check_mode":false,"save_config":true,"sync_nodes":true}
+JSON
+
 payload sib <<'JSON'
 {"resource":"sibus","state":"present",
  "params":{"bus":"StubBus","description":"stub","security":false,
@@ -739,6 +837,47 @@ expect_value() {
     fi
 }
 
+# One list field of the driver's answer ("before", which is what a read-only
+# handler read), space-separated.
+answer_field() {
+    "$PY" "$STUB/shim.py" "$DRIVER" "$WORK/$1.json" 2>&1 \
+      | sed -n '/<<<VSSP-JSON>>>/,/<<<END-VSSP-JSON>>>/p' \
+      | sed '1d;$d' \
+      | "$PY" -c '
+import json, sys
+print(" ".join((json.load(sys.stdin).get("before") or {}).get(sys.argv[1]) or []))
+' "$2"
+}
+
+# How many times an application was started or stopped, from the fake cell.
+app_events() {
+    "$PY" -c '
+import json, os, sys
+events = json.load(open(os.environ["WAS_SIM_STATE"])).get("app_events", [])
+print(sum(1 for e in events if e.startswith(sys.argv[1] + " " + sys.argv[2] + " ")))
+' "$1" "$2"
+}
+
+# Members of one cluster, as the cluster object lists them.
+cluster_size() {
+    "$PY" -c '
+import json, os, sys
+for cluster in json.load(open(os.environ["WAS_SIM_STATE"]))["clusters"].values():
+    if cluster["name"] == sys.argv[1]:
+        print(len(cluster.get("member_ids", []))); sys.exit(0)
+print(0)
+' "$1"
+}
+
+app_value() {
+    "$PY" -c '
+import json, os, sys
+apps = json.load(open(os.environ["WAS_SIM_STATE"])).get("applications", {})
+print(apps.get(sys.argv[1], {}).get(sys.argv[2], "absent"))
+' "$1" "$2"
+}
+
+
 echo "=== module -> driver -> handler -> fake cell ==="
 expect "create"                             present     true
 expect "replay (idempotency)"               present     false
@@ -1098,6 +1237,36 @@ expect "delete"                                 lib_absent           true
 expect "replay delete"                          lib_absent           false
 
 echo
+echo "=== WebSphere variables ==="
+expect "create two variables"                   var_create           true
+expect "replay (idempotency)"                   var_create           false
+expect "a value changed"                        var_change           true
+expect "replay (idempotency)"                   var_change           false
+expect "delete"                                 var_absent           true
+expect "replay delete"                          var_absent           false
+
+echo
+echo "=== applications: install, reinstall, references, uninstall ==="
+expect "the library the applications bind to"  app_lib              true
+expect "install on the cluster"                 app_install          true
+expect "replay (idempotency)"                   app_install          false
+expect_value "started on each member of the cluster" \
+    "$(app_events start StubApp)" "$(cluster_size ClusterEXT)"
+expect "a second application, on one server"    app_other            true
+expect_value "what OtherApp still uses, StubApp left out" \
+    "$(answer_field app_refs jndi) $(answer_field app_refs libraries)" "jdbc/sharedDS appLib"
+expect "a changed archive is reinstalled"       app_reinstall        true
+expect_value "stopped on each member before the uninstall" \
+    "$(app_events stop StubApp)" "$(cluster_size ClusterEXT)"
+expect_value "the new archive is the one installed" \
+    "$(app_value StubApp archive)" "/s/StubApp-1.1.ear"
+expect "uninstall"                              app_absent           true
+expect "replay uninstall"                       app_absent           false
+expect "uninstall the second"                   app_other_absent     true
+expect "the library, once nothing uses it"      app_lib_absent       true
+expect_refusal "a cluster that does not exist"  app_no_cluster       "does not exist"
+
+echo
 echo "=== service integration bus ==="
 engine_store() {
     "$PY" -c '
@@ -1337,7 +1506,7 @@ syncs="$("$PY" -c '
 import json, os
 print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 ')"
-# Fifty effective changes above. The cluster: created, members created,
+# Sixty effective changes above. The cluster: created, members created,
 # a port pinned, a member drained, a member deleted, the cluster deleted (6).
 # The aliases: created, password rotated, deleted (3). JDBC: provider created,
 # its jar replaced, an alias created, a datasource created, its pool changed,
@@ -1350,15 +1519,17 @@ print(json.load(open(os.environ["WAS_SIM_STATE"])).get("syncs", 0))
 # rotated, custom (4). SSL: created, removed (2). Certificates: a node's
 # renewed, a request made, its answer received, a signer retrieved again (4).
 # Policy sets: created, an attribute changed, the copy deleted (3).
+# Variables: created, changed, deleted (3). Applications: a library, an
+# install, a second install, a reinstall, two uninstalls, the library deleted (7).
 # Every replay, every check run, the password left alone under on_create, the
 # store drift left alone and every refusal must add none - a node
 # synchronisation on a cell that did not change is a ripple through the estate
 # for nothing.
-if [ "$syncs" = "50" ]; then
-    echo "  ok     50 syncs for 50 effective changes, none for the replays, the"
+if [ "$syncs" = "60" ]; then
+    echo "  ok     60 syncs for 60 effective changes, none for the replays, the"
     echo "         check runs, the untouched password, the drift or the refusals"
 else
-    echo "  FAIL   expected 50 syncs, state reports $syncs"
+    echo "  FAIL   expected 60 syncs, state reports $syncs"
     fail=1
 fi
 

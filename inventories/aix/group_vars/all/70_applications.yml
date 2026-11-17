@@ -1,0 +1,43 @@
+---
+# The applications of the AIX cell - the catalogue the application role reads.
+#
+# Each application is declared ONCE, with what it needs in the cell. Deploying
+# creates those resources, then installs the archive; decommissioning removes
+# them again - except what another application of this catalogue declares too,
+# or what another installed application is still bound to. See
+# roles/traditional/application/defaults/main.yml for every key.
+#
+#   deploy        traditional_application_deploy.yml        -e application_name=<name>
+#   decommission  traditional_application_decommission.yml  -e application_name=<name>
+#                 in AWX: the workflow "WAS AIX - Application: decommission"
+#
+# The archives are read on the deployment manager from the applications share,
+# mounted at application_binaries_dir (below the binaries mount by default).
+#
+# An example, to copy and adapt - the names are placeholders:
+#
+# was_applications:
+#   - name: OrdersApp
+#     archive: orders/OrdersApp-1.4.2.ear
+#     shared_libraries: [ordersCommonLibrary]
+#     resources:
+#       variables:
+#         - {name: ORDERS_HOME, value: /app/data/orders}
+#       j2c_aliases:
+#         - {name: ordersDbAlias, user: orders, password_env: ORDERS_DB_PASSWORD}
+#       datasources:
+#         - name: ordersDS
+#           jndi_name: jdbc/orders
+#           vendor: db2_luw
+#           driver_dir: /app/binaries/was90/jdbcprovider
+#           driver_jar: db2jcc4.jar
+#           auth_alias: ordersDbAlias
+#           properties: {databaseName: ORDERS, serverName: db.example.internal, portNumber: 50000}
+#       shared_libraries:
+#         - {name: ordersCommonLibrary, dir: /mnt/binaries/applications/orders/lib}
+#   - name: CatalogueWeb
+#     archive: catalogue/catalogue.war
+#     context_root: /catalogue
+was_applications: []
+
+application_binaries_dir: "{{ was_install_binaries_base_dir }}/applications"

@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: traditional_application
+  author: neo
+  description: >-
+    Deploys an EAR, a WAR or an EJB JAR on a cluster or a server with the WebSphere resources it declares
+    (variables, J2C aliases, datasources, shared libraries, JMS), and decommissions it step by step - its
+    resources, and optionally its cluster and its node.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: AIX
+    - name: EL
+
+dependencies: []

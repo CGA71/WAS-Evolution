@@ -1,0 +1,27 @@
+---
+# Deploy one application of the catalogue: the resources it declares, then
+# the archive - installed, or reinstalled when it changed - and started.
+#
+#   ansible-playbook -i inventories/aix <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr -e application_name=<name>
+#
+# In AWX, "WAS AIX - Application: deploy", its survey asking for the
+# application. The archive is read on the deployment manager from the
+# applications share (application_binaries_dir). See roles/traditional/application.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: Deploy the application, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The application and its resources
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.application
+      vars:
+        application_state: present

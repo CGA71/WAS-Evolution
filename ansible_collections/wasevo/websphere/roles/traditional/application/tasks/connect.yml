@@ -1,0 +1,22 @@
+---
+# The Jython driver on the deployment manager, and the profile wsadmin runs in.
+
+- name: Stage the Jython driver on the deployment manager
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.config
+
+- name: The deployment manager profile must exist on this host
+  ansible.builtin.stat:
+    path: "{{ was_profile_path }}/bin/wsadmin.sh"
+  register: _app_wsadmin
+  check_mode: false
+
+- name: Refuse clearly when it does not
+  ansible.builtin.fail:
+    msg: >-
+      No wsadmin at {{ was_profile_path }}/bin/wsadmin.sh on
+      {{ inventory_hostname }}. Applications are installed through the
+      deployment manager - created by the profile job. Run this on the dmgr
+      group (-e config_dmgr_hosts=dmgr on an inventory with no environment
+      group).
+  when: not (_app_wsadmin.stat.exists | default(false))

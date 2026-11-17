@@ -1,0 +1,135 @@
+---
+# The archive, where wsadmin will read it - and its checksum, which decides
+# whether an installed application is reinstalled.
+
+# ---------------------------------------------------------------------------
+# From a mount point (application_source: mount) - today
+# ---------------------------------------------------------------------------
+
+- name: From the mount point
+  when: application_source == 'mount'
+  block:
+
+    - name: The archive declared
+      ansible.builtin.assert:
+        that:
+          - application.archive | default('') | length > 0
+        fail_msg: >-
+          {{ application.name }} declares no archive. With application_source
+          mount, archive is a path under {{ application_binaries_dir }}, or an
+          absolute one.
+        success_msg: "archive {{ application.archive }}"
+
+    - name: Where it is
+      ansible.builtin.set_fact:
+        application_archive: >-
+          {{ application.archive if application.archive is match('/')
+             else application_binaries_dir ~ '/' ~ application.archive }}
+
+    # Same rule as the IBM media: a directory that merely exists is not the
+    # share, and an archive read from it would be whatever was left there.
+    - name: The share holding it must be mounted
+      ansible.builtin.shell:
+        cmd: df -Pk "{{ application_binaries_dir }}" | tail -1
+      register: _app_df
+      changed_when: false
+      check_mode: false
+      when: application_require_mount | bool
+
+    - name: The applications directory must be on a mounted share
+      ansible.builtin.assert:
+        that:
+          - (_app_df.stdout | trim).split() | last != '/'
+        fail_msg: >-
+          {{ application_binaries_dir }} lives on the root filesystem
+          ({{ (_app_df.stdout | trim).split() | first }}): the applications
+          share is not mounted. Mount it, or set application_require_mount=false
+          for a directory filled by hand.
+        success_msg: >-
+          {{ application_binaries_dir }} on {{ (_app_df.stdout | trim).split() | first }},
+          mounted on {{ (_app_df.stdout | trim).split() | last }}
+      when: application_require_mount | bool
+
+    - name: Read the archive
+      ansible.builtin.stat:
+        path: "{{ application_archive }}"
+        # sha1: the algorithm find computes for the copy the cell stores, and
+        # the two are compared.
+        checksum_algorithm: sha1
+      register: _app_archive_stat
+      check_mode: false
+
+    - name: The archive must be there
+      ansible.builtin.assert:
+        that:
+          - _app_archive_stat.stat.exists
+          - _app_archive_stat.stat.isreg
+          - _app_archive_stat.stat.readable
+          - application_archive | lower is regex('\.(ear|war|jar)$')
+        fail_msg: >-
+          {{ application_archive }} is not a readable .ear, .war or .jar on
+          {{ inventory_hostname }}. It is read on the deployment manager, by
+          wsadmin, from the share mounted at {{ application_binaries_dir }}.
+        success_msg: "{{ application_archive }} ({{ _app_archive_stat.stat.size | default(0) | human_readable }})"
+
+# ---------------------------------------------------------------------------
+# From an artifact repository (application_source: repository) - later
+# ---------------------------------------------------------------------------
+# Kept here, commented, so the switch is a matter of uncommenting rather than
+# of designing. The archive is downloaded to the deployment manager, verified
+# against the checksum the repository publishes, and installed from there; the
+# rest of the role does not change.
+#
+# - name: From the artifact repository
+#   when: application_source == 'repository'
+#   vars:
+#     _a: "{{ application.artifact }}"
+#     _path: >-
+#       {{ _a.group | replace('.', '/') }}/{{ _a.id }}/{{ _a.version }}/{{ _a.id }}-{{ _a.version }}.{{ _a.type | default('ear') }}
+#   block:
+#     - name: The staging directory
+#       ansible.builtin.file:
+#         path: "{{ application_staging_dir }}"
+#         state: directory
+#         mode: "0750"
+#
+#     - name: The checksum the repository publishes
+#       ansible.builtin.uri:
+#         url: "{{ application_repository_url }}/{{ _path }}.sha256"
+#         headers:
+#           Authorization: "Bearer {{ lookup('ansible.builtin.env', application_repository_auth_env) }}"
+#         return_content: true
+#         use_proxy: false
+#       register: _app_remote_sum
+#       no_log: true
+#
+#     - name: Download the archive, verified
+#       ansible.builtin.get_url:
+#         url: "{{ application_repository_url }}/{{ _path }}"
+#         dest: "{{ application_staging_dir }}/{{ _path | basename }}"
+#         checksum: "sha256:{{ _app_remote_sum.content | trim | split | first }}"
+#         headers:
+#           Authorization: "Bearer {{ lookup('ansible.builtin.env', application_repository_auth_env) }}"
+#         use_proxy: false
+#         mode: "0640"
+#       no_log: true
+#
+#     - name: Where it is
+#       ansible.builtin.set_fact:
+#         application_archive: "{{ application_staging_dir }}/{{ _path | basename }}"
+#
+#     - name: Read the archive
+#       ansible.builtin.stat:
+#         path: "{{ application_archive }}"
+#         checksum_algorithm: sha256
+#       register: _app_archive_stat
+
+- name: Only the mount point is implemented today
+  ansible.builtin.assert:
+    that:
+      - application_source == 'mount'
+    fail_msg: >-
+      application_source is {{ application_source }}. The artifact repository
+      is prepared in roles/traditional/application/tasks/archive.yml, commented;
+      uncomment it there to use it.
+    success_msg: "archives from the mount point"

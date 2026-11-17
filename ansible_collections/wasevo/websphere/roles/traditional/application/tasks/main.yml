@@ -1,0 +1,24 @@
+---
+# One application of the catalogue, deployed or decommissioned.
+#
+#   application_state: present          deploy - resources, then the archive
+#   application_state: absent           decommission, application_step by step
+#
+# On the deployment manager: the archive is read where wsadmin runs, and every
+# change goes through its master configuration repository. The node removal is
+# the one step that runs elsewhere - on the node host - and has its own
+# playbook, traditional_application_remove_node.yml.
+
+- name: Select the application and resolve the model
+  ansible.builtin.include_tasks: select.yml
+  tags: [application, always]
+
+- name: Deploy
+  ansible.builtin.include_tasks: deploy.yml
+  when: application_state | default('present') == 'present'
+  tags: [application, deploy]
+
+- name: Decommission
+  ansible.builtin.include_tasks: decommission.yml
+  when: application_state | default('present') == 'absent'
+  tags: [application, decommission]

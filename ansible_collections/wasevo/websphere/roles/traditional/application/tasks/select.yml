@@ -1,0 +1,95 @@
+---
+# Which application, where it runs, and what it declares - resolved once.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+
+- name: An application must be named
+  ansible.builtin.assert:
+    that:
+      - application_name | default('') | trim | length > 0
+    fail_msg: >-
+      No application_name. The run acts on one application of the catalogue
+      (was_applications) and does not pick one: in AWX answer the survey
+      question, on the command line pass -e application_name=<name>. Declared:
+      {{ was_applications | map(attribute='name') | join(', ') | default('none', true) }}.
+    success_msg: "application {{ application_name }}"
+
+- name: The application must be declared
+  ansible.builtin.assert:
+    that:
+      - was_applications | selectattr('name', 'equalto', application_name) | list | length == 1
+    fail_msg: >-
+      {{ application_name }} is declared
+      {{ was_applications | selectattr('name', 'equalto', application_name) | list | length }}
+      time(s) in was_applications, and must be declared exactly once - what it
+      needs in the cell is read from that declaration, at deployment and at
+      decommissioning alike. Declared:
+      {{ was_applications | map(attribute='name') | join(', ') | default('none', true) }}.
+    success_msg: "{{ application_name }} is declared"
+
+- name: Its declaration, with the defaults filled in
+  ansible.builtin.set_fact:
+    application: >-
+      {{ _declared | combine({
+           'target': _target,
+           'resources': {
+             'variables': _res.variables | default([]),
+             'j2c_aliases': _res.j2c_aliases | default([]),
+             'datasources': _res.datasources | default([]),
+             'shared_libraries': _res.shared_libraries | default([]),
+             'jms': _res.jms | default({}),
+           },
+           'shared_libraries': _declared.shared_libraries | default([]),
+           'start': _declared.start | default(true),
+           'install_options': _declared.install_options | default([]),
+           'virtual_host': _declared.virtual_host | default('default_host'),
+         }) }}
+  vars:
+    _declared: "{{ was_applications | selectattr('name', 'equalto', application_name) | first }}"
+    _res: "{{ _declared.resources | default({}) }}"
+    # "cluster", or nothing, is the run's cluster; a dict is taken as written.
+    _target: >-
+      {{ {'type': 'cluster', 'cluster': was_cluster_name}
+         if (_declared.target | default('cluster')) == 'cluster'
+         else _declared.target }}
+
+- name: The target must be one this topology has
+  ansible.builtin.assert:
+    that:
+      - application.target.type in ['cluster', 'server']
+      - application.target.type == 'server' or (was_can_cluster | bool)
+      - application.target.type == 'cluster' or
+        (application.target.node | default('') | length > 0 and application.target.server | default('') | length > 0)
+    fail_msg: >-
+      {{ application.name }} targets {{ application.target }}. A target is
+      "cluster" (the run's cluster), {type: cluster, cluster: X}, or
+      {type: server, node: N, server: S}; was_topology is {{ was_topology }},
+      {{ 'which has a cluster' if was_can_cluster | bool else 'which has no cluster - name the server' }}.
+    success_msg: >-
+      target {{ ('cluster ' ~ application.target.cluster) if application.target.type == 'cluster'
+                else ('server ' ~ application.target.node ~ '/' ~ application.target.server) }}
+
+- name: Administrative credentials must be supplied to reach the cell
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | default('') | length > 0
+      - was_admin_password | default('') | length > 0
+    fail_msg: >-
+      Reaching a cell with administrative security enabled needs
+      was_admin_user and was_admin_password - the deployment manager's
+      administrator. Supply them from an AWX credential or a vault.
+    success_msg: "administrative credentials supplied"
+
+# The scope the application's resources default to: where it runs.
+- name: Where its resources live by default
+  ansible.builtin.set_fact:
+    application_scope: >-
+      {{ application.target if application.target.type == 'cluster'
+         else {'type': 'server', 'node': application.target.node, 'server': application.target.server} }}

@@ -1,0 +1,53 @@
+{
+  "name": "Application decommissioning",
+  "description": "Decommission one application of the catalogue and the resources it declared; optionally its cluster and its node.",
+  "spec": [
+    {
+      "question_name": "Target environment",
+      "question_description": "The environment code the cell is built as.",
+      "variable": "was_environment",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 32,
+      "default": ""
+    },
+    {
+      "question_name": "Application",
+      "question_description": "A name declared in was_applications.",
+      "variable": "application_name",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 128,
+      "default": ""
+    },
+    {
+      "question_name": "Also remove the cluster",
+      "question_description": "Only if no other application is mapped to it - the plan says.",
+      "variable": "application_decommission_cluster",
+      "type": "multiplechoice",
+      "choices": ["false", "true"],
+      "required": true,
+      "default": "false"
+    },
+    {
+      "question_name": "Also remove the node agent and its node",
+      "question_description": "Needs the cluster removal. Only if the node has no application server and no resource left - the plan says.",
+      "variable": "application_decommission_node",
+      "type": "multiplechoice",
+      "choices": ["false", "true"],
+      "required": true,
+      "default": "false"
+    },
+    {
+      "question_name": "And delete the node profile on disk",
+      "question_description": "manageprofiles -delete after removeNode.",
+      "variable": "application_decommission_delete_profile",
+      "type": "multiplechoice",
+      "choices": ["false", "true"],
+      "required": true,
+      "default": "false"
+    }
+  ]
+}

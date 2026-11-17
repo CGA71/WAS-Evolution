@@ -1,0 +1,146 @@
+---
+# Deploy: the archive found, the resources the application declares created by
+# their own roles, then the application installed - or reinstalled when its
+# archive changed - and started.
+
+- name: The archive
+  ansible.builtin.include_tasks: archive.yml
+
+# ---------------------------------------------------------------------------
+# The resources, before the application that looks them up
+# ---------------------------------------------------------------------------
+# Each family is handed to the role that owns it, with the application's
+# declaration and its scope as the default: nothing is reimplemented here, and
+# a resource behaves exactly as if its own job had created it.
+
+- name: Connect to the deployment manager
+  ansible.builtin.include_tasks: connect.yml
+
+- name: WebSphere variables
+  ansible.builtin.include_tasks: variables.yml
+  vars:
+    _variables_state: present
+    _variables: "{{ application.resources.variables }}"
+  when: application.resources.variables | length > 0
+
+- name: J2C authentication aliases
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.j2c_alias
+  vars:
+    j2c_aliases: "{{ application.resources.j2c_aliases }}"
+    j2c_state: present
+  when: application.resources.j2c_aliases | length > 0
+
+- name: Shared libraries
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.shared_library
+  vars:
+    shared_libraries: "{{ application.resources.shared_libraries }}"
+    library_scope: "{{ application_scope }}"
+    library_state: present
+  when: application.resources.shared_libraries | length > 0
+
+- name: JDBC providers and datasources
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.jdbc
+  vars:
+    datasources: "{{ application.resources.datasources }}"
+    jdbc_scope: "{{ application_scope }}"
+    jdbc_state: present
+  when: application.resources.datasources | length > 0
+
+- name: JMS resources
+  ansible.builtin.include_role:
+    name: wasevo.websphere.traditional.jms
+  vars:
+    jms: "{{ application.resources.jms }}"
+    jms_scope: "{{ application_scope }}"
+    jms_state: present
+  when: application.resources.jms | length > 0
+
+# ---------------------------------------------------------------------------
+# Did the archive change?
+# ---------------------------------------------------------------------------
+# The cell keeps a copy of what it installed, in its configuration repository,
+# under applications/<name>.ear/. The application is reinstalled when no file
+# there carries the checksum of the archive declared - a new version, whatever
+# its file name. When the cell keeps no archive file there at all, the
+# checksum recorded by the last deployment is compared instead.
+
+- name: What the cell stores for it
+  ansible.builtin.find:
+    paths: "{{ was_profile_path }}/config/cells/{{ was_cell_name }}/applications/{{ application.name }}.ear"
+    patterns: ["*.ear", "*.war", "*.jar"]
+    file_type: file
+    get_checksum: true
+  register: _app_stored
+  check_mode: false
+
+- name: The checksum recorded by the last deployment
+  ansible.builtin.slurp:
+    src: "{{ _app_record }}"
+  register: _app_recorded
+  failed_when: false
+  check_mode: false
+  when: _app_stored.matched == 0
+
+- name: Decide whether it is reinstalled
+  ansible.builtin.set_fact:
+    application_reinstall: >-
+      {{ (application_force_reinstall | bool)
+         or (_app_stored.matched > 0 and _sum not in (_app_stored.files | map(attribute='checksum') | list))
+         or (_app_stored.matched == 0 and _recorded | length > 0 and _recorded != _sum) }}
+  vars:
+    _sum: "{{ _app_archive_stat.stat.checksum | default('') }}"
+    _recorded: >-
+      {{ (_app_recorded.content | default('') | b64decode | trim)
+         if (_app_recorded is defined and _app_recorded.content is defined) else '' }}
+
+# ---------------------------------------------------------------------------
+# The application
+# ---------------------------------------------------------------------------
+
+- name: Install the application
+  wasevo.websphere.was_application:
+    name: "{{ application.name }}"
+    archive: "{{ application_archive }}"
+    target: "{{ application.target }}"
+    context_root: "{{ application.context_root | default(omit) }}"
+    virtual_host: "{{ application.virtual_host }}"
+    map_web_modules: "{{ application.map_web_modules | default(application_archive | lower is not regex('\\.jar$')) }}"
+    shared_libraries: "{{ application.shared_libraries }}"
+    install_options: "{{ application.install_options }}"
+    reinstall: "{{ application_reinstall | bool }}"
+    start: "{{ application.start }}"
+    ready_timeout: "{{ application_ready_timeout }}"
+    profile_path: "{{ was_profile_path }}"
+    admin_user: "{{ was_admin_user }}"
+    admin_password: "{{ was_admin_password }}"
+    jython_dir: "{{ was_jython_dir }}"
+  register: _app_result
+
+- name: Where the deployed checksum is recorded
+  ansible.builtin.file:
+    path: "{{ _app_record | dirname }}"
+    state: directory
+    mode: "0750"
+  when: _app_result is changed
+
+- name: Record the checksum deployed
+  ansible.builtin.copy:
+    content: "{{ _app_archive_stat.stat.checksum }}\n"
+    dest: "{{ _app_record }}"
+    mode: "0640"
+  when: _app_result is changed
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "application : {{ application.name }} <- {{ application_archive }}"
+      - "target      : {{ application.target }}"
+      - "action      : {{ _app_result.action | default('none', true) }}"
+      - "resources   : {{ application.resources.variables | length }} variable(s),
+         {{ application.resources.j2c_aliases | length }} alias(es),
+         {{ application.resources.shared_libraries | length }} librar(ies),
+         {{ application.resources.datasources | length }} datasource(s),
+         JMS {{ 'declared' if application.resources.jms else 'none' }}"

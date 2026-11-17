@@ -1,0 +1,45 @@
+---
+# The last step of a decommissioning: the node agent and its node, removed
+# from the cell, on the node host - when asked, and when the plan allows it.
+#
+#   ansible-playbook -i inventories/aix <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr -e application_name=<name> \
+#       -e application_decommission_cluster=true -e application_decommission_node=true \
+#       [-e application_decommission_delete_profile=true]
+#
+# In AWX, the last node of "WAS AIX - Application: decommission": the plan
+# arrives from the plan node through set_stats. Run alone, the first play
+# computes it on the deployment manager - nothing is removed there.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: The plan, on the deployment manager, unless the workflow passed it
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: Compute the plan
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.application
+      vars:
+        application_state: absent
+        application_step: plan
+      when: application_decommission_plan is not defined
+
+- name: The node agent and its node, on the node host
+  hosts: "{{ remove_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"
+  gather_facts: true
+  serial: 1
+
+  tasks:
+    - name: Remove the node when the plan says so
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.application
+        tasks_from: remove_node
+      vars:
+        # Where the first play left the plan, when the workflow did not pass it.
+        application_plan_host: "{{ groups[config_dmgr_hosts | default('dmgr')] | first }}"

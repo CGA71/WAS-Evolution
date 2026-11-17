@@ -1,0 +1,33 @@
+---
+# Decommission one application of the catalogue, one step at a time.
+#
+#   ansible-playbook -i inventories/aix <this> \
+#       -e was_environment=<code> -e config_dmgr_hosts=dmgr -e application_name=<name> \
+#       [-e application_step=<step>] [-e application_decommission_cluster=true]
+#
+# application_step: plan, uninstall, jms, jdbc, j2c, libraries, variables,
+# cluster - or all, the default, every one in order. In AWX each step is a
+# node of the workflow "WAS AIX - Application: decommission", its template
+# setting application_step; the plan node passes what it decided to the others
+# with set_stats. The node agent removal runs on the node host:
+# traditional_application_remove_node.yml, the last node.
+#
+# Always run the plan first, or with --check: it says what goes, what stays
+# because something else still uses it, and whether the cluster and the node go.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: Decommission the application, on the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  tasks:
+    - name: The application, its resources, and optionally its cluster
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.application
+      vars:
+        application_state: absent
