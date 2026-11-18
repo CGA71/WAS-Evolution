@@ -1,25 +1,95 @@
 ---
-# Same layout as the estate inventory. prereqs_os creates /app and /opt/exploit
-# and gives them to the WAS account; /mnt/binaries is the binaries share the
-# system administrator mounts, and binaries_mount_check.yml verifies it.
+# The layout of ServeurAIX AS IT EXISTS - read from the machine (df), not
+# invented. Every product lives under /usr/IBM, each in its own JFS2
+# filesystem; what the WAS team shares lives under /was_commun.
 #
-# On AIX each of these is normally its own JFS2 filesystem (crfs), sized before
-# the install: forge_preflight refuses an install with less free space than
-# forge_min_free_mb declares.
-was_app_base_dir: /app
-was_binaries_base_dir: "{{ was_app_base_dir }}/binaries"
-was_logs_base_dir: "{{ was_app_base_dir }}/logs"
+#   /usr/IBM/WebSphere9/Imcl                 IBM Installation Manager
+#   /usr/IBM/WebSphere9/AppServer            WebSphere Application Server
+#   /usr/IBM/WebSphere9/AppServer/profiles/  the profiles, one filesystem each
+#   /usr/IBM/IHS9                            IBM HTTP Server
+#   /usr/IBM/Plugins9                        the WAS web server plugin
+#   /was_commun/applogs                      the logs
+#   /was_commun/tmp                          scratch space
+#   /was_ear                                 the application archives
+#   /was_transfert                           file drops
+#
+# There is NO /app, NO /data, NO /dump/was and NO /opt/exploit on this server,
+# and nothing below points at them. Two paths below are NOT on the server
+# either, and say so where they are declared: was_app_base_dir (created by
+# Ansible) and was_install_binaries_base_dir (a share to be named). The
+# installation directories themselves are in 25_install_dirs.yml.
+#
+# prereqs_os creates and gives to site_was_user every directory listed in
+# forge_required_dirs (roles/forge_preflight/defaults/main.yml): was_app_base_dir,
+# was_binaries_base_dir, was_profiles_base_dir, was_logs_base_dir and
+# was_jython_dir. They are chosen below so that none of them is /usr/IBM itself,
+# which belongs to root and must stay that way.
+
+# --------------------------------------------------------------------------
+# Roots
+# --------------------------------------------------------------------------
+
+# Decided by the site: a subdirectory of /was_commun. Not on the server before
+# the first run - created by prereqs_os (job 1), and again by every
+# configuration job if missing, owned by site_was_user, mode 0750 for the
+# driver. A subdirectory rather than /was_commun itself, because the
+# directories Ansible creates are also chowned and chmodded by it, and
+# /was_commun belongs to the site.
+#
+# What Ansible itself keeps on the server, in one directory of its own:
+#   jython-ansible/   the wsadmin driver every configuration job runs
+#                     (replaces /opt/exploit/scripts/jython-ansible)
+#   certificates/     the certificate renewal working files
+#   data/             the rendered manageprofiles response files (deleted
+#                     after use) and the record of each deployed archive
+#                     (replaces /app/data)
+# It is not optional: without the driver no configuration job can run.
+was_app_base_dir: /was_commun/ansible
+
+# The WebSphere 9 tree. A directory, not a filesystem: Imcl and AppServer below
+# it are the filesystems, and the free-space check runs on was_home.
+was_binaries_base_dir: /usr/IBM/WebSphere9
+
+was_logs_base_dir: /was_commun/applogs
+
+# LOG_ROOT, the WebSphere variable every process of a node writes its logs
+# under - one directory per process, named after it:
+#
+#   /was_commun/applogs/dmgr/        the deployment manager
+#   /was_commun/applogs/nodeagent/   the node agent
+#   /was_commun/applogs/<member>/    each application server (JVM)
+#
+# Set at node scope on each node of the cell, from the deployment manager, by
+# the log_root role - at the end of the profile job, and on its own with
+# playbooks/traditional_log_root.yml. A process changed that way is restarted
+# so it writes there (the deployment manager and the node agent; a JVM picks
+# it up at its next start).
+#
+# One directory for the whole server works because the process names differ.
+# A second node on this same machine would bring a second "nodeagent": set
+# was_log_root for it to "{{ was_logs_base_dir }}/{{ was_node_name }}".
+was_log_root: "{{ was_logs_base_dir }}"
 was_data_base_dir: "{{ was_app_base_dir }}/data"
-was_dump_base_dir: "{{ was_app_base_dir }}/dump/was"
 
+was_jython_dir: "{{ was_app_base_dir }}/{{ site_jython_dirname }}"
+
+# --------------------------------------------------------------------------
+# The IBM media
+# --------------------------------------------------------------------------
+# NOT ON THE SERVER: /mnt/binaries is not mounted (df). TO BE GIVEN BY THE SITE.
+#
+# Where the Installation Manager archive, the WAS, IHS and plugin repositories
+# and the fix packs are read from. The products are ALREADY installed on this
+# server, so the install jobs find them and read nothing from here. But two
+# things do need it:
+#   - step 0 of the workflow (binaries_mount_check.yml) and forge_preflight
+#     check that it is mounted, and stop the workflow when it is not;
+#   - the fix pack job reads its repositories from <this>/IBM/fixes.
+# See 00_site.yml for the share it is mounted from.
 was_install_binaries_base_dir: /mnt/binaries
-was_backup_base_dir: /backup
 
-was_exploit_base_dir: /opt/exploit
-was_exploit_scripts_dir: "{{ was_exploit_base_dir }}/scripts"
-was_jython_dir: "{{ was_exploit_base_dir }}/scripts/{{ site_jython_dirname }}"
-
-was_version_short: "90"
+# The WebSphere version, short form: part of the cell name (30_naming.yml).
+was_version: "90"
 
 # Profile names come from roles/model/vars/naming.yml; only the paths are here.
 was_profile_path: "{{ was_profiles_base_dir }}/{{ was_profile_name }}"
@@ -27,7 +97,3 @@ was_dmgr_profile_path: "{{ was_profiles_base_dir }}/{{ was_dmgr_profile_name }}"
 
 # No systemd on AIX: the processes are started by traditional_start.yml, which
 # calls the profile's own start scripts.
-
-# Installation directories - where Installation Manager and WAS are
-# installed - are declared in 25_install_dirs.yml, with each one mapped to
-# the imcl flag it feeds.

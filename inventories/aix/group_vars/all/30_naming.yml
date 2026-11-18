@@ -22,20 +22,25 @@
 #
 # PRECEDENCE, WHICH MATTERS WHEN THE SURVEY IS USED
 #
-# An AWX survey answer is an extra var and outranks this file. The survey
-# questions for these names are optional, and an answer left blank arrives as
-# an empty string, which `default(..., true)` turns back into the ROLE pattern -
-# not into the value below. So a run launched from the survey either fills
-# those questions with the same values, or accepts the role patterns. A command
-# line run with no -e for them gets exactly what is written here.
+# A name typed into the AWX survey arrives as survey_<name> and wins. A
+# question left blank is ignored, and the name written below applies - so
+# leave "Cell name" blank in the survey to get DEV90Cell.
 
 # --------------------------------------------------------------------------
 # Cell
 # --------------------------------------------------------------------------
-# The role pattern is <Channel>_<ENV>. This inventory appends _Cell so that the
-# override path is visibly exercised and so a cell name is never mistaken for
-# an environment code in a log.
-was_cell_name: "{{ was_channel_name }}_{{ was_env_upper }}_Cell"
+# The site standard: was_environment + was_version + Cell, no separator.
+#
+#   was_environment  was_version  cell
+#   DEV              90           DEV90Cell
+#   DEV01            90           DEV0190Cell
+#   PROD             90           PROD90Cell
+#
+# was_environment is the AWX survey answer ("Give an environment"), a free
+# text question - the instances (DEV01, VAL02...) cannot be listed as choices.
+# | upper makes "dev" and "DEV" give the same cell, DEV90Cell, rather than two.
+# was_version is in 20_paths.yml. The channel is not part of it.
+was_cell_name: "{{ was_environment | upper }}{{ was_version }}Cell"
 
 # --------------------------------------------------------------------------
 # Cluster

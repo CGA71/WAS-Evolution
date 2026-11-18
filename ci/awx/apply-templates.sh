@@ -199,6 +199,7 @@ STEPS=(
   "WAS AIX - 21. Dynamic cache|$COL/traditional_dynamic_cache.yml|config_dmgr_hosts: dmgr"
   "WAS AIX - 22. Logging, trace and HPEL|$COL/traditional_logging.yml|config_dmgr_hosts: dmgr"
   "WAS AIX - 23. PMI|$COL/traditional_pmi.yml|config_dmgr_hosts: dmgr"
+  "WAS AIX - 24. Log root of the nodes|$COL/traditional_log_root.yml|config_dmgr_hosts: dmgr"
 )
 
 # ---------------------------------------------------------------------------

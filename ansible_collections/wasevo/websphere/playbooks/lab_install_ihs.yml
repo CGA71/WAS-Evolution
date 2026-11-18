@@ -1,0 +1,18 @@
+---
+# IBM HTTP Server.
+#
+#   ansible-playbook -i inventories/aix \
+#       ansible_collections/wasevo/websphere/playbooks/lab_install_ihs.yml -e was_environment=<code>
+#
+# In AWX this is "WAS AIX - 3b. IHS", after WAS. Installation Manager must be
+# there; the Java SDK IHS needs is read from the WAS repository. A server where
+# IHS is already installed in ihs_home is left as it is.
+#
+# The web server plugin is the next job: lab_install_plugin.yml.
+
+- name: Install IBM HTTP Server
+  hosts: "{{ lab_hosts | default('was_install') }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.ihs_install

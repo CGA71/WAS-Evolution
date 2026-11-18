@@ -12,7 +12,7 @@
 #                 in AWX: the workflow "WAS AIX - Application: decommission"
 #
 # The archives are read on the deployment manager from the applications share,
-# mounted at application_binaries_dir (below the binaries mount by default).
+# in application_binaries_dir: /was_ear on this server.
 #
 # An example, to copy and adapt - the names are placeholders:
 #
@@ -22,22 +22,23 @@
 #     shared_libraries: [ordersCommonLibrary]
 #     resources:
 #       variables:
-#         - {name: ORDERS_HOME, value: /app/data/orders}
+#         - {name: ORDERS_HOME, value: /was_commun/orders}
 #       j2c_aliases:
 #         - {name: ordersDbAlias, user: orders, password_env: ORDERS_DB_PASSWORD}
 #       datasources:
 #         - name: ordersDS
 #           jndi_name: jdbc/orders
 #           vendor: db2_luw
-#           driver_dir: /app/binaries/was90/jdbcprovider
+#           driver_dir: /usr/IBM/WebSphere9/AppServer/jdbcprovider
 #           driver_jar: db2jcc4.jar
 #           auth_alias: ordersDbAlias
 #           properties: {databaseName: ORDERS, serverName: db.example.internal, portNumber: 50000}
 #       shared_libraries:
-#         - {name: ordersCommonLibrary, dir: /mnt/binaries/applications/orders/lib}
+#         - {name: ordersCommonLibrary, dir: /was_ear/orders/lib}
 #   - name: CatalogueWeb
 #     archive: catalogue/catalogue.war
 #     context_root: /catalogue
 was_applications: []
 
-application_binaries_dir: "{{ was_install_binaries_base_dir }}/applications"
+# /was_ear: the filesystem that holds the archives on this server.
+application_binaries_dir: /was_ear

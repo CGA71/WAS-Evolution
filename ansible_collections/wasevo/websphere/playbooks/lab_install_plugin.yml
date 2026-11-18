@@ -1,0 +1,18 @@
+---
+# The WebSphere web server plugin.
+#
+#   ansible-playbook -i inventories/aix \
+#       ansible_collections/wasevo/websphere/playbooks/lab_install_plugin.yml -e was_environment=<code>
+#
+# In AWX this is "WAS AIX - 3c. Web server plugin", after IHS and before the
+# second fix pack pass, which then patches it with the rest. Installation
+# Manager must be there; the Java SDK the plugin needs is read from the WAS
+# repository. A server where the plugin is already installed in plugin_home is
+# left as it is.
+
+- name: Install the WebSphere web server plugin
+  hosts: "{{ lab_hosts | default('was_install') }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.plugin_install

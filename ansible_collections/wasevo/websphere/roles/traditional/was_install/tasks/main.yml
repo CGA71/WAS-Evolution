@@ -237,11 +237,15 @@
         owner: "{{ site_was_user }}"
         group: "{{ site_was_group }}"
         mode: "0755"
-      loop:
-        - "{{ was_home }}"
-        - "{{ im_shared_resources_dir }}"
-        - "{{ was_profiles_base_dir }}"
-        - "{{ im_install_log_dir }}"
+      # im_shared_resources_dir may be empty: Installation Manager then keeps
+      # the one it recorded at its own install.
+      loop: "{{ _dirs | select | list }}"
+      vars:
+        _dirs:
+          - "{{ was_home }}"
+          - "{{ im_shared_resources_dir | default('') }}"
+          - "{{ was_profiles_base_dir }}"
+          - "{{ im_install_log_dir | default('') }}"
       become: true
 
     - name: Remove lost+found from the target directories
@@ -251,9 +255,11 @@
       ansible.builtin.file:
         path: "{{ item }}/lost+found"
         state: absent
-      loop:
-        - "{{ was_home }}"
-        - "{{ im_shared_resources_dir }}"
+      loop: "{{ _dirs | select | list }}"
+      vars:
+        _dirs:
+          - "{{ was_home }}"
+          - "{{ im_shared_resources_dir | default('') }}"
       become: true
 
     - name: Install WAS for Developers through Installation Manager
@@ -264,10 +270,10 @@
           {{ was_sdk_offering if (was_install_sdk and (was_sdk_offering | length > 0)) else '' }}
           -repositories {{ was_repository }}
           -installationDirectory {{ was_home }}
-          -sharedResourcesDirectory {{ im_shared_resources_dir }}
-          -dataLocation {{ im_agent_data_dir }}
+          {{ ('-sharedResourcesDirectory ' ~ im_shared_resources_dir) if (im_shared_resources_dir | default('') | length > 0) else '' }}
+          {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
           {{ ('-preferences ' ~ im_preferences_dir) if (im_preferences_dir | default('') | length > 0) else '' }}
-          -log {{ im_install_log_dir }}/install_was.log
+          {{ ('-log ' ~ im_install_log_dir ~ '/install_was.log') if (im_install_log_dir | default('') | length > 0) else '' }}
           -acceptLicense
           -nl {{ im_install_locale }}
         creates: "{{ was_manageprofiles_cmd }}"
@@ -337,7 +343,7 @@
     fail_msg: >-
       {{ item.item }} is missing. Installation Manager reported success, so the
       install landed somewhere other than {{ was_home }} - check
-      {{ im_install_log_dir }}/install_was.log.
+      {{ (im_install_log_dir ~ '/install_was.log') if (im_install_log_dir | default('') | length > 0) else 'the Installation Manager logs (imcl -log was not passed)' }}.
   loop: "{{ was_tools.results }}"
   loop_control:
     label: "{{ item.item | basename }}"

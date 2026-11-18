@@ -1,0 +1,86 @@
+---
+# Mount the IBM media share. See defaults/main.yml for what, where and why.
+#
+# Idempotent: a share already mounted from the declared export changes
+# nothing. A mount point already carrying SOMETHING ELSE is refused, never
+# unmounted - that is somebody's filesystem.
+
+- name: Gather what the mount needs
+  ansible.builtin.setup:
+    gather_subset: ["!all", "!min", "distribution"]
+  check_mode: false
+  tags: [share, always]
+
+- name: Read the declaration
+  ansible.builtin.set_fact:
+    binaries_share_type: "{{ site_binaries_repository_type | default('nfs') | trim | lower }}"
+    binaries_share_point: "{{ was_install_binaries_base_dir | regex_replace('/+$', '') }}"
+    binaries_share_host: "{{ (site_binaries_repository | default('')).split(':', 1) | first }}"
+    binaries_share_export: "{{ ((site_binaries_repository | default('')).split(':', 1) + [''])[1] }}"
+  tags: [share, always]
+
+- name: A local filesystem has nothing to mount
+  ansible.builtin.debug:
+    msg: >-
+      site_binaries_repository_type is {{ binaries_share_type }}:
+      {{ binaries_share_point }} is a local filesystem, not a share. Nothing
+      to mount; binaries_mount_check.yml verifies it as it is.
+  when: binaries_share_type != 'nfs'
+  tags: [share]
+
+- name: Mount the share
+  when: binaries_share_type == 'nfs'
+  tags: [share]
+  block:
+
+    - name: The share must be declared as <server>:<export>
+      ansible.builtin.assert:
+        that:
+          - binaries_share_host | length > 0
+          - binaries_share_export is match('^/')
+          - binaries_share_point is match('^/.+')
+        fail_msg: >-
+          site_binaries_repository is "{{ site_binaries_repository | default('') }}"
+          and was_install_binaries_base_dir "{{ was_install_binaries_base_dir | default('') }}".
+          The share is declared as <server>:<export> - nas01:/export/ibm - and
+          mounted on an absolute path, in inventories/<site>/group_vars/all/
+          (00_site.yml and 20_paths.yml).
+        success_msg: >-
+          {{ binaries_share_host }}:{{ binaries_share_export }} on {{ binaries_share_point }}
+
+    - name: The mount point must exist
+      ansible.builtin.file:
+        path: "{{ binaries_share_point }}"
+        state: directory
+        mode: "{{ binaries_share_mount_point_mode }}"
+      become: true
+
+    - name: AIX
+      ansible.builtin.include_tasks: aix.yml
+      when: ansible_facts.os_family == 'AIX'
+
+    - name: Linux
+      ansible.builtin.include_tasks: linux.yml
+      when: ansible_facts.os_family != 'AIX'
+
+    - name: Readable by the account the jobs run as
+      ansible.builtin.command:
+        cmd: ls "{{ binaries_share_point }}"
+      register: binaries_share_ls
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: The share must be readable without root
+      ansible.builtin.assert:
+        that:
+          - binaries_share_ls.rc == 0
+        fail_msg: >-
+          {{ binaries_share_point }} is mounted but {{ ansible_user | default('the connecting account') }}
+          cannot list it: {{ binaries_share_ls.stderr | default('') }}. On NFS
+          this is the export's permissions or root squashing, or the uid of the
+          account differing between the NFS server and this host.
+        success_msg: >-
+          readable - {{ binaries_share_ls.stdout_lines | default([]) | length }} entries:
+          {{ binaries_share_ls.stdout_lines | default([]) | join(', ') }}
+      when: not ansible_check_mode

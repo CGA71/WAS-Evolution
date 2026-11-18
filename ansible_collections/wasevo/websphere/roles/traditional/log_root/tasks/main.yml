@@ -1,0 +1,157 @@
+---
+# LOG_ROOT of every node of the cell, from the deployment manager.
+#
+# Runs ON THE DEPLOYMENT MANAGER: that is where the master configuration is,
+# and a node-scope variable written anywhere else is overwritten at the next
+# synchronisation. The federated nodes are read from hostvars - their
+# was_node_name and was_log_root - so the model must have run on them earlier
+# in the same playbook (lab_create_profiles.yml and traditional_log_root.yml
+# both do). A node whose names were not resolved in this run is skipped, and
+# said so.
+#
+# Then, for what changed: the deployment manager is restarted here, and each
+# node agent by tasks/node.yml on its own host, which reads
+# log_root_changed_nodes from this host.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [log_root, always]
+
+- name: Resolve and validate the topology
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+    tasks_from: topology.yml
+  tags: [log_root, always]
+
+- name: Nothing to do
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'was_log_root is not set: LOG_ROOT keeps the WAS default, the logs/ of each profile.'
+         if was_topology == 'nd'
+         else 'was_topology is ' ~ was_topology ~ ': no deployment manager, nothing to set from here.' }}
+  when: was_topology != 'nd' or was_log_root | default('', true) | length == 0
+  tags: [log_root]
+
+- name: Set LOG_ROOT
+  when:
+    - was_topology == 'nd'
+    - was_log_root | default('', true) | length > 0
+  tags: [log_root]
+  block:
+
+    - name: Administrative credentials must be supplied
+      ansible.builtin.assert:
+        that:
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          was_admin_user and was_admin_password - the deployment manager's
+          administrative credential - are needed to set LOG_ROOT and to
+          restart the processes. In AWX they come from the WAS credential.
+      no_log: true
+
+    - name: Stage the Jython driver
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.config
+
+    # This host's own node first, then each federated node whose names this
+    # run resolved.
+    - name: The nodes and their LOG_ROOT
+      ansible.builtin.set_fact:
+        log_root_nodes: >-
+          {%- set out = [{'host': inventory_hostname, 'node': was_node_name,
+                          'value': was_log_root, 'process': 'dmgr'}] -%}
+          {%- for h in groups[was_nodeagent_group | default('nodeagents')] | default([]) -%}
+          {%-   if hostvars[h]._is_dmgr is defined and hostvars[h].was_node_name is defined
+                   and hostvars[h].was_log_root | default('', true) | length > 0 -%}
+          {%-     set _ = out.append({'host': h, 'node': hostvars[h].was_node_name,
+                                      'value': hostvars[h].was_log_root, 'process': 'nodeagent'}) -%}
+          {%-   endif -%}
+          {%- endfor -%}{{ out }}
+        log_root_skipped: >-
+          {%- set out = [] -%}
+          {%- for h in groups[was_nodeagent_group | default('nodeagents')] | default([]) -%}
+          {%-   if hostvars[h]._is_dmgr is not defined -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}{{ out }}
+
+    - name: Report the nodes this run does not know the names of
+      ansible.builtin.debug:
+        msg: >-
+          {{ log_root_skipped | join(', ') }}: the model did not run there in
+          this playbook, so its node name is unknown here and its LOG_ROOT is
+          left as it is. Run traditional_log_root.yml, which resolves them.
+      when: log_root_skipped | length > 0
+
+    - name: The directories must exist, owned by the WAS account
+      ansible.builtin.file:
+        path: "{{ item.value }}"
+        state: directory
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "{{ log_root_dir_mode }}"
+      loop: "{{ log_root_nodes }}"
+      loop_control:
+        label: "{{ item.host }}: {{ item.value }}"
+      delegate_to: "{{ item.host }}"
+      become: true
+
+    - name: LOG_ROOT at the scope of each node
+      wasevo.websphere.was_variable:
+        scope:
+          type: node
+          node: "{{ item.node }}"
+        variables:
+          - name: LOG_ROOT
+            value: "{{ item.value }}"
+            description: "Logs of every process of this node - managed by Ansible (log_root)"
+        state: present
+        profile_path: "{{ was_profile_path }}"
+        admin_user: "{{ was_admin_user }}"
+        admin_password: "{{ was_admin_password }}"
+        jython_dir: "{{ was_jython_dir }}"
+      loop: "{{ log_root_nodes }}"
+      loop_control:
+        label: "{{ item.node }} = {{ item.value }}"
+      register: log_root_set
+
+    - name: Which nodes changed
+      ansible.builtin.set_fact:
+        log_root_changed_nodes: >-
+          {{ log_root_set.results | selectattr('changed') | map(attribute='item.node') | list }}
+
+    # ------------------------------------------------------------------------
+    # The deployment manager, if its own node changed
+    # ------------------------------------------------------------------------
+
+    - name: Restart the deployment manager so it writes under the new LOG_ROOT
+      when:
+        - log_root_restart | bool
+        - was_node_name in log_root_changed_nodes
+        - not ansible_check_mode
+      block:
+
+        - name: Stop the deployment manager
+          ansible.builtin.command:
+            cmd: >-
+              {{ was_dmgr_profile_path }}/bin/stopManager.sh
+              -username {{ was_admin_user }} -password {{ was_admin_password }}
+          register: log_root_stop
+          become: true
+          changed_when: log_root_stop.rc == 0
+          # ADMU0509I: it was not running, which is just as good.
+          failed_when: log_root_stop.rc != 0 and 'ADMU0509I' not in log_root_stop.stdout
+          no_log: true
+
+        - name: Start it again
+          ansible.builtin.include_role:
+            name: wasevo.websphere.traditional.server_start
+            tasks_from: dmgr.yml
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "LOG_ROOT    : {{ log_root_nodes | map(attribute='node') | zip(log_root_nodes | map(attribute='value')) | map('join', ' = ') | join(', ') }}"
+          - "changed     : {{ log_root_changed_nodes | join(', ') | default('nothing', true) }}"
+          - "restarted   : {{ 'the deployment manager' if (log_root_restart | bool and was_node_name in log_root_changed_nodes) else 'nothing here' }}{{ '; the node agents are restarted on their own hosts next' if (log_root_changed_nodes | reject('equalto', was_node_name) | list | length > 0) else '' }}"
+          - "JVMs        : write there from their next start"

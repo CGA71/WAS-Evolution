@@ -13,7 +13,6 @@
 # Neither the Installation Manager archive nor the WAS repository can be
 # downloaded without an IBMid: they are placed on the share by hand.
 im_media_src: ""
-was_media_src: ""
 was_fixpack_media_src: ""
 
 # The level the base install must reach at least. A Passport Advantage base
@@ -27,9 +26,6 @@ was_expected_version: "9.0.0.0"
 # object name belongs to the role the machine plays: the node names are in
 # group_vars/dmgr.yml and group_vars/nodeagents.yml, the cell and the cluster
 # in group_vars/all/30_naming.yml.
-#
-# was_service_name stays: a standalone run builds its profile on this entry.
-was_service_name: wasserver
 
 # No target level declared: whatever the fix pack repositories on the mount
 # offer is what the server gets. Pin it here (e.g. "9.0.5.28") once the site

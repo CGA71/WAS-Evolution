@@ -1,0 +1,125 @@
+---
+# AIX: the stanza in /etc/filesystems, then mount.
+#
+# AIX's mount prints one line per filesystem:
+#   <node> <mounted> <mounted over> <vfs> <date> <options>   for a remote one
+#          <mounted> <mounted over> <vfs> <date> <options>   for a local one
+# so a remote filesystem has the mount point in field 3, a local one in field 2.
+
+- name: What is mounted on the mount point now
+  ansible.builtin.shell:
+    cmd: >-
+      mount | awk -v p="{{ binaries_share_point }}"
+      '$3 == p { print $1 ":" $2 " " $4; exit } $2 == p { print "local:" $1 " " $3; exit }'
+  register: binaries_share_now
+  changed_when: false
+  check_mode: false
+
+- name: Read it
+  ansible.builtin.set_fact:
+    binaries_share_mounted: "{{ binaries_share_now.stdout | trim | length > 0 }}"
+    binaries_share_mounted_from: "{{ (binaries_share_now.stdout | trim).split(' ') | first | default('') }}"
+
+# Never unmount: what is there belongs to someone.
+- name: Refuse when the mount point carries something else
+  ansible.builtin.fail:
+    msg: >-
+      {{ binaries_share_point }} is already mounted from
+      {{ binaries_share_mounted_from }}, not from
+      {{ binaries_share_host }}:{{ binaries_share_export }}. This role does not
+      unmount what it did not mount. Either the inventory is wrong
+      (site_binaries_repository), or unmount it by hand first:
+      umount {{ binaries_share_point }}
+  when:
+    - binaries_share_mounted | bool
+    - (binaries_share_mounted_from | regex_replace('/+$', ''))
+      != (binaries_share_host ~ ':' ~ binaries_share_export) | regex_replace('/+$', '')
+
+# ---------------------------------------------------------------------------
+# Persistent: the /etc/filesystems stanza
+# ---------------------------------------------------------------------------
+
+- name: Persistence
+  when: binaries_share_persistent | bool
+  block:
+
+    - name: Is there a stanza for the mount point already
+      ansible.builtin.command:
+        cmd: lsfs -c "{{ binaries_share_point }}"
+      register: binaries_share_lsfs
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Is it this role's
+      ansible.builtin.command:
+        cmd: grep -c "ANSIBLE MANAGED - binaries share {{ binaries_share_point }}$" /etc/filesystems
+      register: binaries_share_ours
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # A stanza written by the system administrator (smitty mknfsmnt) is left
+    # alone: two stanzas for one mount point break mount.
+    - name: Report a stanza that is not this role's
+      ansible.builtin.debug:
+        msg: >-
+          /etc/filesystems already has a stanza for {{ binaries_share_point }}
+          that this role did not write - left as it is, and used by the mount
+          below. Its options are the system administrator's, not
+          binaries_share_options.
+      when:
+        - binaries_share_lsfs.rc == 0
+        - binaries_share_ours.stdout | trim == '0'
+
+    # /etc/filesystems comments start with '*', hence the marker.
+    - name: The stanza, so the share comes back after a reboot
+      ansible.builtin.blockinfile:
+        path: /etc/filesystems
+        marker: "* {mark} ANSIBLE MANAGED - binaries share {{ binaries_share_point }}"
+        block: |
+          {{ binaries_share_point }}:
+                  dev             = "{{ binaries_share_export }}"
+                  vfs             = nfs
+                  nodename        = {{ binaries_share_host }}
+                  mount           = true
+                  options         = {{ binaries_share_options }}
+                  account         = false
+        backup: true
+      become: true
+      when: not (binaries_share_lsfs.rc == 0 and binaries_share_ours.stdout | trim == '0')
+
+# ---------------------------------------------------------------------------
+# Mount
+# ---------------------------------------------------------------------------
+
+# ansible.posix.mount does not support AIX: the command is the only way.
+- name: Mount it
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    # With a stanza, mount reads it; without one, everything on the line.
+    cmd: >-
+      {{ ('mount ' ~ binaries_share_point)
+         if (binaries_share_persistent | bool)
+         else ('mount -o ' ~ binaries_share_options ~ ' ' ~ binaries_share_host ~ ':'
+               ~ binaries_share_export ~ ' ' ~ binaries_share_point) }}
+  become: true
+  register: binaries_share_mount
+  changed_when: true
+  when: not (binaries_share_mounted | bool)
+
+- name: Mounted, verified
+  ansible.builtin.shell:
+    cmd: >-
+      mount | awk -v p="{{ binaries_share_point }}" '$3 == p { print $1 ":" $2 " " $4; exit }'
+  register: binaries_share_after
+  changed_when: false
+  check_mode: false
+  failed_when: binaries_share_after.stdout | trim | length == 0
+  when: not ansible_check_mode
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ binaries_share_point }}:
+      {{ 'already mounted - ' if (binaries_share_mounted | bool) else 'mounted now - ' }}{{ binaries_share_after.stdout | default('(check mode)') | trim }}
+      {{ '; in /etc/filesystems' if (binaries_share_persistent | bool) else '; not persistent' }}

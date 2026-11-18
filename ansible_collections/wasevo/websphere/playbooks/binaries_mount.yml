@@ -1,0 +1,25 @@
+---
+# Mount the share that carries the IBM media - the FIRST thing on a server.
+#
+#   ansible-playbook -i inventories/aix \
+#       ansible_collections/wasevo/websphere/playbooks/binaries_mount.yml
+#
+# Every install and fix pack job reads its media from this share, and
+# binaries_mount_check.yml - which runs right after this, in AWX and in the
+# pipeline - stops everything when it is not mounted. Mounting needs root:
+# become (sudo), see roles/binaries_share/defaults/main.yml.
+#
+# What is mounted where comes from the inventory: site_binaries_repository
+# (<server>:<export>), site_binaries_repository_type (nfs) and
+# was_install_binaries_base_dir (the mount point). No environment needed: the
+# share belongs to the machine.
+#
+# A replay changes nothing. A mount point carrying something else is refused,
+# never unmounted.
+
+- name: Mount the IBM media share
+  hosts: "{{ mount_hosts | default('was_install') }}"
+  gather_facts: false
+
+  roles:
+    - role: wasevo.websphere.binaries_share

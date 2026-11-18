@@ -1,0 +1,61 @@
+---
+# On a federated node: restart its node agent when the deployment manager
+# changed this node's LOG_ROOT in this run (tasks/main.yml, which publishes
+# log_root_changed_nodes on the deployment manager host). The new value has
+# already reached the node - was_variable synchronises the nodes - so a
+# restart is all it takes.
+#
+# Application servers are not restarted: they write under the new LOG_ROOT
+# from their next start.
+
+- name: Resolve the model and the names
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [log_root, always]
+
+- name: Did the deployment manager change this node
+  ansible.builtin.set_fact:
+    log_root_node_changed: >-
+      {{ was_node_name in (hostvars[_dmgr].log_root_changed_nodes | default([])) }}
+  vars:
+    _dmgr: "{{ (groups[was_dmgr_group | default('dmgr')] | default(['none'])) | first }}"
+  tags: [log_root]
+
+- name: Restart the node agent so it writes under the new LOG_ROOT
+  when:
+    - log_root_restart | bool
+    - log_root_node_changed | bool
+    - not ansible_check_mode
+  tags: [log_root]
+  block:
+
+    - name: Stop the node agent
+      ansible.builtin.command:
+        cmd: >-
+          {{ was_profile_path }}/bin/stopNode.sh
+          -username {{ was_admin_user }} -password {{ was_admin_password }}
+      register: log_root_stop_node
+      become: true
+      changed_when: log_root_stop_node.rc == 0
+      # ADMU0509I: it was not running, which is just as good.
+      failed_when: log_root_stop_node.rc != 0 and 'ADMU0509I' not in log_root_stop_node.stdout
+      no_log: true
+
+    - name: Start it again
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.server_start
+        tasks_from: process.yml
+      vars:
+        start_label: "node agent of {{ was_node_name }}"
+        start_pid_files:
+          - "{{ was_log_root }}/nodeagent/nodeagent.pid"
+          - "{{ was_profile_path }}/logs/nodeagent/nodeagent.pid"
+        start_command: "{{ was_profile_path }}/bin/startNode.sh"
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ was_node_name }}: LOG_ROOT
+      {{ ('changed to ' ~ was_log_root ~ (', node agent restarted' if log_root_restart | bool else ', restart pending'))
+         if log_root_node_changed | bool else 'unchanged' }}
+  tags: [log_root]

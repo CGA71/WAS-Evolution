@@ -1,0 +1,12 @@
+---
+# Linux: ansible.posix.mount does both the fstab line and the mount, and is
+# idempotent on its own. ephemeral mounts without touching /etc/fstab.
+
+- name: Mount the share
+  ansible.posix.mount:
+    src: "{{ binaries_share_host }}:{{ binaries_share_export }}"
+    path: "{{ binaries_share_point }}"
+    fstype: nfs
+    opts: "{{ binaries_share_options }}"
+    state: "{{ 'mounted' if (binaries_share_persistent | bool) else 'ephemeral' }}"
+  become: true

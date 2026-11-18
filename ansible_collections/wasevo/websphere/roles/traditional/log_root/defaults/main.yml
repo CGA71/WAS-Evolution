@@ -1,0 +1,18 @@
+---
+# LOG_ROOT: where every process of a node - the deployment manager, the node
+# agent, the application servers - writes its logs and its .pid file, one
+# directory per process under it (<LOG_ROOT>/<server>/SystemOut.log).
+#
+# WAS defaults it to ${USER_INSTALL_ROOT}/logs, the profile's own logs/. Set
+# was_log_root in the inventory to move it; empty leaves WAS's default alone
+# and this role does nothing. It is read per HOST, so the deployment manager
+# and each federated node can each have their own.
+was_log_root: ""
+
+# Restart the deployment manager and the node agent whose LOG_ROOT this run
+# changed, so they write in the new place at once. Application servers are
+# not restarted: they pick it up at their next start.
+log_root_restart: true
+
+# Mode of the was_log_root directory, created owned by site_was_user.
+log_root_dir_mode: "0755"

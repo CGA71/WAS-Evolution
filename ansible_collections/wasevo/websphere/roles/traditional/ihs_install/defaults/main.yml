@@ -1,0 +1,39 @@
+---
+# IBM HTTP Server 9.0, installed through Installation Manager - the same imcl
+# as WAS (installation_manager role).
+#
+# IHS comes from the "WAS 9.0 Supplements" repository and is installed
+# TOGETHER with an IBM Java 8 SDK, in its own package group: IHS 9.0 does not
+# install without one. The SDK offering is read from the WAS repository unless
+# the supplements repository carries it too.
+#
+# The web server plugin is a separate role: plugin_install.
+
+# Where the supplements repository is unpacked (repository.config at its root,
+# or below it).
+ihs_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_ihs90"
+
+# Where the Java SDK offering is read from. The WAS 9.0 repository carries it;
+# set "" if ihs_media_dir has it.
+ihs_sdk_media_dir: "{{ was_media_dir | default(was_install_binaries_base_dir ~ '/IBM/install_was90') }}"
+
+# The installation directory. An inventory declares the site's own
+# (inventories/aix: /usr/IBM/IHS9).
+ihs_home: /opt/IBM/HTTPServer
+
+# The offering id stem searched for in the repository and in what is installed.
+ihs_package_filter: "com.ibm.websphere.IHS."
+
+# Pin the offering when the repository carries more than one, e.g.
+# com.ibm.websphere.IHS.v90_9.0.5017.20230725_1607. Empty: the newest
+# advertised.
+ihs_package_id: ""
+
+ihs_sdk_package_filter: "com.ibm.java.jdk."
+
+# The port IHS listens on after the install (user.ihs.httpPort). It only seeds
+# httpd.conf; configuring IHS is another matter.
+ihs_http_port: 80
+
+# The locale Installation Manager runs in.
+im_install_locale: en

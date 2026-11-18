@@ -196,13 +196,17 @@ say "Job templates"
 #
 # The fix pack playbook appears twice, as two templates: the first pass lifts
 # Installation Manager to the level WAS needs, the second patches what the WAS
-# job installed. A workflow node is found by its template here, so one template
-# cannot be two nodes.
+# and IHS jobs installed (WAS, the SDK, IHS, the plugin). A workflow node is
+# found by its template here, so one template cannot be two nodes. Names are
+# the key too: renaming a step leaves the old node in the workflow.
 STEPS=(
+  "WAS AIX - 0a. Binaries share: mount|$COL/binaries_mount.yml||mount_hosts: was_install"
   "WAS AIX - 0. Binaries mount point|$COL/binaries_mount_check.yml||mount_check_hosts: was_install"
   "WAS AIX - 1. Installation Manager|$COL/lab_install_im.yml||lab_hosts: was_install"
   "WAS AIX - 2. Fix packs: Installation Manager|$COL/lab_apply_fixpacks.yml||lab_hosts: was_install"
   "WAS AIX - 3. WAS|$COL/lab_install_was.yml||lab_hosts: was_install"
+  "WAS AIX - 3b. IHS|$COL/lab_install_ihs.yml||lab_hosts: was_install"
+  "WAS AIX - 3c. Web server plugin|$COL/lab_install_plugin.yml||lab_hosts: was_install"
   "WAS AIX - 4. Fix packs: WAS|$COL/lab_apply_fixpacks.yml||lab_hosts: was_install"
   "WAS AIX - 5. Profiles: deployment manager, federated node|$COL/lab_create_profiles.yml|was|profile_hosts: was_install"
   "WAS AIX - 6. Cluster|$COL/traditional_cluster.yml|was|config_dmgr_hosts: dmgr"
@@ -257,6 +261,17 @@ for n in json.load(sys.stdin)["results"]:
         ok "template $jt is node $node"
     fi
     if [ -n "$prev" ]; then
+        # The chain is exactly STEPS, in order: an edge left over from an
+        # earlier version of this list (3 -> 4 before 3b was inserted) is
+        # removed, or a node would be reached twice.
+        for stale in $(api GET "/workflow_job_template_nodes/$prev/success_nodes/" | py 'import sys,json
+for n in json.load(sys.stdin).get("results", []):
+    if str(n["id"]) != sys.argv[1]:
+        print(n["id"])' "$node"); do
+            api POST "/workflow_job_template_nodes/$prev/success_nodes/" \
+                -d "{\"id\": $stale, \"disassociate\": true}" >/dev/null || true
+            ok "edge $prev -> $stale removed"
+        done
         api POST "/workflow_job_template_nodes/$prev/success_nodes/" -d "{\"id\": $node}" >/dev/null || true
     fi
     prev="$node"

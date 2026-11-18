@@ -126,12 +126,16 @@ syntax:
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_2_persistence.yml -e was_environment=SYNTAX
     - ansible-playbook -i inventories/was --syntax-check $COLLECTION/playbooks/family_3_enterprise.yml -e was_environment=SYNTAX
     # The AIX server: the mount check and the install chain.
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount_check.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_im.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_apply_fixpacks.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_was.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_ihs.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_plugin.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_create_profiles.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_start.yml -e was_environment=SYNTAX
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_log_root.yml -e was_environment=SYNTAX
     # Applications: deployment and every step of a decommissioning.
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_application_deploy.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check
@@ -371,11 +375,35 @@ portal-unit:
 
 # --- validation --------------------------------------------------------------
 
+# The share that holds the IBM binaries, mounted - PRIMORDIAL: nothing on the
+# server can be installed or patched without it. It changes the server (a
+# mount, the /etc/filesystems stanza), so it is an .aix-change job: the default
+# branch only. A replay changes nothing; the run must say so, or the mount is
+# being redone each time, which means it does not survive. See
+# roles/binaries_share.
+aix:share:
+  extends: .aix-change
+  stage: validation
+  script:
+    - ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/binaries_mount.yml | tee share.log
+    - ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/binaries_mount.yml > share-replay.log
+    - cat share-replay.log
+    - bash ci/assert-idempotent.sh share-replay.log
+  artifacts:
+    when: always
+    paths: [share.log, share-replay.log]
+    expire_in: 1 week
+
 # The mount point that holds the IBM binaries, before anything reads it.
-# Read-only. See roles/forge_preflight/tasks/binaries_mount.yml.
+# Read-only. See roles/forge_preflight/tasks/binaries_mount.yml. After
+# aix:share where that job runs (the default branch); on another branch it
+# checks the share as it is.
 aix:mount:
   extends: .aix
   stage: validation
+  needs:
+    - job: "aix:share"
+      optional: true
   script:
     - ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/binaries_mount_check.yml | tee mount.log
   artifacts:
@@ -399,8 +427,8 @@ aix:preflight:
 # --- build -------------------------------------------------------------------
 
 # The product, from the mount: Installation Manager, its fix pack pass, WAS,
-# WAS's fix pack pass - the order the AWX workflow runs them in. Then the four
-# again, which must change nothing.
+# IHS and the plugin, the second fix pack pass - the order the AWX workflow
+# runs them in. Then the six again, which must change nothing.
 aix:install:
   extends: .aix-change
   stage: build
@@ -408,7 +436,7 @@ aix:install:
   script:
     - |
       set -e
-      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_apply_fixpacks; do
+      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_install_ihs lab_install_plugin lab_apply_fixpacks; do
         echo "=============== $pb ==============="
         ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$pb.yml \
           -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" | tee -a install.log
@@ -417,7 +445,7 @@ aix:install:
       set -e
       echo "=============== replay: must change nothing ==============="
       : > install-replay.log
-      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_apply_fixpacks; do
+      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_install_ihs lab_install_plugin lab_apply_fixpacks; do
         ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$pb.yml \
           -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" > "replay-$pb.log"
         cat "replay-$pb.log" >> install-replay.log

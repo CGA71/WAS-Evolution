@@ -1,0 +1,278 @@
+---
+# IBM HTTP Server, through Installation Manager.
+#
+# Same arrangement as was_install: imcl must be there (installation_manager
+# role), what is installed is read from imcl and left alone, the offering id
+# is discovered from the repository, and the result is verified on every run.
+# A server where IHS is already installed in ihs_home gets changed=0.
+#
+# Fix packs are applied by the was_fixpack role, which already knows the IHS
+# offering: run it after this one. Configuring IHS (httpd.conf, the web server
+# definition in the cell) is not done here.
+
+- name: Resolve the model and the environment
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+  tags: [ihs, always]
+
+- name: Installation Manager must be present
+  ansible.builtin.stat:
+    path: "{{ im_installer_cmd }}"
+  register: ihs_imcl
+  check_mode: false
+  tags: [ihs]
+
+- name: Refuse clearly when Installation Manager is missing
+  ansible.builtin.fail:
+    msg: >-
+      No imcl at {{ im_installer_cmd }}. IHS is installed through Installation
+      Manager: run lab_install_im.yml first.
+  when: not ihs_imcl.stat.exists
+  tags: [ihs]
+
+# ---------------------------------------------------------------------------
+# Is it already there?
+# ---------------------------------------------------------------------------
+
+- name: List the installed packages
+  ansible.builtin.command:
+    cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+  register: ihs_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+  tags: [ihs]
+
+# listInstalledPackages -long prints
+#   <installation directory> : <package id>_<build> : <display name> : <version>
+# IHS counts as installed when a line names BOTH ihs_home and the IHS offering.
+- name: Is IHS installed in its directory
+  ansible.builtin.set_fact:
+    ihs_found: "{{ _hit | first | default('') | trim }}"
+    ihs_needs_install: "{{ _hit | length == 0 }}"
+  vars:
+    _hit: >-
+      {{ ihs_installed.stdout_lines | default([])
+         | select('search', (ihs_home | regex_replace('/+$', '') | regex_escape) ~ '/? +:')
+         | select('search', ihs_package_filter | regex_escape) | list }}
+  tags: [ihs]
+
+- name: Report what was found
+  ansible.builtin.debug:
+    msg: >-
+      IBM HTTP Server in {{ ihs_home }}:
+      {{ ('installed - ' ~ ihs_found ~ ' - nothing to do') if not ihs_needs_install else 'not installed - install required' }}
+  tags: [ihs]
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+
+- name: Install
+  when: ihs_needs_install | bool
+  tags: [ihs]
+  block:
+
+    - name: Look for the repository descriptors
+      ansible.builtin.find:
+        paths: "{{ item }}"
+        patterns: "repository.config"
+        recurse: true
+        depth: 4
+        file_type: file
+      loop: "{{ [ihs_media_dir, ihs_sdk_media_dir | default('')] | select | unique | list }}"
+      register: ihs_repo_files
+      check_mode: false
+
+    - name: Refuse clearly when the supplements repository is missing
+      ansible.builtin.fail:
+        msg: |
+          No Installation Manager repository under {{ ihs_media_dir }} on
+          {{ inventory_hostname }} - no repository.config was found.
+
+          IHS is in the "WebSphere Application Server V9.0 Supplements"
+          download (Passport Advantage or Fix Central, with an IBMid). Unzip
+          every part into one directory and place it here:
+
+              {{ ihs_media_dir }}/
+      when: (ihs_repo_files.results | first).matched == 0
+
+    # The shallowest descriptor of each directory is its repository root -
+    # counted in path separators, as in was_install.
+    - name: Settle the repositories
+      ansible.builtin.set_fact:
+        ihs_repositories: >-
+          {%- set out = [] -%}
+          {%- for r in ihs_repo_files.results -%}
+          {%-   set paths = r.files | default([]) | map(attribute='path') | list -%}
+          {%-   if paths | length > 0 -%}
+          {%-     set depths = paths | map('regex_findall', '/') | map('length') | list -%}
+          {%-     set _ = out.append((depths | zip(paths) | sort | first | last) | dirname) -%}
+          {%-   endif -%}
+          {%- endfor -%}{{ out | unique | list }}
+
+    - name: Ask the repositories what they contain
+      ansible.builtin.command:
+        cmd: >-
+          {{ im_installer_cmd }} listAvailablePackages
+          -repositories {{ ihs_repositories | join(',') }}
+          -long
+      register: ihs_available
+      changed_when: false
+      check_mode: false
+      become: true
+
+    # <repository> : <package id> : <display name> : <version> - the id is the
+    # second field, never the start of the line.
+    - name: Pick the IHS offering and the SDK
+      ansible.builtin.set_fact:
+        ihs_offering: >-
+          {{ ihs_package_id if (ihs_package_id | length > 0)
+             else (_candidates | last | default('')) }}
+        ihs_offering_stems: "{{ _candidates | map('regex_replace', '_.*$', '') | unique | list }}"
+        ihs_sdk_offering: >-
+          {{ _advertised | select('search', '^' ~ (ihs_sdk_package_filter | regex_escape))
+             | list | last | default('', true) }}
+      vars:
+        _advertised: >-
+          {{ ihs_available.stdout_lines | map('trim') | select('search', ' : ')
+             | map('regex_search', '^[^:]+ : ([^ :]+)', '\1')
+             | flatten | select('string') | list | unique | sort }}
+        _candidates: >-
+          {{ _advertised | select('search', '^' ~ (ihs_package_filter | regex_escape)) | list }}
+
+    - name: Refuse when IHS is not advertised
+      ansible.builtin.fail:
+        msg: >-
+          The repositories {{ ihs_repositories | join(', ') }} advertise no
+          package starting with {{ ihs_package_filter }}. What they advertise:
+          {{ ihs_available.stdout_lines | join(' | ') }}
+      when: ihs_offering | length == 0
+
+    - name: Refuse when the choice is ambiguous rather than guessing
+      ansible.builtin.fail:
+        msg: >-
+          The repositories carry {{ ihs_offering_stems | join(', ') }}. Set
+          ihs_package_id to the one wanted.
+      when:
+        - ihs_package_id | length == 0
+        - ihs_offering_stems | length > 1
+
+    - name: Refuse when no Java SDK is advertised
+      ansible.builtin.fail:
+        msg: >-
+          IHS 9.0 is installed together with an IBM Java 8 SDK, and none of
+          {{ ihs_repositories | join(', ') }} advertises a package starting
+          with {{ ihs_sdk_package_filter }}. Point ihs_sdk_media_dir at the
+          repository that carries it - the WAS 9.0 repository normally does.
+      when: ihs_sdk_offering | length == 0
+
+    - name: Report the plan
+      ansible.builtin.debug:
+        msg:
+          - "repositories : {{ ihs_repositories | join(', ') }}"
+          - "offering     : {{ ihs_offering }}"
+          - "sdk          : {{ ihs_sdk_offering }}"
+          - "into         : {{ ihs_home }}"
+
+    - name: Create the target directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ site_was_user }}"
+        group: "{{ site_was_group }}"
+        mode: "0755"
+      # im_install_log_dir may be empty: imcl then logs where it always does.
+      loop: "{{ [ihs_home, im_install_log_dir | default('')] | select | list }}"
+      become: true
+
+    - name: Remove lost+found from the installation directory
+      # Often its own filesystem, and imcl refuses a non-empty target.
+      ansible.builtin.file:
+        path: "{{ ihs_home }}/lost+found"
+        state: absent
+      become: true
+
+    - name: Install IHS through Installation Manager
+      ansible.builtin.command:
+        cmd: >-
+          {{ im_installer_cmd }} install
+          {{ ihs_offering }} {{ ihs_sdk_offering }}
+          -repositories {{ ihs_repositories | join(',') }}
+          -installationDirectory {{ ihs_home }}
+          {{ ('-sharedResourcesDirectory ' ~ im_shared_resources_dir) if (im_shared_resources_dir | default('') | length > 0) else '' }}
+          {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
+          {{ ('-preferences ' ~ im_preferences_dir) if (im_preferences_dir | default('') | length > 0) else '' }}
+          -properties user.ihs.httpPort={{ ihs_http_port }}
+          {{ ('-log ' ~ im_install_log_dir ~ '/install_ihs.log') if (im_install_log_dir | default('') | length > 0) else '' }}
+          -acceptLicense
+          -nl {{ im_install_locale }}
+        creates: "{{ ihs_home }}/bin/apachectl"
+      become: true
+      async: 3600
+      poll: 15
+      register: ihs_install_run
+
+    - name: Show the tail of the installer output
+      ansible.builtin.debug:
+        msg: "{{ (ihs_install_run.stdout_lines | default([]))[-20:] }}"
+
+# ---------------------------------------------------------------------------
+# Verify on every run
+# ---------------------------------------------------------------------------
+
+- name: Verify
+  # A check run installs nothing: an IHS that was missing is still missing,
+  # which is the expected outcome of a dry run, not a failure.
+  when: not (ihs_needs_install | bool and ansible_check_mode)
+  tags: [ihs, verify]
+  block:
+
+    - name: List the installed packages again
+      ansible.builtin.command:
+        cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+      register: ihs_verify
+      changed_when: false
+      check_mode: false
+      become: true
+
+    - name: IHS must be installed in its directory
+      ansible.builtin.assert:
+        that:
+          - _hit | length > 0
+        fail_msg: >-
+          Installation Manager does not report {{ ihs_package_filter }}* in
+          {{ ihs_home }}. What it reports:
+          {{ ihs_verify.stdout_lines | default([]) | join(' | ') }}.
+          See {{ (im_install_log_dir ~ '/install_ihs.log') if (im_install_log_dir | default('') | length > 0) else 'the Installation Manager logs (imcl -log was not passed)' }}.
+        success_msg: "{{ _hit | first | default('') | trim }}"
+      vars:
+        _hit: >-
+          {{ ihs_verify.stdout_lines | default([])
+             | select('search', (ihs_home | regex_replace('/+$', '') | regex_escape) ~ '/? +:')
+             | select('search', ihs_package_filter | regex_escape) | list }}
+
+    - name: apachectl must exist
+      ansible.builtin.stat:
+        path: "{{ ihs_home }}/bin/apachectl"
+      register: ihs_apachectl
+      check_mode: false
+
+    - name: Report a missing apachectl
+      ansible.builtin.assert:
+        that:
+          - ihs_apachectl.stat.exists
+        fail_msg: >-
+          {{ ihs_home }}/bin/apachectl is missing although Installation Manager
+          reports IHS there - check {{ (im_install_log_dir ~ '/install_ihs.log') if (im_install_log_dir | default('') | length > 0) else 'the Installation Manager logs (imcl -log was not passed)' }}.
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      - "host        : {{ inventory_hostname }}"
+      - "environment : {{ was_environment }} ({{ was_env_long_name }})"
+      - "ihs         : {{ ihs_home }}"
+      - "changed     : {{ ihs_install_run.changed | default(false) }}"
+      - "next        : the web server plugin (lab_install_plugin.yml), then the fix packs"
+  tags: [ihs]

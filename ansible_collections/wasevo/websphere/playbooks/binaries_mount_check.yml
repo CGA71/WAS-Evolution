@@ -11,8 +11,9 @@
 # roles/forge_preflight/tasks/binaries_mount.yml. It needs no environment: the
 # mount belongs to the machine, not to the environment built on it.
 #
-# In the pipeline it is the first job that touches the server, in the
-# Validation stage. In AWX it is the first node of the cell workflow, so an
+# In the pipeline it is the second job that touches the server, in the
+# Validation stage, after aix:share mounted it. In AWX it is node 0, right after
+# 0a (binaries_mount.yml, which mounts the share), so an
 # unmounted share stops the workflow before Installation Manager is unpacked.
 
 - name: The binaries mount point

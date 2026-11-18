@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: traditional_plugin_install
+  author: neo
+  description: "WebSphere web server plugin 9.0 binaries via imcl, with its Java SDK and a truthful changed."
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+dependencies: []

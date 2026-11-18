@@ -5,8 +5,6 @@
 # lives - a cluster member IS an application server, created on a federated
 # node and owned by the cell.
 
-was_service_name: wasnode
-
 # The deployment manager is NOT named here. profile_nodeagent resolves it from
 # groups['dmgr'] and reads the SOAP port the created profile actually got, which
 # is the one thing that cannot disagree with reality. was_dmgr_host in the
@@ -15,15 +13,28 @@ was_service_name: wasnode
 # --------------------------------------------------------------------------
 # Names
 # --------------------------------------------------------------------------
-# manageprofiles -profileName for the managed template. AppSrv01 is also the
-# role pattern; it is written out so the file names every object it creates
-# rather than half of them.
-was_profile_name: "AppSrv01"
+# The site standard, read from the server (profiles/Node1Dev):
+#
+#   Node + was_node_index + was_environment (capitalised: DEV or dev -> Dev)
+#
+# was_environment is the AWX survey answer ("Give an environment").
+#
+#   was_environment  was_node_index  node and profile
+#   DEV              1               Node1Dev
+#   DEV01            1               Node1Dev01
+#   VAL              2               Node2Val
+#
+# was_node_index is the node's number in the cell: 1 here. A second AIX server
+# in the nodeagents group sets was_node_index: 2 on its own line in hosts.yml.
+was_node_index: 1
 
-# manageprofiles -nodeName. The role pattern derives this from the machine
-# name (ServeurAIX-nodeNode here), which reads like an accident. This inventory names
-# it from the environment and an index instead.
-was_node_name: "{{ was_env_upper }}Node01"
+# manageprofiles -nodeName.
+was_node_name: "Node{{ was_node_index }}{{ was_environment | capitalize }}"
+
+# manageprofiles -profileName: the same string, so the profile directory is
+# .../AppServer/profiles/Node1Dev, which is also a filesystem of its own on
+# this server - the system administrator creates it before the profile job.
+was_profile_name: "{{ was_node_name }}"
 
 # The application server. In an ND cell an application server that belongs to a
 # cluster is a cluster member, so this one name is both: it is what

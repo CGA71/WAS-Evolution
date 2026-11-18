@@ -43,3 +43,25 @@
 
   roles:
     - role: wasevo.websphere.traditional.profile_nodeagent
+
+# Where the processes write their logs (was_log_root), now that every node is
+# in the cell: set from the deployment manager, which reads the node names the
+# play above resolved, then the node agents that changed are restarted. Does
+# nothing when the inventory does not set was_log_root, or for a standalone
+# topology. On its own, for a cell that exists: traditional_log_root.yml.
+- name: LOG_ROOT of every node, from the deployment manager
+  hosts: "{{ profile_dmgr_hosts | default(was_dmgr_group | default('dmgr')) }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.log_root
+
+- name: Restart the node agents whose LOG_ROOT changed
+  hosts: "{{ profile_node_hosts | default('nodeagents') }}"
+  gather_facts: false
+
+  tasks:
+    - name: The node agent
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.log_root
+        tasks_from: node.yml

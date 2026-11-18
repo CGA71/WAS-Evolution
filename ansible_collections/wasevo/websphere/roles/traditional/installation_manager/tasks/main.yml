@@ -193,6 +193,8 @@
         state: directory
         mode: "0755"
       become: true
+      # Empty: -log is not passed and imcl logs where it always does.
+      when: im_install_log_dir | default('') | length > 0
 
     - name: Install Installation Manager
       # installc is the administrator install, which is what the estate uses:
@@ -204,9 +206,9 @@
           {{ im_unpack_dir }}/installc
           -acceptLicense
           -installationDirectory {{ im_installer_dir }}
-          -dataLocation {{ im_agent_data_dir }}
+          {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
           {{ ('-preferences ' ~ im_preferences_dir) if (im_preferences_dir | default('') | length > 0) else '' }}
-          -log {{ im_install_log_dir }}/install_im.log
+          {{ ('-log ' ~ im_install_log_dir ~ '/install_im.log') if (im_install_log_dir | default('') | length > 0) else '' }}
           -sVP
         creates: "{{ im_installer_cmd }}"
       become: true

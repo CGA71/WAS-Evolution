@@ -1,0 +1,48 @@
+---
+# LOG_ROOT of every node of the cell: where the deployment manager, the node
+# agents and the application servers write their logs (was_log_root in the
+# inventory - /was_commun/applogs on the AIX server).
+#
+#   ansible-playbook -i inventories/aix <this> \
+#       -e was_environment=<code> -e was_topology=nd -e config_dmgr_hosts=dmgr -e @admin.json
+#
+# The profile job (lab_create_profiles.yml) already does this at the end of a
+# build. This playbook is for a cell that exists: it sets the variable, and
+# restarts the deployment manager and each node agent whose LOG_ROOT changed.
+# A replay changes nothing and restarts nothing.
+#
+# THREE PLAYS, for the same reason as traditional_cluster_members.yml: a node
+# name is only known on its node, so the nodes resolve theirs first, the
+# deployment manager writes the variables, then each node restarts its agent.
+
+- name: The target this run acts on, refused early if it is missing
+  ansible.builtin.import_playbook: guard_target.yml
+
+- name: Resolve the node names
+  hosts: "{{ log_root_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"
+  gather_facts: false
+
+  tasks:
+    - name: Resolve the model and the names
+      ansible.builtin.include_role:
+        name: wasevo.websphere.model
+
+- name: LOG_ROOT of every node, from the deployment manager
+  hosts: >-
+    {{ config_dmgr_hosts
+       | default((was_environment | default('no-environment-supplied')) | lower
+                 ~ ':&' ~ (was_dmgr_group | default('dmgr'))) }}
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.log_root
+
+- name: Restart the node agents whose LOG_ROOT changed
+  hosts: "{{ log_root_node_hosts | default(was_nodeagent_group | default('nodeagents')) }}"
+  gather_facts: false
+
+  tasks:
+    - name: The node agent
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.log_root
+        tasks_from: node.yml

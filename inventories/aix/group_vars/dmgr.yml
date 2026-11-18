@@ -5,16 +5,15 @@
 # inventory entry. See the comment in hosts.yml for why the entry is separate
 # from the installation entry.
 
-# Paths and services: site facts, not object names.
+# The profile this host works on: the deployment manager's.
 was_profile_path: "{{ was_dmgr_profile_path }}"
-was_service_name: wasdmgr
 
 # --------------------------------------------------------------------------
 # Names
 # --------------------------------------------------------------------------
 # manageprofiles -profileName. The role pattern is Dmgr_<ENV>_<Channel>; the
 # inventory imposes a short name instead, which is what an operator reading
-# /app/profiles has to recognise.
+# /usr/IBM/WebSphere9/AppServer/profiles has to recognise.
 #
 # Both variables are set, and to the same value, on purpose:
 #   was_dmgr_profile_name  what the response file writes as profileName, and
@@ -24,6 +23,9 @@ was_service_name: wasdmgr
 # roles/model/tasks/naming.yml falls back to the dmgr PATTERN for
 # was_profile_name on a dmgr host rather than to was_dmgr_profile_name, so
 # setting only the first would leave the two disagreeing.
+#
+# PROVISIONAL: the site's standard for the deployment manager is not decided
+# yet. Change both lines (and was_node_name below) once it is.
 was_dmgr_profile_name: "Dmgr01"
 was_profile_name: "Dmgr01"
 

@@ -2,22 +2,30 @@
 # Start one WAS process if it is not running - the deployment manager, a node
 # agent or an application server.
 #
-# Inputs: start_label, start_pid_file, start_command.
+# Inputs: start_label, start_command, and start_pid_files - every place the
+# .pid file can be (or start_pid_file, a single one).
 #
 # RUNNING IS A LIVE PID, NOT A FILE. A process that died leaves its .pid file
 # behind; a check on the file alone would call a dead server running and never
 # start it. The pid inside must name a live process.
+#
+# SEVERAL PLACES because WAS writes the pid under LOG_ROOT, and LOG_ROOT can be
+# moved (the log_root role): a process started before the move has its pid in
+# the profile's logs/, one started after it in the new directory. Running in
+# either is running.
 
 # Plain POSIX sh, no bash: /bin/sh is ksh on AIX, and bash is not in the base
 # system there. There is no pipeline, so there is nothing for pipefail to do.
 - name: Is it running - {{ start_label }}
   ansible.builtin.shell:
     cmd: |
-      if [ -f "{{ start_pid_file }}" ] && kill -0 "$(cat "{{ start_pid_file }}")" 2>/dev/null; then
-        echo running
-      else
-        echo stopped
-      fi
+      state=stopped
+      for f in {% for p in (start_pid_files | default([start_pid_file])) | unique %}"{{ p }}" {% endfor %}; do
+        if [ -f "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null; then
+          state=running
+        fi
+      done
+      echo $state
   register: _start_state
   changed_when: false
   check_mode: false

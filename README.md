@@ -418,7 +418,7 @@ CI/CD variables, none of them in the repository:
 
 ### Validating the mount point
 
-The IBM media cannot be downloaded by a playbook — every artefact needs an IBMid — so it lives on a share the system administrator mounts on the server at `was_install_binaries_base_dir` (`/mnt/binaries`). [`binaries_mount_check.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml) checks it before anything reads it:
+The IBM media cannot be downloaded by a playbook — every artefact needs an IBMid — so it lives on an NFS share mounted on the server at `was_install_binaries_base_dir` (`/mnt/binaries`). [`binaries_mount.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount.yml) (role `binaries_share`, through sudo) mounts it from `site_binaries_repository` (`<server>:<export>`) and writes its `/etc/filesystems` stanza so it survives a reboot; it is the first job of the workflow and of the pipeline (`aix:share`), and nothing else can run without it. [`binaries_mount_check.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml) then checks it before anything reads it:
 
 ```sh
 ansible-playbook -i inventories/aix \
@@ -454,7 +454,7 @@ There is no environment group, on purpose: the same server is built as any envir
 | The WAS account (`wasadmin`) with an SSH key and `sudo` | The system administrator | the connection itself |
 | `nofiles`, `nproc` limits | `prereqs_os`, with `chuser` — the AIX equivalent of `/etc/security/limits.d` | `lsuser`, only the attributes that differ are written |
 | `/app`, `/opt/exploit`, sized | JFS2 filesystems (`crfs`) | `forge_preflight`: free space through `df -Pk` |
-| The binaries share on `/mnt/binaries` | The system administrator | `binaries_mount_check.yml` |
+| The binaries share on `/mnt/binaries` | `binaries_share` (`binaries_mount.yml`), through sudo; `/etc/filesystems` stanza | `binaries_mount_check.yml` |
 
 `ansible_python_interpreter` is `/opt/freeware/bin/python3` (interpreter discovery does not look there), and Ansible's temporary files go under the account's home, because `/tmp` is often small on AIX.
 
@@ -479,11 +479,14 @@ With families declared, the `model` role accepts a code only if it is a family, 
 COL=ansible_collections/wasevo/websphere/playbooks
 E="-i inventories/aix -e was_environment=<code>"     # a family, alone or with an instance
 
+ansible-playbook -i inventories/aix $COL/binaries_mount.yml
 ansible-playbook -i inventories/aix $COL/binaries_mount_check.yml
 ansible-playbook $E $COL/forge_preflight.yml -e forge_preflight_hosts=was_install -e forge_preflight_check_dirs=false
 ansible-playbook $E $COL/lab_install_im.yml
 ansible-playbook $E $COL/lab_apply_fixpacks.yml
 ansible-playbook $E $COL/lab_install_was.yml
+ansible-playbook $E $COL/lab_install_ihs.yml
+ansible-playbook $E $COL/lab_install_plugin.yml
 ansible-playbook $E $COL/lab_apply_fixpacks.yml
 ansible-playbook $E $COL/lab_create_profiles.yml -e profile_hosts=was_install -e was_topology=nd -e @admin.json
 ansible-playbook $E $COL/traditional_cluster.yml -e config_dmgr_hosts=dmgr -e @admin.json
@@ -1406,14 +1409,17 @@ bash ci/awx/apply-templates.sh            # the configuration templates 9-23, ap
 
 | Node | Playbook | |
 |---|---|---|
+| 0a. Binaries share: mount | `binaries_mount.yml` | role `binaries_share`; first, nothing runs without it |
 | 0. Binaries mount point | `binaries_mount_check.yml` | Stops the workflow before anything is unpacked if the share is not there |
 | 1. Installation Manager | `lab_install_im.yml` | with `prereqs_os` first |
 | 2. Fix packs: Installation Manager | `lab_apply_fixpacks.yml` | lifts IM to the level WAS needs |
 | 3. WAS | `lab_install_was.yml` | |
-| 4. Fix packs: WAS | `lab_apply_fixpacks.yml` | the same playbook, a second template |
+| 3b. IHS | `lab_install_ihs.yml` | role `ihs_install`; left alone when already installed |
+| 3c. Web server plugin | `lab_install_plugin.yml` | role `plugin_install`; left alone when already installed |
+| 4. Fix packs: WAS | `lab_apply_fixpacks.yml` | the same playbook, a second template; also patches IHS and the plugin |
 | 5. Profiles | `lab_create_profiles.yml` | deployment manager, then the federated node |
 | 6. Cluster · 7. Cluster members · 8. Start | | `config_dmgr_hosts: dmgr` |
-| 9 – 23 | J2C, JDBC, shared libraries, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, security, policy sets, dynamic cache, logging, PMI | by `apply-templates.sh` |
+| 9 – 24 | J2C, JDBC, shared libraries, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, security, policy sets, dynamic cache, logging, PMI, log root (`traditional_log_root.yml`) | by `apply-templates.sh` |
 
 Made by hand in AWX, once: the machine credential "ServeurAIX (ansible)" (the WAS account's SSH key) and a credential of the type "WAS administrative user", which `apply-templates.sh` creates. Until that credential exists, the templates that need it ask for it at launch.
 
@@ -1995,7 +2001,7 @@ Variables CI/CD, aucune dans le dépôt :
 
 ### Valider le point de montage
 
-Les médias IBM ne peuvent pas être téléchargés par un playbook — chaque artefact exige un IBMid — ils vivent donc sur un partage que l'administrateur système monte sur le serveur à `was_install_binaries_base_dir` (`/mnt/binaries`). [`binaries_mount_check.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml) le vérifie avant que quoi que ce soit le lise :
+Les médias IBM ne peuvent pas être téléchargés par un playbook — chaque artefact exige un IBMid — ils vivent donc sur un partage NFS monté sur le serveur à `was_install_binaries_base_dir` (`/mnt/binaries`). [`binaries_mount.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount.yml) (rôle `binaries_share`, par sudo) le monte depuis `site_binaries_repository` (`<serveur>:<export>`) et écrit sa stanza `/etc/filesystems` pour qu'il survive à un redémarrage ; c'est le premier job du workflow et du pipeline (`aix:share`), et rien d'autre ne peut tourner sans lui. [`binaries_mount_check.yml`](ansible_collections/wasevo/websphere/playbooks/binaries_mount_check.yml) le vérifie ensuite avant que quoi que ce soit le lise :
 
 ```sh
 ansible-playbook -i inventories/aix \
@@ -2031,7 +2037,7 @@ Pas de groupe d'environnement, volontairement : le même serveur se construit so
 | Le compte WAS (`wasadmin`) avec une clé SSH et `sudo` | L'administrateur système | la connexion elle-même |
 | Limites `nofiles`, `nproc` | `prereqs_os`, avec `chuser` — l'équivalent AIX de `/etc/security/limits.d` | `lsuser` ; seuls les attributs différents sont écrits |
 | `/app`, `/opt/exploit`, dimensionnés | Systèmes de fichiers JFS2 (`crfs`) | `forge_preflight` : espace libre par `df -Pk` |
-| Le partage des binaires sur `/mnt/binaries` | L'administrateur système | `binaries_mount_check.yml` |
+| Le partage des binaires sur `/mnt/binaries` | `binaries_share` (`binaries_mount.yml`), par sudo ; stanza `/etc/filesystems` | `binaries_mount_check.yml` |
 
 `ansible_python_interpreter` vaut `/opt/freeware/bin/python3` (la découverte d'interpréteur n'y regarde pas), et les fichiers temporaires d'Ansible vont sous le home du compte, car `/tmp` est souvent petit sur AIX.
 
@@ -2056,11 +2062,14 @@ Quand des familles sont déclarées, le rôle `model` n'accepte un code que s'il
 COL=ansible_collections/wasevo/websphere/playbooks
 E="-i inventories/aix -e was_environment=<code>"     # a family, alone or with an instance
 
+ansible-playbook -i inventories/aix $COL/binaries_mount.yml
 ansible-playbook -i inventories/aix $COL/binaries_mount_check.yml
 ansible-playbook $E $COL/forge_preflight.yml -e forge_preflight_hosts=was_install -e forge_preflight_check_dirs=false
 ansible-playbook $E $COL/lab_install_im.yml
 ansible-playbook $E $COL/lab_apply_fixpacks.yml
 ansible-playbook $E $COL/lab_install_was.yml
+ansible-playbook $E $COL/lab_install_ihs.yml
+ansible-playbook $E $COL/lab_install_plugin.yml
 ansible-playbook $E $COL/lab_apply_fixpacks.yml
 ansible-playbook $E $COL/lab_create_profiles.yml -e profile_hosts=was_install -e was_topology=nd -e @admin.json
 ansible-playbook $E $COL/traditional_cluster.yml -e config_dmgr_hosts=dmgr -e @admin.json
@@ -3024,14 +3033,17 @@ bash ci/awx/apply-templates.sh            # les templates de configuration 9-23,
 
 | Nœud | Playbook | |
 |---|---|---|
+| 0a. Montage du partage des binaires | `binaries_mount.yml` | rôle `binaries_share` ; en premier, rien ne tourne sans lui |
 | 0. Point de montage des binaires | `binaries_mount_check.yml` | Arrête le workflow avant tout dépaquetage si le partage n'est pas là |
 | 1. Installation Manager | `lab_install_im.yml` | avec `prereqs_os` d'abord |
 | 2. Fix packs : Installation Manager | `lab_apply_fixpacks.yml` | monte IM au niveau dont WAS a besoin |
 | 3. WAS | `lab_install_was.yml` | |
-| 4. Fix packs : WAS | `lab_apply_fixpacks.yml` | le même playbook, un second template |
+| 3b. IHS | `lab_install_ihs.yml` | rôle `ihs_install` ; laissé tel quel s'il est déjà installé |
+| 3c. Plugin du serveur web | `lab_install_plugin.yml` | rôle `plugin_install` ; laissé tel quel s'il est déjà installé |
+| 4. Fix packs : WAS | `lab_apply_fixpacks.yml` | le même playbook, un second template ; corrige aussi IHS et le plugin |
 | 5. Profils | `lab_create_profiles.yml` | gestionnaire de déploiement, puis nœud fédéré |
 | 6. Cluster · 7. Membres · 8. Démarrage | | `config_dmgr_hosts: dmgr` |
-| 9 – 23 | J2C, JDBC, bibliothèques partagées, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, sécurité, policy sets, cache dynamique, logging, PMI | par `apply-templates.sh` |
+| 9 – 24 | J2C, JDBC, bibliothèques partagées, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, sécurité, policy sets, cache dynamique, logging, PMI, racine des logs (`traditional_log_root.yml`) | par `apply-templates.sh` |
 
 Créés à la main dans AWX, une fois : la credential machine « ServeurAIX (ansible) » (la clé SSH du compte WAS) et une credential du type « WAS administrative user », que `apply-templates.sh` crée. Tant qu'elle n'existe pas, les templates qui en ont besoin la demandent au lancement.
 

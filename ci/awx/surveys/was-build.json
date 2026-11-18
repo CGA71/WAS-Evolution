@@ -37,7 +37,7 @@
     },
     {
       "question_name": "Cell name",
-      "question_description": "Leave blank to derive it as <Channel>_<ENVIRONMENT>. Fill it in to impose a name the pattern would not produce.",
+      "question_description": "Leave blank to use the inventory's standard: <ENVIRONMENT><version>Cell, e.g. DEV90Cell. Fill it in to impose a name the standard would not produce.",
       "variable": "survey_was_cell_name",
       "type": "text",
       "required": false,

@@ -1,0 +1,38 @@
+---
+# Mount the share that carries the IBM media on the installation target.
+#
+# PRIMORDIAL: every install and fix pack job reads its media from it, and the
+# first check of the workflow (binaries_mount_check.yml) stops everything when
+# it is not mounted. This role is what mounts it; the check then verifies it.
+#
+# Mounting needs root. The role escalates with become (sudo from the AIX
+# Toolbox), like the install roles: the connecting account - site_was_user -
+# must be in sudoers. Ansible's become runs a Python module through sudo, so a
+# sudoers line restricted to /usr/sbin/mount is not enough; the account needs
+# what the other roles already need, e.g.
+#
+#   wasadmin ALL=(root) NOPASSWD: ALL
+#
+# or the job runs with a Machine credential whose become method/user reach
+# root another way.
+#
+# WHAT IS MOUNTED, FROM THE INVENTORY - this role adds no second definition:
+#
+#   site_binaries_repository        <server>:<export>, e.g. nas01:/export/ibm
+#   site_binaries_repository_type   nfs to mount; jfs2 or none: a local
+#                                   filesystem, nothing to mount
+#   was_install_binaries_base_dir   the mount point, e.g. /mnt/binaries
+
+# Mount options. Read-only: the media is never written from this server.
+# bg retries in the background at boot rather than holding the boot up; soft
+# and intr let a hung server time out instead of freezing the job. Add
+# vers=3 or vers=4 if the NFS server needs one.
+binaries_share_options: "ro,bg,soft,intr"
+
+# Keep the mount across a reboot: on AIX a stanza in /etc/filesystems with
+# mount = true, on Linux an /etc/fstab line. False mounts for the running
+# system only.
+binaries_share_persistent: true
+
+# The mount point directory, created when missing (root:system on AIX).
+binaries_share_mount_point_mode: "0755"

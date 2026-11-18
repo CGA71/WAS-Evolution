@@ -232,8 +232,8 @@
               {{ im_installer_cmd }} install com.ibm.cic.agent
               -repositories {{ fp_repositories | join(',') }}
               -installationDirectory {{ im_installer_dir }}
-              -dataLocation {{ im_agent_data_dir }}
-              -log {{ im_install_log_dir }}/fixpack_im.log
+              {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
+              {{ ('-log ' ~ im_install_log_dir ~ '/fixpack_im.log') if (im_install_log_dir | default('') | length > 0) else '' }}
               -acceptLicense
           become: true
           # It only runs when the plan found a self-update to apply, and
@@ -258,8 +258,8 @@
             cmd: >-
               {{ im_installer_cmd }} updateAll
               -repositories {{ fp_repositories | join(',') }}
-              -dataLocation {{ im_agent_data_dir }}
-              -log {{ im_install_log_dir }}/fixpack_products.log
+              {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
+              {{ ('-log ' ~ im_install_log_dir ~ '/fixpack_products.log') if (im_install_log_dir | default('') | length > 0) else '' }}
               -acceptLicense
               -nl {{ im_install_locale }}
           become: true

@@ -1,27 +1,37 @@
 ---
 # Site facts for the AIX server.
 #
-# THE BINARIES SHARE. The IBM media - the Installation Manager archive, the WAS
-# repository, the fix packs - lives on a share mounted on ServeurAIX at
-# was_install_binaries_base_dir (group_vars/all/20_paths.yml). Mounting it is
-# the system administrator's job, not this collection's: forge_preflight and
-# binaries_mount_check.yml only VERIFY that it is mounted, of the declared
-# type, readable, and that it carries the media. Credentials for the share
-# never appear here.
+# THE BINARIES SHARE - PRIMORDIAL. The IBM media - the Installation Manager
+# archive, the WAS, IHS and plugin repositories, the fix packs - lives on an
+# NFS share mounted on ServeurAIX at was_install_binaries_base_dir
+# (20_paths.yml). Nothing can be installed or patched without it.
 #
-# Replace the export below with the site's own. It is only reported, and
-# compared with the mount when binaries_mount_check_source is true.
+#   binaries_mount.yml        MOUNTS it (role binaries_share, through sudo) and
+#                             writes its /etc/filesystems stanza. First job of
+#                             the AWX workflow (0a) and of the pipeline
+#                             (aix:share).
+#   binaries_mount_check.yml  then VERIFIES it: mounted, of this type,
+#                             readable, carrying the media.
+#
+# TO BE REPLACED with the site's export, as <server>:<export>. This is what
+# binaries_mount.yml mounts.
 site_binaries_repository: "nfsserver:/export/binaries"
-# nfs, cifs, jfs2 (a local filesystem), or none to skip the type check.
+# nfs to mount it; jfs2 (a local filesystem) or none: nothing to mount.
 site_binaries_repository_type: nfs
 
-site_dns_domain: example.internal
-site_timezone: Europe/Paris
+# The mount options (ro,bg,soft,intr by default) and the persistence are in
+# roles/binaries_share/defaults/main.yml, e.g.
+#   binaries_share_options: "ro,bg,soft,intr,vers=3"
 
 # The AIX account that owns the installation and runs the processes, and the
 # one Ansible connects as. It needs sudo (AIX Toolbox) for the tasks that
 # become root - Installation Manager's administrator install, the directory
 # layout, the user limits.
+#
+# The group is the one /usr/IBM/IHS9, Plugins9 and WebSphere9 belong to on the
+# server. The account is the one that owns them: check with
+#   ls -ld /usr/IBM/WebSphere9 /usr/IBM/IHS9
+# prereqs_os gives the directories of 20_paths.yml to this account and group.
 site_was_user: wasadmin
-site_was_group: wasadmin
+site_was_group: was
 site_jython_dirname: jython-ansible
