@@ -23,10 +23,12 @@ tags:
   - openshift
   - ibm
   - middleware
+# No kubernetes.core / community.okd for now: Kubernetes is set aside, and the
+# Liberty / OpenShift roles that use them are not run. See
+# collections/requirements.yml.
 dependencies:
-  kubernetes.core: ">=3.0.0"
-  community.okd: ">=2.0.0"
   ansible.posix: ">=1.5.4"
+  community.general: ">=8.0.0"
 repository: https://github.com/CGA71/WAS-Evolution
 build_ignore:
   - .git

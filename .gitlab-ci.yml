@@ -321,7 +321,8 @@ portal-unit:
     - apt-get update -qq && apt-get install -y -qq openssh-client >/dev/null
     - pip install --quiet --no-cache-dir ansible-core
     # From requirements.yml, not a hand-picked list: forge_preflight checks the
-    # collections it declares, and a subset fails that check.
+    # collections it declares, and a subset fails that check. That file holds
+    # the traditional plane only - no Kubernetes collection is installed here.
     - ansible-galaxy collection install --force -r collections/requirements.yml >/dev/null
     # The key and the known host, from CI variables, never from the repository.
     - |
