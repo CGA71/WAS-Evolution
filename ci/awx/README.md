@@ -13,7 +13,13 @@ bash ci/awx/apply-templates.sh              # 2. configuration templates 9-23 + 
 bash ci/awx/apply-survey.sh                 #    (run by 1) the survey and the Job type prompt
 AWX_ORGANIZATION="Client A" AWX_INVENTORY="Client A - WAS" \
     bash ci/awx/apply-certificates.sh       # certificate templates, per organisation
+
+bash ci/release.sh 0.2.0                    # galaxy.yml -> 0.2.0, tag v0.2.0, pushed
+bash ci/awx/promote.sh v0.2.0               # the project runs v0.2.0 / le projet exécute v0.2.0
+bash ci/awx/promote.sh                      # which version it runs / quelle version il exécute
 ```
+
+**Versions** — AWX runs a tag, never `main`: `promote.sh` sets the project's SCM branch/tag, updates it, and puts the previous value back if the tag cannot be checked out. A rollback is `promote.sh` with the previous tag. `main` only with `--branch`, on purpose. / AWX exécute un tag, jamais `main` : `promote.sh` règle la branche/tag SCM du projet, le met à jour, et remet la valeur précédente si le tag ne peut être récupéré. Un retour arrière, c'est `promote.sh` avec le tag précédent. `main` seulement avec `--branch`, volontairement.
 
 | Variable | Default | |
 |---|---|---|

@@ -39,6 +39,10 @@
 # The build and deploy stages run on the default branch only, and one pipeline
 # at a time (resource_group): two pipelines installing on one server contend
 # for Installation Manager's lock.
+#
+# Versions: ci/release.sh X.Y.Z writes X.Y.Z into galaxy.yml and tags vX.Y.Z;
+# a tag pipeline runs the static gates and release-version, nothing that
+# changes ServeurAIX. AWX runs a tag, set by ci/awx/promote.sh.
 
 stages:
   - validation
@@ -307,6 +311,35 @@ portal-unit:
   script:
     - node ci/portal-tests.js
     - node ci/application-portal-tests.js
+
+# A tag is a version AWX will run (ci/awx/promote.sh). ci/release.sh writes the
+# version into galaxy.yml and makes the tag together; this refuses a tag made
+# any other way that does not match: vX.Y.Z, X.Y.Z in galaxy.yml, and a commit
+# of the default branch - a tag on an unmerged branch is code nobody reviewed.
+release-version:
+  image: python:3.12-slim
+  stage: validation
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      set -e
+      expr "$CI_COMMIT_TAG" : 'v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' > /dev/null \
+        || { echo "FAIL: the tag $CI_COMMIT_TAG is not vX.Y.Z"; exit 1; }
+      declared="$(sed -n 's/^version:[[:space:]]*//p' $COLLECTION/galaxy.yml | tr -d "\"' ")"
+      [ "v$declared" = "$CI_COMMIT_TAG" ] \
+        || { echo "FAIL: galaxy.yml says $declared, the tag says $CI_COMMIT_TAG - use ci/release.sh"; exit 1; }
+      echo "galaxy.yml and the tag agree: $declared"
+    - |
+      set -e
+      apt-get update -qq && apt-get install -y -qq git > /dev/null
+      git config --global --add safe.directory "$CI_PROJECT_DIR"
+      git fetch -q origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH"
+      git merge-base --is-ancestor "$CI_COMMIT_SHA" "origin/$CI_DEFAULT_BRANCH" \
+        || { echo "FAIL: $CI_COMMIT_TAG is not on $CI_DEFAULT_BRANCH"; exit 1; }
+      echo "$CI_COMMIT_TAG is a commit of $CI_DEFAULT_BRANCH"
 
 
 # ---------------------------------------------------------------------------

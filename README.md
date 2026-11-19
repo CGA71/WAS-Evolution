@@ -1431,6 +1431,17 @@ The WAS administrator reaches a playbook through a **credential type** that inje
 
 **AWX validates `playbook` against the project's last successful update**, not against the repository, so the scripts update the project and wait before naming a playbook. A playbook pushed since that update is otherwise refused with `Playbook not found for project.`, which reads like a path typo and is not one.
 
+### Versions: AWX runs a tag
+
+Git versions the code; the CI says whether a commit is sound; AWX runs one. Pointed at `main`, AWX would run whatever was pushed last, green pipeline or not, and nobody could say which code built which environment. So it runs a tag:
+
+1. Push to `main`; wait for the pipeline to be green.
+2. `bash ci/release.sh 0.2.0` — writes `0.2.0` into `galaxy.yml`, commits it, tags `v0.2.0`, pushes `main` and the tag together. It refuses a dirty tree, a `main` that differs from the remote, an existing tag, a version going down.
+3. The tag pipeline runs the static gates and `release-version`, which refuses a tag that is not `vX.Y.Z`, that disagrees with `galaxy.yml`, or that is not on `main`.
+4. `bash ci/awx/promote.sh v0.2.0` — the project "WAS Evolution" now runs `v0.2.0`. If AWX cannot check the tag out, the previous value is put back. A rollback is `promote.sh` with the previous tag.
+
+Protect the `v*` tags in GitLab (Settings > Repository > Protected tags) so only maintainers publish a version.
+
 ## 21. Sources
 
 - [Supported Java SE versions — WebSphere Liberty (MoRE)](https://www.ibm.com/docs/en/SSNGA9K/ae/lj_java_se.html)
@@ -3054,6 +3065,17 @@ Les scripts sont rejouables : chaque objet est retrouvé par son nom et mis à j
 L'administrateur WAS atteint un playbook par un **type de credential** qui injecte `was_admin_user` et `was_admin_password` en extra vars — chiffrés au repos, masqués dans la sortie — jamais par les `extra_vars` d'un template en clair. Aucun script ne crée de credential : un mot de passe ne vient pas d'un dépôt.
 
 **AWX valide `playbook` contre la dernière mise à jour réussie du projet**, pas contre le dépôt : les scripts mettent donc le projet à jour et attendent avant de nommer un playbook. Sinon, un playbook poussé depuis cette mise à jour est refusé avec `Playbook not found for project.`, qui ressemble à une faute de chemin et n'en est pas une.
+
+### Versions : AWX exécute un tag
+
+Git versionne le code ; la CI dit si un commit est sain ; AWX en exécute un. Pointé sur `main`, AWX exécuterait ce qui a été poussé en dernier, pipeline vert ou non, et personne ne pourrait dire quel code a construit quel environnement. Il exécute donc un tag :
+
+1. Pousser sur `main` ; attendre que le pipeline soit vert.
+2. `bash ci/release.sh 0.2.0` — écrit `0.2.0` dans `galaxy.yml`, le commite, pose le tag `v0.2.0`, pousse `main` et le tag ensemble. Il refuse un arbre modifié, un `main` différent du distant, un tag existant, une version qui descend.
+3. Le pipeline du tag exécute les contrôles statiques et `release-version`, qui refuse un tag qui n'est pas `vX.Y.Z`, qui ne correspond pas à `galaxy.yml`, ou qui n'est pas sur `main`.
+4. `bash ci/awx/promote.sh v0.2.0` — le projet « WAS Evolution » exécute désormais `v0.2.0`. Si AWX ne peut pas récupérer le tag, la valeur précédente est remise. Un retour arrière, c'est `promote.sh` avec le tag précédent.
+
+Protéger les tags `v*` dans GitLab (Settings > Repository > Protected tags) pour que seuls les mainteneurs publient une version.
 
 ## 21. Sources
 
