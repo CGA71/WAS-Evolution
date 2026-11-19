@@ -78,6 +78,11 @@ pipeline sur le vrai serveur reste à lire en premier**.
    au déploiement. MicroProfile vient en phase 2 (Liberty).
 4. `WAS-Evolution.code-workspace` a un reformatage local non commité, sans
    rapport avec le reste — à jeter ou à commiter à part.
+5. **Versions** : AWX exécute un tag (`ci/release.sh`, `ci/awx/promote.sh`,
+   README section 20). Protéger les tags `v*` dans GitLab, puis faire la
+   première release `v0.1.0`. Le second projet AWX sur `main` est mis de côté
+   tant qu'AWX ne sert qu'au labo : la solution est dans
+   [`docs/AWX-PROJET-DEV.md`](docs/AWX-PROJET-DEV.md).
 
 ---
 
