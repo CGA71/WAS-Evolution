@@ -163,9 +163,21 @@ fi
 # ---------------------------------------------------------------------------
 say "Apply"
 
+# A job template whose form is its own, not the build's. The fix pack job
+# asks which environment's configuration to deploy and which components
+# (surveys/fixpack-imcl.json). Launched from the workflow it still receives the
+# workflow's answers and, with no component chosen, keeps its discovery mode;
+# launched alone, this is the form it shows.
+own_spec() {
+    case "$1" in
+        "WAS AIX - 2. Fix packs: Installation Manager") echo "$HERE/surveys/fixpack-imcl.json" ;;
+        *) echo "$SPEC" ;;
+    esac
+}
+
 attach() {
-    local path="$1" label="$2"
-    api POST "/$path/survey_spec/" --data-binary "@$SPEC" >/dev/null \
+    local path="$1" label="$2" spec="${3:-$SPEC}"
+    api POST "/$path/survey_spec/" --data-binary "@$spec" >/dev/null \
         || die "could not post the survey to $label"
     api PATCH "/$path/" -d '{"survey_enabled": true}' >/dev/null \
         || die "could not enable the survey on $label"
@@ -187,7 +199,7 @@ ask_job_type() {
 attach "workflow_job_templates/$WF_ID" "workflow \"$WORKFLOW\""
 for i in $JT_IDS; do
     nm="$(api GET "/job_templates/$i/" | jqp 'import sys,json;print(json.load(sys.stdin)["name"])')"
-    attach "job_templates/$i" "$nm"
+    attach "job_templates/$i" "$nm" "$(own_spec "$nm")"
     ask_job_type "$i" "$nm"
 done
 

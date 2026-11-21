@@ -1,0 +1,69 @@
+{#-
+  IBM HTTP Server and the web server plugin - component IHSPLG.
+
+  _entry   the server's IHS instances, from config/<env>.yml - a list, in the
+           order they are written. Each one, either SHORT, one site of a
+           multi-site server:
+             site: SITEA
+           which gives the profile Ihs<site>90<imcl_ihs_profile_suffix>, the
+           directories <imcl_ihs_base>/<SITE> and <imcl_plugin_base>/<SITE>,
+           and a plugin Plugin<site>90<suffix>; or EXPLICIT:
+             profile   Installation Manager profile id of the IHS
+             location  its installation directory
+           and in both forms, optionally:
+             service_name  user.ihs.http.server.service.name, default the
+                           profile
+             port          user.ihs.httpPort, default imcl_ihs_settings.port
+             plugin        false: no plugin for this instance; or
+                           {profile: ..., location: ...} explicitly
+  _level   imcl_levels[<the environment's level>]
+-#}
+<?xml version='1.0' encoding='UTF-8'?>
+<agent-input>
+  <variables>
+    <variable name='sharedLocation' value='{{ imcl_shared_location }}'/>
+  </variables>
+  <server>
+  </server>
+{% for i in _entry %}
+{%   set suffix = imcl_ihs_profile_suffix | default('') %}
+{%   if i.site is defined %}
+{%     set ihs_profile = i.profile | default('Ihs' ~ i.site ~ '90' ~ suffix) %}
+{%     set ihs_location = i.location | default(imcl_ihs_base ~ '/' ~ (i.site | upper)) %}
+{%     set plg_default = {'profile': 'Plugin' ~ i.site ~ '90' ~ suffix,
+                          'location': imcl_plugin_base ~ '/' ~ (i.site | upper)} %}
+{%   else %}
+{%     set ihs_profile = i.profile %}
+{%     set ihs_location = i.location %}
+{%     set plg_default = false %}
+{%   endif %}
+{%   set plg = i.plugin | default(plg_default) %}
+  <profile id='{{ ihs_profile }}' installLocation='{{ ihs_location }}'>
+    <data key='cic.selector.arch' value='{{ imcl_arch }}'/>
+    <data key='cic.selector.ws' value='{{ imcl_ws }}'/>
+    <data key='user.ihs.http.server.service.name.key' value='{{ imcl_ihs_settings.service_name_key }}'/>
+    <data key='user.ihs.http.server.service.name' value='{{ i.service_name | default(ihs_profile) }}'/>
+    <data key='user.ihs.win.serverServicePassword' value='{{ imcl_ihs_settings.win_service_password }}'/>
+    <data key='user.ihs.allowNonRootSilentInstall' value='{{ imcl_ihs_settings.allow_non_root_silent_install }}'/>
+    <data key='user.ihs.win.serverServiceLogOnAsLocalSystem' value='{{ imcl_ihs_settings.win_service_logon_as_local_system }}'/>
+    <data key='user.ihs.win.serverServiceUser' value='{{ imcl_ihs_settings.win_service_user }}'/>
+    <data key='user.ihs.httpPort' value='{{ i.port | default(imcl_ihs_settings.port) }}'/>
+  </profile>
+  <install>
+    <offering profile='{{ ihs_profile }}' id='{{ imcl_offerings.ihs.id }}' version='{{ _level.ihs }}' features='{{ imcl_offerings.ihs.features }}'/>
+    <offering profile='{{ ihs_profile }}' id='{{ imcl_offerings.jdk.id }}' version='{{ _level.jdk }}' features='{{ imcl_offerings.jdk.features }}'/>
+  </install>
+{%   if plg %}
+  <profile id='{{ plg.profile }}' installLocation='{{ plg.location }}'>
+    <data key='cic.selector.arch' value='{{ imcl_arch }}'/>
+    <data key='cic.selector.ws' value='{{ imcl_ws }}'/>
+  </profile>
+  <install>
+    <offering profile='{{ plg.profile }}' id='{{ imcl_offerings.plg.id }}' version='{{ _level.plg }}' features='{{ imcl_offerings.plg.features }}'/>
+    <offering profile='{{ plg.profile }}' id='{{ imcl_offerings.jdk.id }}' version='{{ _level.jdk }}' features='{{ imcl_offerings.jdk.features }}'/>
+  </install>
+{%   endif %}
+{% endfor %}
+  <preference name='com.ibm.cic.common.core.preferences.eclipseCache' value='${sharedLocation}'/>
+  <preference name='offering.service.repositories.areUsed' value='false'/>
+</agent-input>

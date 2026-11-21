@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  role_name: env_config
+  author: neo
+  description: >-
+    Load the configuration file of the environment answered at launch, from
+    the inventory: the repository decides what each environment deploys.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+dependencies: []

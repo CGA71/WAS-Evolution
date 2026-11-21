@@ -1,0 +1,118 @@
+---
+# Installation Manager response files (imcl input): WHAT NEVER CHANGES.
+#
+# Not to be confused with 35_profiles.yml: those are manageprofiles response
+# files (profile creation). These are imcl response files: what Installation
+# Manager installs or updates, where, with which features - WAS ND, IBM HTTP
+# Server and the web server plugin, each with its Java 8 SDK.
+#
+# THREE PLACES, ONE MECHANISM
+#
+#   here                        what is the same in every environment: the
+#                               trees, the offering ids, the levels, the IHS
+#                               settings every instance shares
+#   config/<env>.yml            what differs per environment: the level it is
+#   (beside this inventory)     on, and per server the WAS profile, the IHS
+#                               instances and their plugins. Loaded by the
+#                               env_config role from the environment answered
+#                               in the form - TEST, DEV, VAL, PREPROD, PROD
+#   templates/imcl/*.xml.j2     the response files themselves, one template
+#                               per kind of component
+#
+# The repository is the guarantor of what is deployed per environment: a
+# change to a server's installation is a commit to config/<env>.yml. The
+# files rebuilt from the server (response_files/) are the reference the
+# templates are checked against in CI (ci/check-imcl-templates.py).
+
+# --------------------------------------------------------------------------
+# The components the form offers, and what each one is made of
+# --------------------------------------------------------------------------
+#   WAS      WAS ND on a node server (the federated node, its application
+#            servers)
+#   WASDMR   WAS ND on the deployment manager's server
+#   IHSPLG   the IBM HTTP Server instances of a server, each with its plugin
+#            where it has one
+#
+# repositories: the subdirectories of the fix pack level, on the binaries
+# share, that imcl reads for this component (-repositories). SDK is the
+# level's SDK repository, imcl_levels[<level>].sdk_dir.
+imcl_component_catalog:
+  WAS:
+    template: was.xml.j2
+    repositories: [WAS, SDK]
+    offerings: [was, jdk]
+  WASDMR:
+    template: was.xml.j2
+    repositories: [WAS, SDK]
+    offerings: [was, jdk]
+  IHSPLG:
+    template: ihsplg.xml.j2
+    repositories: [IHSPLG, SDK]
+    offerings: [ihs, plg, jdk]
+
+imcl_templates_dir: "{{ inventory_dir }}/templates/imcl"
+
+# --------------------------------------------------------------------------
+# The fix pack levels: what each one installs, and where its media is
+# --------------------------------------------------------------------------
+# One entry per level the site has staged under <share>/Fixes/<level>. The
+# level an environment is on is in its config/<env>.yml (imcl_level).
+imcl_repository_base: "{{ was_install_binaries_base_dir }}/Fixes"
+imcl_levels:
+  FP9.0.5.28:
+    was: "9.0.5028.20260604_1356"
+    ihs: "9.0.5028.20260604_1356"
+    plg: "9.0.5028.20260604_1356"
+    jdk: "8.0.8065.20260410_0653"
+    # Fixes/FP9.0.5.28/SDK/8.0.8.65 on the share.
+    sdk_dir: SDK/8.0.8.65
+
+# The level when an environment's config does not say.
+imcl_default_level: FP9.0.5.28
+
+# --------------------------------------------------------------------------
+# The offerings - ids and features never change with the level
+# --------------------------------------------------------------------------
+imcl_offerings:
+  was: {id: com.ibm.websphere.ND.v90, features: "core.feature,ejbdeploy,embeddablecontainer,thinclient"}
+  ihs: {id: com.ibm.websphere.IHS.v90, features: core.feature}
+  plg: {id: com.ibm.websphere.PLG.v90, features: core.feature}
+  jdk: {id: com.ibm.java.jdk.v8, features: com.ibm.sdk.8}
+
+# --------------------------------------------------------------------------
+# The trees that do not change
+# --------------------------------------------------------------------------
+# Installation Manager's shared resources: the sharedLocation variable of
+# every response file, and its eclipse cache.
+imcl_shared_location: "{{ im_installer_dir }}/IMShared"
+# The platform selectors of every profile.
+imcl_arch: ppc64
+imcl_ws: gtk
+# WAS ND: always here, on every server.
+imcl_was_location: "{{ was_home }}"
+# IHS and the plugin: here when a server has one instance, or below, one
+# directory per site (/usr/IBM/IHS9/SITEA), when it has several.
+imcl_ihs_base: "{{ ihs_home }}"
+imcl_plugin_base: "{{ plugin_home }}"
+
+# --------------------------------------------------------------------------
+# What every IHS instance shares
+# --------------------------------------------------------------------------
+# The user.ihs.* keys, as every response file of the site writes them. The
+# win* keys are read on Windows only and ignored on AIX; they are kept so the
+# rendered file is the one the site has always used.
+imcl_ihs_settings:
+  service_name_key: IBMHTTPServerV9.0
+  win_service_password: "ENCODEDSERVICEPWD000/A=="
+  allow_non_root_silent_install: "false"
+  win_service_logon_as_local_system: "true"
+  win_service_user: was
+  port: "8080"
+
+# --------------------------------------------------------------------------
+# The run
+# --------------------------------------------------------------------------
+# Where the rendered files are written on the server, as was, 0600, and
+# removed after imcl has read them (imcl_keep_response: false).
+imcl_work_dir: "{{ was_data_base_dir }}/imcl"
+imcl_keep_response: false

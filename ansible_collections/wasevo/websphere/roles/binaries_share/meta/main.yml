@@ -2,7 +2,9 @@
 galaxy_info:
   role_name: binaries_share
   author: neo
-  description: "Mount the NFS share carrying the IBM media on the installation target, persistent across reboots (AIX /etc/filesystems, Linux /etc/fstab)."
+  description: >-
+    Mount the NFS share carrying the IBM media on the installation target,
+    persistent across reboots (AIX /etc/filesystems, Linux /etc/fstab).
   license: Apache-2.0
   min_ansible_version: "2.15"
 dependencies: []

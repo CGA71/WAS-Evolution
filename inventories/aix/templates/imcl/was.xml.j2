@@ -1,0 +1,29 @@
+{#-
+  WAS ND - components WAS and WASDMR.
+
+  _entry   the component's entry in config/<env>.yml, for this server:
+             profile    the Installation Manager profile id (package group)
+                        the server's WAS is registered under - it must be the
+                        one already installed, or imcl takes it for a second
+                        installation in the same directory
+             location   optional, default imcl_was_location
+  _level   imcl_levels[<the environment's level>]
+-#}
+<?xml version='1.0' encoding='UTF-8'?>
+<agent-input>
+  <variables>
+    <variable name='sharedLocation' value='{{ imcl_shared_location }}'/>
+  </variables>
+  <server>
+  </server>
+  <profile id='{{ _entry.profile }}' installLocation='{{ _entry.location | default(imcl_was_location) }}'>
+    <data key='cic.selector.arch' value='{{ imcl_arch }}'/>
+    <data key='cic.selector.ws' value='{{ imcl_ws }}'/>
+  </profile>
+  <install>
+    <offering profile='{{ _entry.profile }}' id='{{ imcl_offerings.was.id }}' version='{{ _level.was }}' features='{{ imcl_offerings.was.features }}'/>
+    <offering profile='{{ _entry.profile }}' id='{{ imcl_offerings.jdk.id }}' version='{{ _level.jdk }}' features='{{ imcl_offerings.jdk.features }}'/>
+  </install>
+  <preference name='com.ibm.cic.common.core.preferences.eclipseCache' value='${sharedLocation}'/>
+  <preference name='offering.service.repositories.areUsed' value='false'/>
+</agent-input>

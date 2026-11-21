@@ -1,0 +1,21 @@
+---
+# TEST - what Installation Manager installs and updates, server by server.
+# See dev.yml for the keys.
+#
+# EMPTY: the share holds no response file for TEST. Declare each TEST server
+# here before running the fix pack job for TEST - until then the job says
+# which server it has no entry for, and changes nothing. For example:
+#
+#   imcl_servers:
+#     ServeurAIX:
+#       WASDMR:
+#         profile: Was90Test
+#       WAS:
+#         profile: Was90TestNode
+#       IHSPLG:
+#         - profile: IBM HTTP Server V9.0
+#           location: /usr/IBM/IHS9
+
+imcl_level: FP9.0.5.28
+
+imcl_servers: {}

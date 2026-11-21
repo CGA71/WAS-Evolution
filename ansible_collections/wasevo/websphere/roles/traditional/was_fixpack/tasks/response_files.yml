@@ -1,0 +1,219 @@
+---
+# Fix packs from the environment's response files - the form's mode.
+#
+# The form answers the environment (TEST, DEV, VAL, PREPROD, PROD) and the
+# components (IHSPLG, WAS, WASDMR). The environment's configuration file in
+# the inventory (config/<env>.yml, loaded by env_config) says, for the server
+# this job runs on, what each component is; the templates of the inventory
+# (templates/imcl/) turn that into the response file; imcl applies it:
+#
+#   imcl input <file> -repositories <Fixes/<level>/WAS|IHSPLG>,<.../SDK/...>
+#
+# The repository is therefore the guarantor of what an environment runs. Every
+# imcl call runs as was - the become of the WAS servers lands on was, never
+# root (inventories/aix/group_vars/was_servers.yml).
+#
+# A check run (Job type: Check) renders the files and shows them, and runs no
+# imcl.
+
+- name: Response files - load the environment's configuration
+  ansible.builtin.include_role:
+    name: wasevo.websphere.env_config
+
+- name: Response files - what the form asked for
+  ansible.builtin.set_fact:
+    _imcl_server: "{{ imcl_server | default('', true) or inventory_hostname }}"
+    # AWX's multiple choice sends a list; a command line sends a string -
+    # "WAS,IHSPLG", or one per line. Both become a list of names.
+    _imcl_components: >-
+      {{ (imcl_selected_components if imcl_selected_components is not string
+          else imcl_selected_components | regex_findall('[A-Za-z0-9_]+'))
+         | map('trim') | map('upper') | reject('equalto', '') | unique | list }}
+    _imcl_level_name: "{{ imcl_level | default(imcl_default_level) }}"
+
+- name: Response files - the request must be one the repository can answer
+  ansible.builtin.assert:
+    that:
+      - _unknown | length == 0
+      - _imcl_level_name in imcl_levels
+      - _imcl_server in (imcl_servers | default({}))
+    fail_msg: "{{ _problems | join(' ') }}"
+    quiet: true
+  vars:
+    _unknown: "{{ _imcl_components | reject('in', imcl_component_catalog) | list }}"
+    _servers: "{{ imcl_servers | default({}) }}"
+    _problems: >-
+      {%- set p = [] -%}
+      {%- if _unknown | length > 0 -%}
+      {%-   set _ = p.append('Unknown component(s): ' ~ (_unknown | join(', ')) ~ ' - the catalogue is '
+                             ~ (imcl_component_catalog.keys() | join(', ')) ~ ' (36_imcl.yml).') -%}
+      {%- endif -%}
+      {%- if _imcl_level_name not in imcl_levels -%}
+      {%-   set _ = p.append('Level ' ~ _imcl_level_name ~ ' is not described in imcl_levels (36_imcl.yml).') -%}
+      {%- endif -%}
+      {%- if _imcl_server not in _servers -%}
+      {%-   set _ = p.append(was_environment ~ ' declares no server "' ~ _imcl_server ~ '" in '
+                             ~ (env_config_file | basename) ~ ' - it declares: '
+                             ~ ((_servers.keys() | join(', ')) or 'none') ~ '. Answer the form question'
+                             ~ ' "Serveur", or set imcl_server on the host in hosts.yml, or declare the'
+                             ~ ' server in the file.') -%}
+      {%- endif -%}
+      {{ p }}
+
+- name: Response files - the plan
+  ansible.builtin.set_fact:
+    _imcl_level: "{{ imcl_levels[_imcl_level_name] }}"
+    _imcl_plan: >-
+      {%- set plan = [] -%}
+      {%- set srv = imcl_servers[_imcl_server] -%}
+      {%- for c in _imcl_components if c in srv -%}
+      {%-   set spec = imcl_component_catalog[c] -%}
+      {%-   set repos = [] -%}
+      {%-   for r in spec.repositories -%}
+      {%-     set _ = repos.append(imcl_repository_base ~ '/' ~ _imcl_level_name ~ '/'
+                                   ~ (imcl_levels[_imcl_level_name].sdk_dir if r == 'SDK' else r)) -%}
+      {%-   endfor -%}
+      {%-   set _ = plan.append({'component': c, 'template': spec.template, 'entry': srv[c],
+                                 'offerings': spec.offerings, 'repositories': repos,
+                                 'file': imcl_work_dir ~ '/' ~ was_env_code ~ '_' ~ _imcl_server ~ '_' ~ c ~ '.xml'}) -%}
+      {%- endfor -%}{{ plan }}
+    _imcl_skipped: "{{ _imcl_components | reject('in', imcl_servers[_imcl_server]) | list }}"
+
+- name: Response files - report the plan
+  ansible.builtin.debug:
+    msg:
+      - "environment : {{ was_environment }} ({{ env_config_file | basename }}), level {{ _imcl_level_name }}"
+      - "server      : {{ _imcl_server }}"
+      - "to apply    : {{ _imcl_plan | map(attribute='component') | join(', ') or 'nothing' }}"
+      - "not on it   : {{ _imcl_skipped | join(', ') or '-' }}"
+
+- name: Response files - apply
+  when: _imcl_plan | length > 0
+  block:
+
+    - name: Response files - the repositories must be on the share
+      ansible.builtin.stat:
+        path: "{{ item }}/repository.config"
+      loop: "{{ _imcl_plan | map(attribute='repositories') | flatten | unique }}"
+      register: _imcl_repos
+      check_mode: false
+
+    - name: Response files - refuse a missing repository
+      ansible.builtin.assert:
+        that:
+          - _missing | length == 0
+        fail_msg: >-
+          No Installation Manager repository at {{ _missing | join(', ') }}.
+          Is the share mounted (job 0a), and is level {{ _imcl_level_name }}
+          staged under {{ imcl_repository_base }}?
+        quiet: true
+      vars:
+        _missing: "{{ _imcl_repos.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+
+    - name: Response files - Installation Manager must be there
+      ansible.builtin.stat:
+        path: "{{ im_installer_cmd }}"
+      register: _imcl_cmd
+      check_mode: false
+
+    - name: Response files - refuse without imcl
+      ansible.builtin.assert:
+        that:
+          - _imcl_cmd.stat.exists
+        fail_msg: "No imcl at {{ im_installer_cmd }}: the fix pack is applied through Installation Manager."
+        quiet: true
+
+    - name: Response files - the working directory, the was account's
+      ansible.builtin.file:
+        path: "{{ imcl_work_dir }}"
+        state: directory
+        mode: "0700"
+      become: true
+
+    # The response file carries no secret of the run, but it is the exact
+    # recipe of a server: 0600, the was account's, removed after use.
+    - name: Response files - render
+      ansible.builtin.template:
+        src: "{{ imcl_templates_dir }}/{{ item.template }}"
+        dest: "{{ item.file }}"
+        mode: "0600"
+      loop: "{{ _imcl_plan }}"
+      loop_control:
+        label: "{{ item.component }} -> {{ item.file }}"
+      vars:
+        _entry: "{{ item.entry }}"
+        _level: "{{ _imcl_level }}"
+      become: true
+      diff: true
+
+    - name: Response files - imcl input
+      ansible.builtin.command:
+        cmd: >-
+          {{ im_installer_cmd }} input {{ item.file }}
+          -repositories {{ item.repositories | join(',') }}
+          {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
+          {{ ('-log ' ~ im_install_log_dir ~ '/fixpack_' ~ item.component ~ '.log')
+             if (im_install_log_dir | default('') | length > 0) else '' }}
+          -acceptLicense -showProgress
+      loop: "{{ _imcl_plan }}"
+      loop_control:
+        label: "{{ item.component }}"
+      become: true
+      register: _imcl_runs
+      # imcl prints "Installed ..." or "Updated to ..." for what it changed,
+      # and nothing of the kind when the level is already there.
+      changed_when: >-
+        'Installed ' in (_imcl_runs.stdout | default(''))
+        or 'Updated to ' in (_imcl_runs.stdout | default(''))
+      async: 5400
+      poll: 20
+      when: not ansible_check_mode
+
+    - name: Response files - what imcl said
+      ansible.builtin.debug:
+        msg: "{{ item.item.component }}: {{ (item.stdout_lines | default([]))[-15:] }}"
+      loop: "{{ _imcl_runs.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.component | default('-') }}"
+      when: item.stdout_lines is defined
+
+    - name: Response files - read the installed levels back
+      ansible.builtin.command:
+        cmd: "{{ im_installer_cmd }} listInstalledPackages -long"
+      register: _imcl_installed
+      changed_when: false
+      check_mode: false
+      become: true
+      when: not ansible_check_mode
+
+    - name: Response files - every offering asked for is installed at its level
+      ansible.builtin.assert:
+        that:
+          - _absent | length == 0
+        fail_msg: >-
+          Not installed after imcl: {{ _absent | join(', ') }}. What is:
+          {{ _imcl_installed.stdout_lines | default([]) | join(' | ') }}
+        success_msg: "installed: {{ _expected | join(', ') }}"
+      vars:
+        # listInstalledPackages prints <id>_<version>, one per line.
+        _expected: >-
+          {%- set out = [] -%}
+          {%- for o in _imcl_plan | map(attribute='offerings') | flatten | unique -%}
+          {%-   set _ = out.append(imcl_offerings[o].id ~ '_' ~ _imcl_level[o]) -%}
+          {%- endfor -%}{{ out }}
+        _absent: "{{ _expected | reject('in', _imcl_installed.stdout) | list }}"
+      when: not ansible_check_mode
+
+  always:
+
+    - name: Response files - remove the rendered files
+      ansible.builtin.file:
+        path: "{{ item.file }}"
+        state: absent
+      loop: "{{ _imcl_plan }}"
+      loop_control:
+        label: "{{ item.file }}"
+      become: true
+      when:
+        - not (imcl_keep_response | bool)
+        - not ansible_check_mode

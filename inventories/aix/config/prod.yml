@@ -1,0 +1,41 @@
+---
+# PROD - what Installation Manager installs and updates, server by server.
+# See dev.yml for the keys. A PROD run still needs the production
+# acknowledgement of the form.
+
+imcl_level: FP9.0.5.28
+
+imcl_servers:
+
+  # The deployment manager's server (prod-dmgr-01_WAS_response_file.xml).
+  prod-dmgr-01:
+    WASDMR:
+      profile: Was90Prod
+
+  # WAS node and IHS (prod-was-01_WAS_response_file.xml).
+  prod-was-01:
+    WAS:
+      profile: Was90Prod
+    IHSPLG:
+      - profile: IBM HTTP Server V9.0
+        location: /usr/IBM/IHS9
+
+  # WAS node and IHS (prod-was-02_WAS_response_file.xml).
+  prod-was-02:
+    WAS:
+      profile: Was90Prod
+    IHSPLG:
+      - profile: IBM HTTP Server V9.0
+        location: /usr/IBM/IHS9
+
+  # WAS node, the GED IHS on port 8081 and its plugin
+  # (prod-was-03_WAS_IHS_PLUGIN_response_file.xml).
+  prod-was-03:
+    WAS:
+      profile: Was90Prod
+    IHSPLG:
+      - profile: IhsGed90Prod
+        location: /usr/IBM/IHS9
+        service_name: IBM HTTP Server V9.0
+        port: "8081"
+        plugin: {profile: PluginGed90Prod, location: /usr/IBM/Plugins9}

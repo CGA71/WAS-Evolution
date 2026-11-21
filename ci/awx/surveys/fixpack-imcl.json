@@ -1,0 +1,50 @@
+{
+  "name": "WAS AIX fix pack parameters",
+  "description": "Which environment's configuration to deploy, and which components. The repository decides the rest: inventories/aix/config/<env>.yml for each server, rendered through inventories/aix/templates/imcl/.",
+  "spec": [
+    {
+      "question_name": "Env",
+      "question_description": "The environment whose configuration is deployed: the file config/<env>.yml of the inventory, as committed. Only PROD is production.",
+      "variable": "was_environment",
+      "type": "multiplechoice",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "",
+      "choices": "TEST\nDEV\nVAL\nPREPROD\nPROD"
+    },
+    {
+      "question_name": "Composants",
+      "question_description": "IHSPLG: the IBM HTTP Server instances and their plugins. WAS: WAS ND on a node server. WASDMR: WAS ND on the deployment manager's server. A component the server does not carry in the configuration is reported and skipped.",
+      "variable": "imcl_selected_components",
+      "type": "multiselect",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "",
+      "choices": "IHSPLG\nWAS\nWASDMR"
+    },
+    {
+      "question_name": "Serveur",
+      "question_description": "The server as config/<env>.yml names it (dev-was-01, pp-ihs-01...). Blank: the host's imcl_server in hosts.yml, else its inventory name.",
+      "variable": "imcl_server",
+      "type": "text",
+      "required": false,
+      "min": 0,
+      "max": 64,
+      "default": "",
+      "choices": ""
+    },
+    {
+      "question_name": "I confirm this run may touch PRODUCTION",
+      "question_description": "Must be answered true for Env PROD. Defaulted to false on purpose: reaching production should never be the result of picking the wrong answer.",
+      "variable": "model_allow_production",
+      "type": "multiplechoice",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "false",
+      "choices": "false\ntrue"
+    }
+  ]
+}

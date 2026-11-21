@@ -482,11 +482,27 @@ was_environment_instance_pattern: "[0-9]{2}"
 
 With families declared, the `model` role accepts a code only if it is a family, alone or followed by an instance (`DEV`, `DEV01`, `VAL02`, `PROD`), and refuses anything else (`XYZ01`, `DEV1`). **The family decides the tier**: only PROD is production — a PROD run still needs `model_allow_production` or the workflow's approval — and a `was_environment_tier` that contradicts the family is refused, not corrected. The long name follows (`Developpement 01`). An inventory that declares no families keeps the open behaviour: any usable code, tier as an input. Codes are up to ten characters (`PREPROD01` is nine).
 
-### The imcl response files, per environment
+### The imcl response files: templates, one configuration per environment
 
-[`inventories/aix/response_files/`](inventories/aix/response_files/README.md) holds the site's Installation Manager response files (`imcl -input`), as they are on the server in `/tmp/wasinst/response_files/`: one directory per family — `test`, `dev`, `val`, `preprod`, `prod` — then one per fix pack level, `FP9.0.5.28` today. Fifteen files: WAS ND, IBM HTTP Server (one instance per site in the preprod IHS files) and the web server plugin, each with its Java 8 SDK. They were rebuilt from screen captures, and each one's byte count was checked against the server's `ls -l`. Two are deduced and marked as such; the README of the directory lists them, with what was not rebuilt.
+The fix pack job **WAS AIX - 2. Fix packs: Installation Manager** has its own form (`ci/awx/surveys/fixpack-imcl.json`, attached by `apply-survey.sh`):
 
-[`36_response_files.yml`](inventories/aix/group_vars/all/36_response_files.yml) turns the launch answer into a directory: the family the code belongs to (`DEV01` → `DEV`) through `imcl_response_files_env_dirs`, then `imcl_response_files_level`. `imcl_response_files_dir` and `imcl_response_files` (the `.xml` files found there, on the controller) resolve once the `model` role has run. `test/` is empty: the server has no response file for it yet. These are not the manageprofiles response files of `35_profiles.yml`, which create profiles.
+| Question | Variable | Answers |
+|---|---|---|
+| Env | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — which environment's configuration to deploy |
+| Composants | `imcl_selected_components` | IHSPLG (IHS instances and their plugins), WAS (WAS ND on a node server), WASDMR (WAS ND on the deployment manager's server) — one or several |
+| Serveur | `imcl_server` | the server as the configuration names it; blank: the host's `imcl_server`, else its inventory name |
+
+**The repository is the guarantor of what each environment runs.** Three places, one mechanism:
+
+| File | Holds |
+|---|---|
+| [`group_vars/all/36_imcl.yml`](inventories/aix/group_vars/all/36_imcl.yml) | what never changes: the component catalogue, the fix pack levels (versions, SDK directory), the offering ids and features, the trees (`IMShared`, `AppServer`, `IHS9`, `Plugins9`), the IHS settings every instance shares |
+| [`config/<env>.yml`](inventories/aix/config/) | what differs per environment: its level, and per server the WAS profile id and the IHS instances — `site: SITEA` is enough for a multi-site server, the rest is derived |
+| [`templates/imcl/`](inventories/aix/templates/imcl/) | the response files as Jinja templates: `was.xml.j2` (WAS, WASDMR), `ihsplg.xml.j2` (IHSPLG) |
+
+The generic role [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) loads `config/<family>.yml` from the answer — `DEV01` reads `dev.yml` — and is meant for the other roles too. The job then renders one file per component, as `was`, 0600, runs `imcl input <file> -repositories <share>/Fixes/<level>/{WAS|IHSPLG},<…>/SDK/<sdk>`, checks with `listInstalledPackages` that every offering is at its level, and removes the file. Job type *Check* renders and shows without running imcl. Launched from the build workflow, with no component chosen, the job keeps its discovery mode (`imcl updateAll`).
+
+The fifteen files rebuilt from the servers stay in [`response_files/`](inventories/aix/response_files/README.md) as the **reference**: the CI job `imcl-templates` ([`ci/check-imcl-templates.py`](ci/check-imcl-templates.py)) renders every server of every environment and compares, profile by profile and offering by offering, with what the server uses. All fifteen match.
 
 ### Building it by hand
 
@@ -2091,11 +2107,27 @@ was_environment_instance_pattern: "[0-9]{2}"
 
 Quand des familles sont déclarées, le rôle `model` n'accepte un code que s'il est une famille, seule ou suivie d'une instance (`DEV`, `DEV01`, `VAL02`, `PROD`), et refuse le reste (`XYZ01`, `DEV1`). **La famille décide du palier** : seul PROD est en production — un run PROD exige toujours `model_allow_production` ou l'approbation du workflow — et un `was_environment_tier` qui contredit la famille est refusé, pas corrigé. Le libellé suit (`Developpement 01`). Un inventaire sans familles garde le comportement ouvert : tout code utilisable, palier en entrée. Les codes font jusqu'à dix caractères (`PREPROD01` en fait neuf).
 
-### Les fichiers réponse imcl, par environnement
+### Les fichiers réponse imcl : des templates, une configuration par environnement
 
-[`inventories/aix/response_files/`](inventories/aix/response_files/README.md) contient les fichiers réponse Installation Manager du site (`imcl -input`), tels qu'ils sont sur le serveur dans `/tmp/wasinst/response_files/` : un répertoire par famille — `test`, `dev`, `val`, `preprod`, `prod` — puis un par niveau de fix pack, `FP9.0.5.28` aujourd'hui. Quinze fichiers : WAS ND, IBM HTTP Server (une instance par site dans les fichiers IHS de préprod) et le plugin, chacun avec son SDK Java 8. Ils ont été reconstruits à partir de captures d'écran, et la taille de chacun comparée au `ls -l` du serveur. Deux sont déduits et signalés comme tels ; le README du répertoire les liste, avec ce qui n'a pas été reconstruit.
+Le job de fix pack **WAS AIX - 2. Fix packs: Installation Manager** a son propre formulaire (`ci/awx/surveys/fixpack-imcl.json`, attaché par `apply-survey.sh`) :
 
-[`36_response_files.yml`](inventories/aix/group_vars/all/36_response_files.yml) transforme la réponse du lancement en répertoire : la famille du code (`DEV01` → `DEV`) via `imcl_response_files_env_dirs`, puis `imcl_response_files_level`. `imcl_response_files_dir` et `imcl_response_files` (les `.xml` trouvés, côté contrôleur) se résolvent une fois le rôle `model` passé. `test/` est vide : le serveur n'en a pas encore. Ce ne sont pas les fichiers réponse manageprofiles de `35_profiles.yml`, qui créent les profils.
+| Question | Variable | Réponses |
+|---|---|---|
+| Env | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — la configuration de quel environnement déployer |
+| Composants | `imcl_selected_components` | IHSPLG (instances IHS et leurs plugins), WAS (WAS ND d'un serveur de nœud), WASDMR (WAS ND du serveur du gestionnaire de déploiement) — un ou plusieurs |
+| Serveur | `imcl_server` | le serveur tel que la configuration le nomme ; vide : l'`imcl_server` de l'hôte, sinon son nom d'inventaire |
+
+**Le dépôt est le garant de ce que chaque environnement exécute.** Trois endroits, un seul mécanisme :
+
+| Fichier | Contient |
+|---|---|
+| [`group_vars/all/36_imcl.yml`](inventories/aix/group_vars/all/36_imcl.yml) | ce qui ne change jamais : le catalogue des composants, les niveaux de fix pack (versions, répertoire du SDK), les identifiants et features des offres, les arborescences (`IMShared`, `AppServer`, `IHS9`, `Plugins9`), les réglages IHS communs à toutes les instances |
+| [`config/<env>.yml`](inventories/aix/config/) | ce qui diffère par environnement : son niveau, et par serveur l'identifiant de profil WAS et les instances IHS — `site: SITEA` suffit pour un serveur multi-sites, le reste est déduit |
+| [`templates/imcl/`](inventories/aix/templates/imcl/) | les fichiers réponse en templates Jinja : `was.xml.j2` (WAS, WASDMR), `ihsplg.xml.j2` (IHSPLG) |
+
+Le rôle générique [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) charge `config/<famille>.yml` d'après la réponse — `DEV01` lit `dev.yml` — et servira aux autres rôles. Le job rend ensuite un fichier par composant, en `was`, en 0600, lance `imcl input <fichier> -repositories <partage>/Fixes/<niveau>/{WAS|IHSPLG},<…>/SDK/<sdk>`, vérifie par `listInstalledPackages` que chaque offre est à son niveau, et supprime le fichier. Le Job type *Check* rend et affiche sans lancer imcl. Lancé depuis le workflow de construction, sans composant choisi, le job garde son mode découverte (`imcl updateAll`).
+
+Les quinze fichiers reconstruits depuis les serveurs restent dans [`response_files/`](inventories/aix/response_files/README.md) comme **référence** : le job CI `imcl-templates` ([`ci/check-imcl-templates.py`](ci/check-imcl-templates.py)) rend chaque serveur de chaque environnement et compare, profil par profil et offre par offre, avec ce que le serveur utilise. Les quinze correspondent.
 
 ### Le construire à la main
 

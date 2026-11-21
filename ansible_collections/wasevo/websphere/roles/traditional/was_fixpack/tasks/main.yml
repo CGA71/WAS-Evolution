@@ -25,8 +25,22 @@
   when: runtime.product == 'liberty_ocp'
   tags: [fixpack]
 
+# THE FORM'S MODE. When the form names components (IHSPLG, WAS, WASDMR), the
+# fix pack is applied from the environment's response files - rendered from
+# the inventory's templates and config/<env>.yml - one imcl input per
+# component. Without components, the discovery below: updateAll over what is
+# installed, which is what the build workflow's two fix pack nodes rely on.
+- name: Fix packs from the environment's response files
+  ansible.builtin.include_tasks: response_files.yml
+  when:
+    - runtime.product != 'liberty_ocp'
+    - imcl_selected_components | default([], true) | length > 0
+  tags: [fixpack]
+
 - name: Fixpacks
-  when: runtime.product != 'liberty_ocp'
+  when:
+    - runtime.product != 'liberty_ocp'
+    - imcl_selected_components | default([], true) | length == 0
   tags: [fixpack]
   block:
 

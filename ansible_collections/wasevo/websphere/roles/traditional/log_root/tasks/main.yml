@@ -151,7 +151,13 @@
     - name: Summary
       ansible.builtin.debug:
         msg:
-          - "LOG_ROOT    : {{ log_root_nodes | map(attribute='node') | zip(log_root_nodes | map(attribute='value')) | map('join', ' = ') | join(', ') }}"
+          - "LOG_ROOT    : {{ log_root_nodes | map(attribute='node')
+                              | zip(log_root_nodes | map(attribute='value'))
+                              | map('join', ' = ') | join(', ') }}"
           - "changed     : {{ log_root_changed_nodes | join(', ') | default('nothing', true) }}"
-          - "restarted   : {{ 'the deployment manager' if (log_root_restart | bool and was_node_name in log_root_changed_nodes) else 'nothing here' }}{{ '; the node agents are restarted on their own hosts next' if (log_root_changed_nodes | reject('equalto', was_node_name) | list | length > 0) else '' }}"
+          - "restarted   : {{ 'the deployment manager'
+                              if (log_root_restart | bool and was_node_name in log_root_changed_nodes)
+                              else 'nothing here' }}{{ '; the node agents are restarted on their own hosts next'
+                              if (log_root_changed_nodes | reject('equalto', was_node_name) | list | length > 0)
+                              else '' }}"
           - "JVMs        : write there from their next start"

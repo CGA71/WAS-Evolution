@@ -127,5 +127,6 @@
   ansible.builtin.debug:
     msg: >-
       {{ binaries_share_point }}:
-      {{ 'already mounted - ' if (binaries_share_mounted | bool) else 'mounted now - ' }}{{ binaries_share_after.stdout | default('(check mode)') | trim }}
+      {{ 'already mounted - ' if (binaries_share_mounted | bool) else 'mounted now - '
+      }}{{ binaries_share_after.stdout | default('(check mode)') | trim }}
       {{ '; in /etc/filesystems' if (binaries_share_persistent | bool) else '; not persistent' }}

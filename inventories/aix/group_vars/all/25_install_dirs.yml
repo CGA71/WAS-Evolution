@@ -11,7 +11,7 @@
 #
 # The shared resources of Installation Manager are
 # /usr/IBM/WebSphere9/Imcl/IMShared: the sharedLocation of every response file
-# (36_response_files.yml).
+# (36_imcl.yml).
 #
 # Each entry names the Installation Manager or WAS flag it feeds, so the
 # mapping between an inventory variable and what IBM actually does with it is
@@ -100,8 +100,8 @@ plugin_sdk_media_dir: "{{ ihs_sdk_media_dir }}"
 # ONE fix pack level, not the whole Fixes directory: it holds every level the
 # site ever applied (FP9.0.5.13 ... FP9.0.5.29), and handing them all to
 # imcl updateAll installs the highest one it finds. The level is the one the
-# response files are written for (36_response_files.yml).
-was_fixpack_media_dir: "{{ was_install_binaries_base_dir }}/Fixes/{{ imcl_response_files_level }}"
+# environment is on (config/<env>.yml, 36_imcl.yml).
+was_fixpack_media_dir: "{{ imcl_repository_base }}/{{ imcl_level | default(imcl_default_level) }}"
 
 # --- Free space checked before an install or a fix pack -------------------
 # On the filesystems that receive the binaries, not on /usr/IBM/WebSphere9,

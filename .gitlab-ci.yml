@@ -167,6 +167,17 @@ syntax:
 # Production is tested through was_environment_tier, not through a code,
 # because no code is production in this collection's eyes - the tier is
 # declared alongside the environment.
+# The imcl response file templates must render, for every environment, what
+# the servers actually use: each file rebuilt from a server
+# (inventories/aix/response_files/) is compared with what config/<env>.yml and
+# templates/imcl/ produce for that server. A change to a template or to an
+# environment's configuration that would change a server is caught here.
+imcl-templates:
+  extends: .static
+  stage: validation
+  script:
+    - python3 ci/check-imcl-templates.py inventories/aix
+
 model-matrix:
   extends: .static
   stage: validation

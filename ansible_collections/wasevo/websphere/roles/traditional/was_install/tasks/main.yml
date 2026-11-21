@@ -343,7 +343,9 @@
     fail_msg: >-
       {{ item.item }} is missing. Installation Manager reported success, so the
       install landed somewhere other than {{ was_home }} - check
-      {{ (im_install_log_dir ~ '/install_was.log') if (im_install_log_dir | default('') | length > 0) else 'the Installation Manager logs (imcl -log was not passed)' }}.
+      {{ (im_install_log_dir ~ '/install_was.log')
+         if (im_install_log_dir | default('') | length > 0)
+         else 'the Installation Manager logs (imcl -log was not passed)' }}.
   loop: "{{ was_tools.results }}"
   loop_control:
     label: "{{ item.item | basename }}"

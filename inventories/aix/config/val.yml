@@ -1,0 +1,62 @@
+---
+# VAL - what Installation Manager installs and updates, server by server.
+# "valid" in the server's own directory names. See dev.yml for the keys.
+
+imcl_level: FP9.0.5.28
+
+imcl_servers:
+
+  # The deployment manager's server (val-dmgr-01_WAS_response_file.xml - not
+  # photographed, deduced: see response_files/README.md).
+  val-dmgr-01:
+    WASDMR:
+      profile: Was90Val
+
+  # WAS node and one IHS on port 80, without plugin
+  # (val-was-01_WAS_IHS_response_file.xml).
+  val-was-01:
+    WAS:
+      profile: Was90Val
+    IHSPLG:
+      - profile: IBM HTTP Server V9.0
+        location: /usr/IBM/IHS9
+        port: "80"
+
+  # The IHS server: five instances, three with a plugin
+  # (val-ihs-01_IHS_response_file.xml). Their Windows service name is the
+  # generic one, not the profile.
+  val-ihs-01:
+    IHSPLG:
+      - profile: Ihs90Part
+        location: /usr/IBM/IHS9/TPPART
+        service_name: IBM HTTP Server V9.0
+        port: "8081"
+        plugin: {profile: Plugin90Part, location: /usr/IBM/Plugins9/TPPART}
+      - profile: Ihs90Siteb
+        location: /usr/IBM/IHS9/TPSITEB
+        service_name: IBM HTTP Server V9.0
+        port: "8080"
+        plugin: {profile: Plugin90Siteb, location: /usr/IBM/Plugins9/TPSITEB}
+      - profile: Ihs90WebTous
+        location: /usr/IBM/IHS9/WEBTOUS
+        service_name: IBM HTTP Server V9.0
+        port: "8082"
+        plugin: {profile: Plugin90WebTous, location: /usr/IBM/Plugins9/WEBTOUS}
+      - profile: Ihs90Dispatcher
+        location: /usr/IBM/IHS9/DISPATCHER
+        service_name: IBM HTTP Server V9.0
+        port: "8081"
+      - profile: Ihs90Esb
+        location: /usr/IBM/IHS9/ESB
+        service_name: IBM HTTP Server V9.0
+        port: "8081"
+
+  # The ESB IHS alone (Ihs_Esb_response_file.xml - not photographed,
+  # deduced). On which server it runs is not known from the share: the key
+  # is the file's name until it is.
+  Ihs_Esb:
+    IHSPLG:
+      - profile: Ihs90Esb
+        location: /usr/IBM/IHS9/ESB
+        service_name: IBM HTTP Server V9.0
+        port: "8081"

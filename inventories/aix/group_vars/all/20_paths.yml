@@ -87,7 +87,7 @@ was_jython_dir: "{{ was_app_base_dir }}/{{ site_jython_dirname }}"
 #                                       WAS/, SDK/<sdk level>/, IHSPLG/
 #   /tmp/wasinst/Fixes/IMCL, Fixes/SDK  Installation Manager and SDK updates
 #   /tmp/wasinst/response_files/        the imcl response files, also kept in
-#                                       this inventory (36_response_files.yml)
+#                                       this inventory as the templates' reference (36_imcl.yml)
 #
 # 25_install_dirs.yml maps each install role onto it.
 #

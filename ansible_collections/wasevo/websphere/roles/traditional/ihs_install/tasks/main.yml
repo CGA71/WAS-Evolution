@@ -245,7 +245,9 @@
           Installation Manager does not report {{ ihs_package_filter }}* in
           {{ ihs_home }}. What it reports:
           {{ ihs_verify.stdout_lines | default([]) | join(' | ') }}.
-          See {{ (im_install_log_dir ~ '/install_ihs.log') if (im_install_log_dir | default('') | length > 0) else 'the Installation Manager logs (imcl -log was not passed)' }}.
+          See {{ (im_install_log_dir ~ '/install_ihs.log')
+             if (im_install_log_dir | default('') | length > 0)
+             else 'the Installation Manager logs (imcl -log was not passed)' }}.
         success_msg: "{{ _hit | first | default('') | trim }}"
       vars:
         _hit: >-
@@ -265,7 +267,9 @@
           - ihs_apachectl.stat.exists
         fail_msg: >-
           {{ ihs_home }}/bin/apachectl is missing although Installation Manager
-          reports IHS there - check {{ (im_install_log_dir ~ '/install_ihs.log') if (im_install_log_dir | default('') | length > 0) else 'the Installation Manager logs (imcl -log was not passed)' }}.
+          reports IHS there - check {{ (im_install_log_dir ~ '/install_ihs.log')
+             if (im_install_log_dir | default('') | length > 0)
+             else 'the Installation Manager logs (imcl -log was not passed)' }}.
 
 - name: Summary
   ansible.builtin.debug:

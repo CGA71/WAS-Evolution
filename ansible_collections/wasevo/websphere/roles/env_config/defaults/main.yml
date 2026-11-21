@@ -1,0 +1,20 @@
+---
+# The configuration of an environment, as a file of the inventory.
+#
+# The form answers an environment - DEV, DEV01, VAL02, PROD... The model role
+# reads its family (was_env_family_upper: DEV, VAL, PROD...), and this role
+# loads <env_config_dir>/<family in lowercase>.yml. DEV01 and DEV read the
+# same file: an instance is another cell, not another configuration.
+#
+# The file belongs to the inventory - which environments exist, and what each
+# deploys, is site data - so the collection names no environment: it builds
+# the path from the answer.
+env_config_dir: "{{ inventory_dir }}/config"
+
+# The file, once the family is known. Override to point one run at another
+# file.
+env_config_file: "{{ env_config_dir }}/{{ was_env_family_upper | default(was_environment) | lower }}.yml"
+
+# Refuse when the file is missing. False lets a caller treat "no
+# configuration for this environment" as nothing to do.
+env_config_required: true

@@ -10,8 +10,11 @@ inventories/
   aix/        ServeurAIX: one physical AIX server carrying a whole ND cell
               (installation, deployment manager, federated node), and the
               web front of AWX for the certificate portal
-    response_files/<family>/<fix pack>/   its imcl response files,
-              per environment: test, dev, val, preprod, prod
+    config/<env>.yml        what each environment deploys, per server
+              (test, dev, val, preprod, prod), loaded from the form
+    templates/imcl/         the imcl response files, as Jinja templates
+    response_files/         the files rebuilt from the servers: the
+              templates' reference, checked in CI
 ```
 
 > An earlier shape in this repository had four near-identical directories, one per environment. Four copies of the same site facts is four chances to drift, and it needed a CI job comparing checksums to catch it. That job is gone because the drift can no longer happen.

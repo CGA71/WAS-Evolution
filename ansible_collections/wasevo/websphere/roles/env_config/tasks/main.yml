@@ -1,0 +1,53 @@
+---
+# Load the configuration of the environment answered at launch.
+#
+# Needs the model role to have run - it is what turns the answer into a
+# family. Every variable of the file becomes a variable of the run, at
+# include_vars precedence: above the inventory, below the extra vars of the
+# form. One task file for every role that deploys per environment.
+
+- name: The environment must be resolved first
+  ansible.builtin.assert:
+    that:
+      - was_environment is defined
+    fail_msg: >-
+      env_config loads the file of the environment answered at launch, and no
+      environment was answered: was_environment is undefined. Run the model
+      role first, and answer the form's environment question.
+    quiet: true
+  tags: [always]
+
+- name: Is there a configuration for this environment
+  ansible.builtin.stat:
+    path: "{{ env_config_file }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: _env_config_stat
+  check_mode: false
+  tags: [always]
+
+- name: Refuse an environment the repository does not configure
+  ansible.builtin.assert:
+    that:
+      - _env_config_stat.stat.exists
+    fail_msg: >-
+      No configuration for {{ was_environment }}: {{ env_config_file }} does
+      not exist. What an environment deploys is decided by the repository -
+      create the file, commit it, and resynchronise the AWX project.
+    quiet: true
+  when: env_config_required | bool
+  tags: [always]
+
+- name: Load it
+  ansible.builtin.include_vars:
+    file: "{{ env_config_file }}"
+  when: _env_config_stat.stat.exists
+  tags: [always]
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ was_environment }}: configuration
+      {{ (env_config_file | relpath(inventory_dir)) if _env_config_stat.stat.exists else 'none' }}
+  tags: [always]

@@ -36,8 +36,8 @@ model_require_hosts: false
 # separate cells, so it only matters if both are ever built on one machine -
 # set a letter here if that can happen.
 #
-# Each family also owns a directory of imcl response files, in
-# response_files/ beside this inventory - see 36_response_files.yml.
+# Each family also owns a configuration file, the imcl one among others, in
+# config/<env>.yml beside this inventory - see 36_imcl.yml.
 was_environment_families:
   TEST: {tier: non_prod, long_name: Test}
   DEV: {tier: non_prod, long_name: Developpement}

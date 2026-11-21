@@ -1,0 +1,38 @@
+---
+# DEV - what Installation Manager installs and updates, server by server.
+#
+# Loaded by the env_config role when the form answers DEV (or DEV01, DEV02...:
+# the family decides the file). Read with group_vars/all/36_imcl.yml, which
+# holds everything that is the same in every environment, and rendered
+# through templates/imcl/. A change here is a change to what DEV runs.
+#
+# Per server - the key is the server the job runs on (form question
+# "Serveur", or imcl_server on the host in hosts.yml) - the components it
+# carries:
+#   WAS / WASDMR   profile: the Installation Manager profile id its WAS is
+#                  registered under
+#   IHSPLG         its IHS instances, each with its plugin or not
+#                  (templates/imcl/ihsplg.xml.j2 describes every key)
+
+# The fix pack level DEV is on: an entry of imcl_levels (36_imcl.yml), and a
+# directory of the share, <share>/Fixes/<level>.
+imcl_level: FP9.0.5.28
+
+imcl_servers:
+
+  # The deployment manager's server (DMGR_WAS_response_file.xml).
+  DMGR:
+    WASDMR:
+      profile: Was90Dev
+
+  # WAS node, IHS and plugin on one server
+  # (dev-was-01_WAS_Ihs_Plugins_response_file.xml).
+  dev-was-01:
+    WAS:
+      profile: Was90DevNode
+    IHSPLG:
+      - profile: IBM HTTP Server V9.0
+        location: /usr/IBM/IHS9
+        plugin:
+          profile: Web Server Plug-ins for IBM WebSphere Application Server V9.0
+          location: /usr/IBM/Plugins9
