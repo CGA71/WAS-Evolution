@@ -16,7 +16,7 @@
 # workflow - configuration only. Made by hand, in AWX, once:
 #
 #   Machine credential   "ServeurAIX (ansible)": the SSH key of the WAS account
-#                        on ServeurAIX (site_was_user in inventories/aix).
+#                        on ServeurAIX (site_ssh_user in inventories/aix).
 #   WAS credential       of the type apply-templates.sh creates, "WAS
 #                        administrative user": the console user and password.
 #                        Attached here when it exists; until then the

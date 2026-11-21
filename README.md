@@ -429,7 +429,7 @@ ansible-playbook -i inventories/aix \
 2. it is a **mount point**: `df -P` names the filesystem the path lives on, and that filesystem must be mounted on the path itself. A directory of `/` that merely exists passes a `stat` and holds nothing, or a stale copy;
 3. the filesystem is of the declared type (`site_binaries_repository_type`: `nfs` matches `nfs3`/`nfs4`), and optionally the declared share (`forge_binaries_check_source`);
 4. the connecting account can read it — on NFS the usual failure is root squashing or a uid that differs between server and client;
-5. it carries the media: `install_im/*.zip` and a `repository.config` under `install_was90/`. Fix packs are counted, not required.
+5. it carries the media: the Installation Manager archive and a WAS `repository.config` (on ServeurAIX, `Imcl/` and `WasND/`), **each only while its product is not installed** — they serve a first install, and a server where `imcl` and WAS are in place is not asked for them. Fix packs are counted, not required.
 
 The same checks run inside `forge_preflight`. `forge_binaries_require_mount: false` accepts a directory filled by hand.
 
@@ -453,7 +453,7 @@ There is no environment group, on purpose: the same server is built as any envir
 |---|---|---|
 | Python 3, `sudo`, `unzip`, `zipinfo` | AIX Toolbox for Open Source Software, under `/opt/freeware`. `prereqs_os` installs the RPMs with the Toolbox's `dnf` when it is there | `forge_preflight`: the commands must be on the **default `PATH`** of a non-interactive session — `ansible.builtin.unarchive` looks for `unzip` and `zipinfo` there only. Add `/opt/freeware/bin` to `PATH` in `/etc/environment` or link them into `/usr/bin` |
 | `bos.adt.libm`, `bos.perf.perfstat`, `xlC.aix61.rte` | AIX installation media, `installp` | `lslpp -Lc`. `prereqs_os` refuses with their names; it does not install filesets |
-| The WAS account (`wasadmin`) with an SSH key and `sudo` | The system administrator | the connection itself |
+| The WAS account `was:was`, owner of `/usr/IBM/WebSphere9` (its home is `/usr/IBM/WebSphere`); the connecting account (`site_ssh_user`) with an SSH key and `sudo su -` | The system administrator | the connection itself |
 | `nofiles`, `nproc` limits | `prereqs_os`, with `chuser` — the AIX equivalent of `/etc/security/limits.d` | `lsuser`, only the attributes that differ are written |
 | `/app`, `/opt/exploit`, sized | JFS2 filesystems (`crfs`) | `forge_preflight`: free space through `df -Pk` |
 | The binaries share `nfs-server:/export/was90` on `/tmp/wasinst` | `binaries_share` (`binaries_mount.yml`), as root through `sudo su -`; mounted on demand, no `/etc/filesystems` stanza | `binaries_mount_check.yml` |
@@ -2036,7 +2036,7 @@ ansible-playbook -i inventories/aix \
 2. c'est un **point de montage** : `df -P` nomme le système de fichiers qui porte le chemin, et ce système de fichiers doit être monté sur le chemin lui-même. Un répertoire de `/` qui existe simplement passe un `stat` et ne contient rien, ou une copie périmée ;
 3. le système de fichiers est du type déclaré (`site_binaries_repository_type` : `nfs` accepte `nfs3`/`nfs4`), et en option le partage déclaré (`forge_binaries_check_source`) ;
 4. le compte de connexion peut le lire — sur NFS, l'échec habituel est le root squashing ou un uid différent entre serveur et client ;
-5. il porte les médias : `install_im/*.zip` et un `repository.config` sous `install_was90/`. Les fix packs sont comptés, pas exigés.
+5. il porte les médias : l'archive Installation Manager et un `repository.config` WAS (sur ServeurAIX, `Imcl/` et `WasND/`), **chacun seulement tant que son produit n'est pas installé** — ils servent à une première installation, et un serveur où `imcl` et WAS sont en place n'en a pas besoin. Les fix packs sont comptés, pas exigés.
 
 Les mêmes contrôles tournent dans `forge_preflight`. `forge_binaries_require_mount: false` accepte un répertoire rempli à la main.
 
@@ -2060,7 +2060,7 @@ Pas de groupe d'environnement, volontairement : le même serveur se construit so
 |---|---|---|
 | Python 3, `sudo`, `unzip`, `zipinfo` | AIX Toolbox for Open Source Software, sous `/opt/freeware`. `prereqs_os` installe les RPM avec le `dnf` de la Toolbox quand il est là | `forge_preflight` : les commandes doivent être dans le **`PATH` par défaut** d'une session non interactive — `ansible.builtin.unarchive` n'y cherche `unzip` et `zipinfo` que là. Ajouter `/opt/freeware/bin` au `PATH` dans `/etc/environment`, ou les lier dans `/usr/bin` |
 | `bos.adt.libm`, `bos.perf.perfstat`, `xlC.aix61.rte` | Médias d'installation AIX, `installp` | `lslpp -Lc`. `prereqs_os` refuse en les nommant ; il n'installe pas de filesets |
-| Le compte WAS (`wasadmin`) avec une clé SSH et `sudo` | L'administrateur système | la connexion elle-même |
+| Le compte WAS `was:was`, propriétaire de `/usr/IBM/WebSphere9` (son home est `/usr/IBM/WebSphere`) ; le compte de connexion (`site_ssh_user`) avec une clé SSH et `sudo su -` | L'administrateur système | la connexion elle-même |
 | Limites `nofiles`, `nproc` | `prereqs_os`, avec `chuser` — l'équivalent AIX de `/etc/security/limits.d` | `lsuser` ; seuls les attributs différents sont écrits |
 | `/app`, `/opt/exploit`, dimensionnés | Systèmes de fichiers JFS2 (`crfs`) | `forge_preflight` : espace libre par `df -Pk` |
 | Le partage des binaires `nfs-server:/export/was90` sur `/tmp/wasinst` | `binaries_share` (`binaries_mount.yml`), en root via `sudo su -` ; monté à la demande, sans stanza `/etc/filesystems` | `binaries_mount_check.yml` |

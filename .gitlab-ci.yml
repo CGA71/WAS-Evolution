@@ -25,7 +25,7 @@
 # CI/CD variables (Settings > CI/CD > Variables), none of them in this file:
 #
 #   AIX_SSH_PRIVATE_KEY   File. The private key of the WAS account on
-#                         ServeurAIX (site_was_user in inventories/aix).
+#                         ServeurAIX (site_ssh_user in inventories/aix).
 #   AIX_SSH_KNOWN_HOSTS   File or variable. ServeurAIX's host key line(s), as
 #                         ssh-keyscan prints them. Without it the key is taken
 #                         on first use, and the job says so.

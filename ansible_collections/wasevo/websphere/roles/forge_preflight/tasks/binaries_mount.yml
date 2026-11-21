@@ -15,8 +15,11 @@
 #      (forge_binaries_check_source);
 #   4. the connecting account can read and traverse it;
 #   5. it carries the media (forge_binaries_require_media): the Installation
-#      Manager archive and a WAS repository. Fix packs are counted, not
-#      required - having none is a normal outcome for the fix pack job.
+#      Manager archive and a WAS repository - but each only while its product
+#      is NOT installed yet. They serve a first install and nothing else: a
+#      server where imcl and WAS are already in place is not asked for them.
+#      Fix packs are counted, not required - having none is a normal outcome
+#      for the fix pack job.
 #
 # Only POSIX sh, df -P, and each system's own way of reading a filesystem
 # type: AIX's mount, Linux's findmnt.
@@ -64,6 +67,8 @@
           fi
           echo "fstype=$t"
           if [ -r "$p" ] && [ -x "$p" ]; then echo "readable=yes"; else echo "readable=no"; fi
+          if [ -x "{{ im_installer_cmd | default('/nonexistent') }}" ]; then echo "im_installed=yes"; fi
+          if [ -f "{{ was_home | default('/nonexistent') }}/bin/versionInfo.sh" ]; then echo "was_installed=yes"; fi
       register: _bin_read
       changed_when: false
       check_mode: false
@@ -92,8 +97,10 @@
         success_msg: |-
           mount      : {{ _bin_path }} <- {{ _bin.device | default('?') }} ({{ _bin.fstype | default('?', true) }})
           free       : {{ _bin_free_mb }} MB
-          IM archive : {{ _im_files | map('basename') | join(', ') | default('-', true) }}
-          WAS repo   : {{ _was_repos | join(', ') | default('-', true) }}
+          IM archive : {{ 'not needed, Installation Manager is installed' if _bin.im_installed | default('no') == 'yes'
+                          else (_im_files | map('basename') | join(', ')) }}
+          WAS repo   : {{ 'not needed, WAS is installed' if _bin.was_installed | default('no') == 'yes'
+                          else (_was_repos | join(', ')) }}
           fix packs  : {{ _fp_repos | length }} repository(ies) under {{ _fp_dir }}
       vars:
         _share: "{{ site_binaries_repository | default('the share') }}"
@@ -120,11 +127,11 @@
           {%-     set _ = p.append((ansible_user | default('the connecting account')) ~ ' cannot read it. On NFS: the root'
                                    ~ ' squashing of the export, or the uid of the account differing between server and client.') -%}
           {%-   elif forge_binaries_require_media | bool -%}
-          {%-     if _im_files | length == 0 -%}
+          {%-     if _im_files | length == 0 and _bin.im_installed | default('no') != 'yes' -%}
           {%-       set _ = p.append('no Installation Manager archive (' ~ (im_media_pattern | default('*.zip')) ~ ') in ' ~ _im_dir
                                      ~ '. On AIX it is the AIX one, agent.installer.aix.motif.ppc_<version>.zip. It needs an IBMid.') -%}
           {%-     endif -%}
-          {%-     if _was_repos | length == 0 -%}
+          {%-     if _was_repos | length == 0 and _bin.was_installed | default('no') != 'yes' -%}
           {%-       set _ = p.append('no WAS repository (repository.config) under ' ~ _was_dir ~ '. It needs an IBMid.') -%}
           {%-     endif -%}
           {%-   endif -%}

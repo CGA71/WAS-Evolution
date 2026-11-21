@@ -25,15 +25,21 @@ site_binaries_repository_type: nfs
 # roles/binaries_share/defaults/main.yml, e.g.
 #   binaries_share_options: "ro,bg,soft,intr,vers=3"
 
-# The AIX account that owns the installation and runs the processes, and the
-# one Ansible connects as. It needs sudo (AIX Toolbox) for the tasks that
-# become root - Installation Manager's administrator install, the directory
-# layout, the user limits.
+# The AIX account that owns the installation and runs the processes, as read
+# on the site's servers (ls -l /usr/IBM):
 #
-# The group is the one /usr/IBM/IHS9, Plugins9 and WebSphere9 belong to on the
-# server. The account is the one that owns them: check with
-#   ls -ld /usr/IBM/WebSphere9 /usr/IBM/IHS9
+#   drwxr-xr-x  root system  /usr/IBM/IHS9
+#   drwxr-xr-x  was  was     /usr/IBM/WebSphere     the home of was
+#   drwxr-xr-x  was  was     /usr/IBM/WebSphere9    AppServer, Imcl, certificats
+#
 # prereqs_os gives the directories of 20_paths.yml to this account and group.
-site_was_user: wasadmin
+site_was_user: was
 site_was_group: was
+
+# The account Ansible CONNECTS as - not necessarily the owner above. It must
+# reach root (50_connection.yml: sudo su -). Unchanged from the account the
+# jobs already connected with; set it to the account whose key the AWX
+# Machine credential holds. An inventory value outranks the credential's
+# username, so this line is what decides.
+site_ssh_user: wasadmin
 site_jython_dirname: jython-ansible

@@ -4,7 +4,9 @@
 # The private key is supplied by the AWX Machine Credential, by --private-key
 # on a command-line run, or by the CI variable AIX_SSH_PRIVATE_KEY. It is never
 # named here.
-ansible_user: "{{ site_was_user }}"
+# The connecting account, which is not the owner of the installation
+# (00_site.yml).
+ansible_user: "{{ site_ssh_user }}"
 
 # AIX ships no Python 3 in the base system. The AIX Toolbox for Open Source
 # Software installs it under /opt/freeware, together with the other tools the

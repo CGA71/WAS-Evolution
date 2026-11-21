@@ -1,6 +1,17 @@
 ---
 # Installation directories. Every one of them, in one place, as they ARE on
-# ServeurAIX.
+# ServeurAIX - and on every server of the site, where they are always the same:
+#
+#   /usr/IBM/WebSphere9/Imcl         Installation Manager      was:was
+#   /usr/IBM/WebSphere9/AppServer    WAS ND, profiles below    was:was
+#   /usr/IBM/WebSphere9/certificats  the site's certificates   was:was
+#   /usr/IBM/IHS9                    IBM HTTP Server           root:system
+#   /usr/IBM/Plugins9                the plugin, where installed
+#   /usr/IBM/WebSphere               the home directory of was - not a product
+#
+# The shared resources of Installation Manager are
+# /usr/IBM/WebSphere9/Imcl/IMShared: the sharedLocation of every response file
+# (36_response_files.yml).
 #
 # Each entry names the Installation Manager or WAS flag it feeds, so the
 # mapping between an inventory variable and what IBM actually does with it is
