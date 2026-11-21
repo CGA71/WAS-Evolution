@@ -18,8 +18,9 @@
 
 - name: The binaries mount point
   hosts: "{{ mount_check_hosts | default('was_install') }}"
-  gather_facts: true
-  gather_subset: ["!all", "!min", "distribution"]
+  # No facts: the check reads what it needs in one shell pass (uname, df,
+  # mount), and gathering them was a task and a round trip of its own.
+  gather_facts: false
 
   tasks:
     # tasks_from, so the role's defaults load at defaults precedence and an

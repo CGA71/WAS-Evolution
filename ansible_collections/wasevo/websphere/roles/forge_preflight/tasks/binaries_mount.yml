@@ -1,205 +1,132 @@
 ---
 # The binaries mount point: where every IBM artefact is read from.
 #
-# Read-only. Mounting the share is the system administrator's job; this file
-# says, before anything is installed, whether what the install jobs are about
-# to read is really there:
+# Read-only, and three tasks: READ everything in one pass on the target, FIND
+# the media in one pass, then one VERDICT that lists every problem at once -
+# rather than stopping at the first and leaving the operator to rerun for the
+# next. What is checked:
 #
 #   1. the path exists and is a directory;
 #   2. it is a MOUNT POINT, not a directory of the root filesystem that merely
-#      exists - df names the filesystem a path lives on, and that filesystem's
-#      mount point has to be the path itself;
-#   3. the filesystem is of the declared type (nfs, cifs, jfs2...), and
-#      optionally the declared share;
+#      exists (forge_binaries_require_mount) - df names the filesystem a path
+#      lives on, and that filesystem's mount point has to be the path itself;
+#   3. the filesystem is of the declared type (forge_binaries_fstype: nfs
+#      matches nfs3 and nfs4), and optionally the declared share
+#      (forge_binaries_check_source);
 #   4. the connecting account can read and traverse it;
-#   5. it carries the media: the Installation Manager archive and a WAS
-#      repository (repository.config). Fix packs are counted, not required.
+#   5. it carries the media (forge_binaries_require_media): the Installation
+#      Manager archive and a WAS repository. Fix packs are counted, not
+#      required - having none is a normal outcome for the fix pack job.
 #
-# Everything here is a command that exists on AIX and on Linux alike: df -P
-# and the two OS-specific ways of reading a filesystem type.
+# Only POSIX sh, df -P, and each system's own way of reading a filesystem
+# type: AIX's mount, Linux's findmnt.
 
-- name: Binaries mount point - the path
-  ansible.builtin.stat:
-    path: "{{ was_install_binaries_base_dir }}"
-  register: _bin_stat
-  check_mode: false
-
-- name: Binaries mount point - it must exist
-  ansible.builtin.assert:
-    that:
-      - _bin_stat.stat.exists
-      - _bin_stat.stat.isdir
-    fail_msg: >-
-      {{ was_install_binaries_base_dir }} does not exist on
-      {{ inventory_hostname }}. Every IBM artefact path in the inventory is
-      relative to it, so nothing can be installed until the share
-      {{ site_binaries_repository | default('declared in the inventory') }}
-      is mounted there.
-    success_msg: "{{ was_install_binaries_base_dir }} exists"
-
-# df -P is POSIX output on both systems: one header, then
-#   <filesystem> <blocks> <used> <available> <capacity> <mounted on>
-- name: Binaries mount point - the filesystem it lives on
-  ansible.builtin.shell:
-    cmd: df -Pk "{{ was_install_binaries_base_dir }}" | tail -1
-  register: _bin_df
-  changed_when: false
-  check_mode: false
-
-- name: Binaries mount point - read df
-  ansible.builtin.set_fact:
-    _bin_device: "{{ (_bin_df.stdout | trim).split() | first }}"
-    _bin_mounted_on: "{{ (_bin_df.stdout | trim).split() | last }}"
-    _bin_free_mb: "{{ ((_bin_df.stdout | trim).split()[3] | int) // 1024 }}"
-
-- name: Binaries mount point - it must be a mount point
-  ansible.builtin.assert:
-    that:
-      - _bin_mounted_on == (was_install_binaries_base_dir | regex_replace('/+$', ''))
-    fail_msg: >-
-      {{ was_install_binaries_base_dir }} is not a mount point: it is a
-      directory of the filesystem mounted on {{ _bin_mounted_on }}
-      ({{ _bin_device }}). The share
-      {{ site_binaries_repository | default('declared in the inventory') }}
-      is not mounted, so what the install would read there is whatever was
-      left in the empty directory. Mount it (on AIX: mount, or an entry in
-      /etc/filesystems with mount = true), or set
-      forge_binaries_require_mount=false for a directory filled by hand.
-    success_msg: "{{ was_install_binaries_base_dir }} is mounted from {{ _bin_device }}"
-  when: forge_binaries_require_mount | bool
-
-# The type: AIX's mount prints "node mounted over vfs ..." for a remote
-# filesystem and "mounted over vfs ..." for a local one, so the type is the
-# field after the one equal to the path. Linux has findmnt.
-- name: Binaries mount point - the filesystem type (AIX)
-  ansible.builtin.shell:
-    cmd: >-
-      mount | awk -v p="{{ was_install_binaries_base_dir | regex_replace('/+$', '') }}"
-      '$2 == p { print $3; exit } $3 == p { print $4; exit }'
-  register: _bin_type_aix
-  changed_when: false
-  check_mode: false
-  when: ansible_facts.os_family == 'AIX'
-
-- name: Binaries mount point - the filesystem type (Linux)
-  ansible.builtin.command:
-    cmd: findmnt -n -o FSTYPE --target "{{ was_install_binaries_base_dir }}"
-  register: _bin_type_linux
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when: ansible_facts.os_family != 'AIX'
-
-- name: Binaries mount point - read the type
-  ansible.builtin.set_fact:
-    _bin_fstype: "{{ ((_bin_type_aix.stdout | default('')) ~ (_bin_type_linux.stdout | default(''))) | trim }}"
-
-# nfs matches nfs3 and nfs4: the declared type is a prefix, not an exact name.
-- name: Binaries mount point - it must be of the declared type
-  ansible.builtin.assert:
-    that:
-      - (_bin_fstype | trim | lower).startswith(forge_binaries_fstype | trim | lower)
-    fail_msg: >-
-      {{ was_install_binaries_base_dir }} is a {{ _bin_fstype | trim | default('filesystem of unknown type', true) }}
-      filesystem, and the inventory declares the share as
-      {{ forge_binaries_fstype | trim }} (site_binaries_repository_type). Either
-      the wrong thing is mounted there, or the inventory is wrong.
-    success_msg: "type {{ _bin_fstype | trim }}"
-  when: forge_binaries_fstype | trim | length > 0
-
-- name: Binaries mount point - it must be the declared share
-  ansible.builtin.assert:
-    that:
-      - (_bin_device | regex_replace('/+$', '')) == (site_binaries_repository | regex_replace('/+$', ''))
-    fail_msg: >-
-      {{ was_install_binaries_base_dir }} is mounted from {{ _bin_device }}, and
-      the inventory declares {{ site_binaries_repository }}.
-    success_msg: "mounted from the declared share {{ site_binaries_repository }}"
-  when: forge_binaries_check_source | bool
-
-- name: Binaries mount point - the connecting account must be able to read it
-  ansible.builtin.shell:
-    cmd: test -r "{{ was_install_binaries_base_dir }}" && test -x "{{ was_install_binaries_base_dir }}"
-  register: _bin_readable
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-- name: Binaries mount point - it must be readable
-  ansible.builtin.assert:
-    that:
-      - _bin_readable.rc == 0
-    fail_msg: >-
-      {{ ansible_user | default('the connecting account') }} cannot read
-      {{ was_install_binaries_base_dir }}. On an NFS share this is usually the
-      export's root squashing or the uid of the account differing between the
-      server and the client.
-    success_msg: "readable by {{ ansible_user | default('the connecting account') }}"
-
-# ---------------------------------------------------------------------------
-# The media on it
-# ---------------------------------------------------------------------------
-
-- name: Binaries mount point - the media
-  when: forge_binaries_require_media | bool
+- name: Binaries mount point
   vars:
-    _im_dir: "{{ im_media_dir | default(was_install_binaries_base_dir ~ '/IBM/install_im') }}"
-    _im_pattern: "{{ im_media_pattern | default('*.zip') }}"
-    _was_dir: "{{ was_media_dir | default(was_install_binaries_base_dir ~ '/IBM/install_was90') }}"
-    _fp_dir: "{{ was_fixpack_media_dir | default(was_install_binaries_base_dir ~ '/IBM/fixes') }}"
+    _bin_path: "{{ was_install_binaries_base_dir | regex_replace('/+$', '') }}"
+    _im_dir: "{{ im_media_dir | default(was_install_binaries_base_dir ~ '/IBM/install_im') | regex_replace('/+$', '') }}"
+    _was_dir: "{{ was_media_dir | default(was_install_binaries_base_dir ~ '/IBM/install_was90') | regex_replace('/+$', '') }}"
+    _fp_dir: "{{ was_fixpack_media_dir | default(was_install_binaries_base_dir ~ '/IBM/fixes') | regex_replace('/+$', '') }}"
+    # What the read printed, as key=value lines, made a dictionary. Every value
+    # stays a string: yes/no are compared as such.
+    _bin: >-
+      {{ dict(_bin_read.stdout_lines | default([])
+              | select('match', '^[a-z_]+=')
+              | map('regex_search', '^([a-z_]+)=(.*)$', '\\1', '\\2')) }}
+    _bin_free_mb: "{{ (_bin.free_kb | default(0) | int) // 1024 }}"
+    _media: "{{ _bin_media.files | default([]) | map(attribute='path') | list }}"
+    _im_files: >-
+      {{ _media | select('match', (_im_dir | regex_escape) ~ '/[^/]+$')
+         | reject('search', '/repository[.]config$') | list }}
+    _was_repos: >-
+      {{ _media | select('match', (_was_dir | regex_escape) ~ '/.*repository[.]config$') | map('dirname') | list }}
+    _fp_repos: >-
+      {{ _media | select('match', (_fp_dir | regex_escape) ~ '/.*repository[.]config$') | map('dirname') | list }}
   block:
 
-    - name: Binaries mount point - look for the Installation Manager archive
-      ansible.builtin.find:
-        paths: "{{ _im_dir }}"
-        patterns: "{{ _im_pattern }}"
-        file_type: file
-      register: _bin_im
+    - name: Binaries mount point - read it
+      ansible.builtin.shell:
+        # AIX's mount prints "node mounted over vfs ..." for a remote
+        # filesystem and "mounted over vfs ..." for a local one: the type is
+        # the field after the one equal to the path.
+        cmd: |
+          p="{{ _bin_path }}"
+          if [ ! -d "$p" ]; then echo "exists=no"; exit 0; fi
+          echo "exists=yes"
+          set -- $(df -Pk "$p" | tail -1)
+          echo "device=$1"
+          echo "free_kb=$4"
+          echo "mounted_on=$6"
+          if [ "$(uname -s)" = AIX ]; then
+            t=$(mount | awk -v p="$p" '$2 == p { print $3; exit } $3 == p { print $4; exit }')
+          else
+            t=$(findmnt -n -o FSTYPE --target "$p" 2>/dev/null)
+          fi
+          echo "fstype=$t"
+          if [ -r "$p" ] && [ -x "$p" ]; then echo "readable=yes"; else echo "readable=no"; fi
+      register: _bin_read
+      changed_when: false
       check_mode: false
 
-    - name: Binaries mount point - look for the WAS repository
+    - name: Binaries mount point - find the media
       ansible.builtin.find:
-        paths: "{{ _was_dir }}"
-        patterns: "repository.config"
+        paths: "{{ [_im_dir, _was_dir, _fp_dir] | unique }}"
+        patterns: "{{ [im_media_pattern | default('*.zip'), 'repository.config'] }}"
         recurse: true
-        depth: 3
+        depth: 4
         file_type: file
-      register: _bin_was
+      register: _bin_media
       check_mode: false
+      when:
+        - forge_binaries_require_media | bool
+        - _bin.exists == 'yes'
+        - _bin.readable | default('no') == 'yes'
 
-    - name: Binaries mount point - look for fix pack repositories
-      ansible.builtin.find:
-        paths: "{{ _fp_dir }}"
-        patterns: "repository.config"
-        recurse: true
-        depth: 3
-        file_type: file
-      register: _bin_fp
-      check_mode: false
-
-    - name: Binaries mount point - the media must be there
+    - name: Binaries mount point - verdict
       ansible.builtin.assert:
         that:
-          - _bin_im.matched > 0
-          - _bin_was.matched > 0
-        fail_msg: >-
-          The share is mounted but does not carry what the install reads.
-          Installation Manager archive ({{ _im_pattern }} in {{ _im_dir }}):
-          {{ 'found' if _bin_im.matched > 0 else 'MISSING' }}.
-          WAS repository (repository.config under {{ _was_dir }}):
-          {{ 'found' if _bin_was.matched > 0 else 'MISSING' }}.
-          Neither can be downloaded by a playbook - both need an IBMid. On AIX
-          the Installation Manager archive is the AIX one
-          (agent.installer.aix.motif.ppc_<version>.zip), not the Linux one.
-        success_msg: >-
-          Installation Manager: {{ _bin_im.files | map(attribute='path') | map('basename') | join(', ') }};
-          WAS repository: {{ (_bin_was.files | map(attribute='path') | first | default('')) | dirname }}
-
-    - name: Binaries mount point - what it carries
-      ansible.builtin.debug:
-        msg:
-          - "mount      : {{ was_install_binaries_base_dir }} <- {{ _bin_device }} ({{ _bin_fstype | trim | default('?', true) }})"
-          - "free       : {{ _bin_free_mb }} MB"
-          - "IM archive : {{ _bin_im.files | map(attribute='path') | list | join(', ') | default('-', true) }}"
-          - "WAS repo   : {{ _bin_was.files | map(attribute='path') | map('dirname') | list | join(', ') | default('-', true) }}"
-          - "fix packs  : {{ _bin_fp.matched }} repository(ies) under {{ _fp_dir }}"
+          - _problems | length == 0
+        fail_msg: |-
+          {{ _bin_path }} on {{ inventory_hostname }} cannot be used:
+          {{ _problems | map('regex_replace', '^', '  - ') | join('\n') }}
+        success_msg: |-
+          mount      : {{ _bin_path }} <- {{ _bin.device | default('?') }} ({{ _bin.fstype | default('?', true) }})
+          free       : {{ _bin_free_mb }} MB
+          IM archive : {{ _im_files | map('basename') | join(', ') | default('-', true) }}
+          WAS repo   : {{ _was_repos | join(', ') | default('-', true) }}
+          fix packs  : {{ _fp_repos | length }} repository(ies) under {{ _fp_dir }}
+      vars:
+        _share: "{{ site_binaries_repository | default('the share') }}"
+        _problems: >-
+          {%- set p = [] -%}
+          {%- if _bin.exists != 'yes' -%}
+          {%-   set _ = p.append(_bin_path ~ ' does not exist. Every IBM artefact path of the inventory is relative to it:'
+                                 ~ ' mount ' ~ _share ~ ' there - job 0a, binaries_mount.yml.') -%}
+          {%- else -%}
+          {%-   if forge_binaries_require_mount | bool and _bin.mounted_on != _bin_path -%}
+          {%-     set _ = p.append('not a mount point but a directory of the filesystem mounted on ' ~ _bin.mounted_on
+                                   ~ ' (' ~ _bin.device ~ '): ' ~ _share ~ ' is not mounted. Job 0a mounts it;'
+                                   ~ ' forge_binaries_require_mount=false accepts a directory filled by hand.') -%}
+          {%-   elif forge_binaries_fstype | trim | length > 0
+                   and not (_bin.fstype | default('') | lower).startswith(forge_binaries_fstype | trim | lower) -%}
+          {%-     set _ = p.append('a ' ~ (_bin.fstype | default('', true) or 'unknown') ~ ' filesystem, where the inventory declares '
+                                   ~ (forge_binaries_fstype | trim) ~ ' (site_binaries_repository_type).') -%}
+          {%-   endif -%}
+          {%-   if forge_binaries_check_source | bool
+                 and (_bin.device | regex_replace('/+$', '')) != (_share | regex_replace('/+$', '')) -%}
+          {%-     set _ = p.append('mounted from ' ~ _bin.device ~ ', where the inventory declares ' ~ _share ~ '.') -%}
+          {%-   endif -%}
+          {%-   if _bin.readable != 'yes' -%}
+          {%-     set _ = p.append((ansible_user | default('the connecting account')) ~ ' cannot read it. On NFS: the root'
+                                   ~ ' squashing of the export, or the uid of the account differing between server and client.') -%}
+          {%-   elif forge_binaries_require_media | bool -%}
+          {%-     if _im_files | length == 0 -%}
+          {%-       set _ = p.append('no Installation Manager archive (' ~ (im_media_pattern | default('*.zip')) ~ ') in ' ~ _im_dir
+                                     ~ '. On AIX it is the AIX one, agent.installer.aix.motif.ppc_<version>.zip. It needs an IBMid.') -%}
+          {%-     endif -%}
+          {%-     if _was_repos | length == 0 -%}
+          {%-       set _ = p.append('no WAS repository (repository.config) under ' ~ _was_dir ~ '. It needs an IBMid.') -%}
+          {%-     endif -%}
+          {%-   endif -%}
+          {%- endif -%}
+          {{ p }}

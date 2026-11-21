@@ -433,6 +433,8 @@ ansible-playbook -i inventories/aix \
 
 The same checks run inside `forge_preflight`. `forge_binaries_require_mount: false` accepts a directory filled by hand.
 
+All of it in **three tasks**, without fact gathering: one shell pass reads the path, `df -P`, the filesystem type and the read permission; one `find` looks for every medium at once; one verdict lists **every** problem found, not the first. The job used to take eighteen tasks for the same answer and stopped at the first failure, so an operator fixed one problem per run.
+
 ## 16. The AIX server: ServeurAIX
 
 One physical AIX server carries the whole ND cell: a deployment manager and a federated node, both on the same LPAR. [`inventories/aix`](inventories/aix/hosts.yml) declares it as three entries pointing at the same `ansible_host`, for the reasons given in section 17:
@@ -2037,6 +2039,8 @@ ansible-playbook -i inventories/aix \
 5. il porte les médias : `install_im/*.zip` et un `repository.config` sous `install_was90/`. Les fix packs sont comptés, pas exigés.
 
 Les mêmes contrôles tournent dans `forge_preflight`. `forge_binaries_require_mount: false` accepte un répertoire rempli à la main.
+
+Le tout en **trois tâches**, sans collecte de faits : un passage shell lit le chemin, `df -P`, le type de système de fichiers et le droit de lecture ; un seul `find` cherche tous les médias ; un verdict unique liste **tous** les problèmes trouvés, pas le premier. Le job prenait dix-huit tâches pour la même réponse et s'arrêtait au premier échec, si bien qu'un exploitant corrigeait un problème par lancement.
 
 ## 16. Le serveur AIX : ServeurAIX
 
