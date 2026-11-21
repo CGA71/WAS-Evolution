@@ -51,8 +51,8 @@ imcl_servers:
         service_name: IBM HTTP Server V9.0
         port: "8081"
 
-  # L'IHS de l'ESB seul (Ihs_Esb_response_file.xml - non photographié,
-  # déduit). Le partage ne dit pas sur quel serveur il tourne : la clé reste
+  # L'IHS de l'ESB seul (Ihs_Esb_response_file.xml, vérifié sur le serveur le
+  # 21 novembre 2026). Le partage ne dit pas sur quel serveur il tourne : la clé reste
   # le nom du fichier tant qu'on ne le sait pas.
   Ihs_Esb:
     IHSPLG:
