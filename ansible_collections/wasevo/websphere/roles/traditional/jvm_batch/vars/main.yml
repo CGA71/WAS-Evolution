@@ -1,0 +1,9 @@
+---
+# What the batch script reads, from the role's settings.
+_jvm_env:
+  WAS_PROFILES_DIR: "{{ jvm_profiles_dir }}"
+  WAS_LOG_ROOT: "{{ was_log_root | default('', true) }}"
+  JVM_XMX_UNSET_MB: "{{ jvm_xmx_unset_mb }}"
+  JVM_STOP_TIMEOUT: "{{ jvm_stop_timeout }}"
+  JVM_KILL_GRACE: "{{ jvm_kill_grace }}"
+  JVM_START_TIMEOUT: "{{ jvm_start_timeout }}"

@@ -133,6 +133,8 @@ syntax:
     # The AIX server: the mount check and the install chain.
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount_check.yml
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_jvm_stop.yml
+    - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_jvm_start.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_im.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_apply_fixpacks.yml -e was_environment=SYNTAX
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/lab_install_was.yml -e was_environment=SYNTAX
@@ -177,6 +179,14 @@ imcl-templates:
   stage: validation
   script:
     - python3 ci/check-imcl-templates.py inventories/aix
+
+# The JVM batch script against a fake WAS profile: discovery and -Xmx
+# reading, the stop command, the kill of a JVM that ignores it, the start.
+jvm-batch:
+  extends: .static
+  stage: validation
+  script:
+    - sh ci/test-jvm-batch.sh
 
 model-matrix:
   extends: .static

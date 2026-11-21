@@ -1646,6 +1646,30 @@ An AWX survey cannot list what is in a cell: its choices are fixed when the temp
 Installing it: run `apply-application-workflows.sh`, launch "Applications - portal" once (the `awx_web` group: the web server in front of AWX), include the rendered `applications.nginx.conf` — or `.httpd.conf` — in that server's configuration, reload it, open `https://<awx>/wasevo/applications/`.
 
 
+## 26. Fix pack by JVM batch: stop, apply, start
+
+A node carries many JVMs. Stopping or starting them all at once is a memory and CPU storm; one at a time takes hours. So they are stopped and started **by batch**: a batch is every application server JVM whose maximum heap falls in a size range, and the JVMs of a batch are handled all at once.
+
+| Batch | JVMs |
+|---|---|
+| `512` | `-Xmx` ≤ 512 MB |
+| `1024` | ≤ 1024 MB |
+| `1536` | ≤ 1536 MB |
+| `2048` | ≤ 2048 MB |
+| `ALL` | every JVM of the node, those above the last bound included |
+
+The batches are **modifiable** in [`group_vars/all/45_jvm_batches.yml`](inventories/aix/group_vars/all/45_jvm_batches.yml) — add one, move a bound — with the stop and start timeouts and a list of JVMs never touched. A JVM's heap is `-Xmx` in its generic JVM arguments, else its *maximum heap size*, else 256 MB (WAS's default when none is set).
+
+**How a batch is stopped.** The role [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/defaults/main.yml) reads the node from each profile's own configuration (`setupCmdLine.sh`, `serverindex.xml`, `server.xml`) — no name is composed — and places each application server in its batch; node agents and the deployment manager are never in one. It runs `stopServer.sh` for every JVM of the batch at once; a JVM still alive after `jvm_stop_timeout` (300 s) is **killed**, SIGTERM then SIGKILL after `jvm_kill_grace` (30 s). Starting runs `startServer.sh` the same way and waits for each JVM to be open for e-business. Everything as `was`, which owns the processes — a kill reaches nothing else. A check run reads and reports, and stops nothing.
+
+**Three playbooks, one workflow.** [`traditional_jvm_stop.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_stop.yml) and [`traditional_jvm_start.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_start.yml) take the batch from their form (*Lot de JVM*); the fix pack is the job of section 16. [`ci/awx/apply-batch-workflow.sh`](ci/awx/apply-batch-workflow.sh) declares them in AWX as the workflow **WAS AIX - Fix pack by JVM batch**:
+
+```
+stop 512 → stop 1024 → stop 1536 → stop 2048 → fix pack (Env, Composants, Serveur) → start 512 → start 1024 → start 1536 → start 2048
+```
+
+Each node is a job template that can be launched alone: restart one batch, or stop and start a batch again, from **WAS AIX - JVM stop by batch** and **WAS AIX - JVM start by batch**. The CI job `jvm-batch` runs the batch script against a fake profile: discovery and heap reading, the stop, the kill of a JVM that ignores it, the start.
+
 ---
 
 <a name="français"></a>
@@ -3313,3 +3337,26 @@ Un survey AWX ne sait pas lister le contenu d'une cellule : ses choix sont figé
 
 Mise en place : lancer `apply-application-workflows.sh`, lancer une fois « Applications - portal » (le groupe `awx_web` : le serveur web placé devant AWX), inclure le `applications.nginx.conf` — ou `.httpd.conf` — rendu dans la configuration de ce serveur, le recharger, ouvrir `https://<awx>/wasevo/applications/`.
 
+## 26. Fix pack par lot de JVM : arrêter, appliquer, démarrer
+
+Un nœud porte de nombreuses JVM. Les arrêter ou les démarrer toutes à la fois, c'est une tempête mémoire et CPU ; une par une, c'est des heures. Elles sont donc arrêtées et démarrées **par lot** : un lot, ce sont toutes les JVM de serveurs d'applications dont le heap maximum tombe dans une tranche de taille, et les JVM d'un lot sont traitées en même temps.
+
+| Lot | JVM |
+|---|---|
+| `512` | `-Xmx` ≤ 512 Mo |
+| `1024` | ≤ 1024 Mo |
+| `1536` | ≤ 1536 Mo |
+| `2048` | ≤ 2048 Mo |
+| `ALL` | toutes les JVM du nœud, y compris celles au-delà de la dernière borne |
+
+Les lots sont **modifiables** dans [`group_vars/all/45_jvm_batches.yml`](inventories/aix/group_vars/all/45_jvm_batches.yml) — en ajouter un, déplacer une borne — avec les délais d'arrêt et de démarrage et une liste de JVM jamais touchées. Le heap d'une JVM, c'est `-Xmx` dans ses arguments JVM génériques, sinon sa *taille maximale de heap*, sinon 256 Mo (le défaut de WAS quand rien n'est fixé).
+
+**Comment un lot est arrêté.** Le rôle [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/defaults/main.yml) lit le nœud dans la configuration de chaque profil (`setupCmdLine.sh`, `serverindex.xml`, `server.xml`) — aucun nom n'est composé — et range chaque serveur d'applications dans son lot ; les node agents et le gestionnaire de déploiement n'y sont jamais. Il lance `stopServer.sh` pour toutes les JVM du lot à la fois ; une JVM encore vivante après `jvm_stop_timeout` (300 s) est **tuée**, SIGTERM puis SIGKILL après `jvm_kill_grace` (30 s). Le démarrage lance `startServer.sh` de la même façon et attend que chaque JVM soit ouverte. Le tout en `was`, propriétaire des processus — un kill n'atteint rien d'autre. Un run en mode Check lit et rapporte, et n'arrête rien.
+
+**Trois playbooks, un workflow.** [`traditional_jvm_stop.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_stop.yml) et [`traditional_jvm_start.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_start.yml) prennent le lot dans leur formulaire (*Lot de JVM*) ; le fix pack est le job de la section 16. [`ci/awx/apply-batch-workflow.sh`](ci/awx/apply-batch-workflow.sh) les déclare dans AWX en un workflow **WAS AIX - Fix pack by JVM batch** :
+
+```
+arrêt 512 → arrêt 1024 → arrêt 1536 → arrêt 2048 → fix pack (Env, Composants, Serveur) → démarrage 512 → démarrage 1024 → démarrage 1536 → démarrage 2048
+```
+
+Chaque nœud est un job template lançable seul : relancer un lot, ou arrêter puis redémarrer un lot, depuis **WAS AIX - JVM stop by batch** et **WAS AIX - JVM start by batch**. Le job CI `jvm-batch` exécute le script de lot contre un faux profil : découverte et lecture du heap, l'arrêt, le kill d'une JVM qui l'ignore, le démarrage.

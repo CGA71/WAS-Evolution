@@ -1,0 +1,55 @@
+---
+# Stop or start JVMs by batch - a batch is every application server JVM whose
+# maximum heap (-Xmx) falls in a size range.
+#
+# WHY BATCHES. A node carries many JVMs. Stopping or starting them all at once
+# is a memory and CPU storm; one at a time takes hours. A batch is stopped, or
+# started, in parallel; batches follow one another, each one an AWX job, so a
+# batch can be replayed alone.
+
+# The batches, in increasing size. A JVM belongs to the FIRST batch whose
+# max_xmx_mb is at least its -Xmx: with the defaults, 700 MB goes to "1024".
+# Modifiable - in the inventory (group_vars/all/45_jvm_batches.yml) - without
+# touching this role: add a batch, change a bound, rename one.
+jvm_batches:
+  - {name: "512", max_xmx_mb: 512}
+  - {name: "1024", max_xmx_mb: 1024}
+  - {name: "1536", max_xmx_mb: 1536}
+  - {name: "2048", max_xmx_mb: 2048}
+
+# The batch this run acts on: one of the names above, or ALL - every JVM of
+# the node, the ones above the last bound included. Asked by the form.
+jvm_batch: ""
+
+# stop or start - set by the playbook (traditional_jvm_stop.yml,
+# traditional_jvm_start.yml), not by the form.
+jvm_batch_action: ""
+
+# A JVM whose configuration declares no maximum heap runs with WAS's default;
+# it is counted at this size to choose its batch.
+jvm_xmx_unset_mb: 256
+
+# Seconds stopServer.sh gets before the JVM is killed (SIGTERM), then seconds
+# between SIGTERM and SIGKILL.
+jvm_stop_timeout: 300
+jvm_kill_grace: 30
+
+# Seconds startServer.sh waits for each JVM to be open for e-business.
+jvm_start_timeout: 600
+
+# JVMs never touched by this role, whatever their batch - by server name.
+jvm_batch_exclude: []
+
+# Where the profiles are: every profile below is read, its node and its
+# application servers found in its own configuration - no name is composed.
+jvm_profiles_dir: "{{ was_profiles_base_dir }}"
+
+# stopServer.sh with administrative security on needs credentials, unless the
+# profile's soap.client.props holds them. When was_admin_user is defined (the
+# AWX "WAS administrative user" credential), they are passed - and are then
+# visible in the process list of the server for the seconds the stop command
+# runs. Set false to rely on soap.client.props only.
+jvm_stop_with_credentials: true
+
+# Where the batch script is put on the server, the was account's.
+jvm_batch_script: "{{ was_data_base_dir }}/jvm_batch.sh"

@@ -1,0 +1,35 @@
+---
+# The JVM batches of the site: how the application server JVMs are stopped
+# and started - a batch at a time, the JVMs of a batch all at once.
+#
+# A JVM belongs to the FIRST batch whose max_xmx_mb is at least its maximum
+# heap (-Xmx in its generic JVM arguments, else its maximum heap size, else
+# jvm_xmx_unset_mb). With the bounds below:
+#
+#   -Xmx <= 512 MB    batch 512
+#   -Xmx <= 1024 MB   batch 1024
+#   -Xmx <= 1536 MB   batch 1536
+#   -Xmx <= 2048 MB   batch 2048
+#   above             no batch: reached by ALL only, and reported
+#
+# Modifiable here, and only here: add a batch, move a bound, rename one. The
+# form's "Lot de JVM" choices (ci/awx/surveys/jvm-batch.json) and the batch
+# workflow's nodes (ci/awx/apply-batch-workflow.sh) follow the names - change
+# both when a name changes. Everything else of the mechanism is
+# roles/traditional/jvm_batch.
+jvm_batches:
+  - {name: "512", max_xmx_mb: 512}
+  - {name: "1024", max_xmx_mb: 1024}
+  - {name: "1536", max_xmx_mb: 1536}
+  - {name: "2048", max_xmx_mb: 2048}
+
+# Seconds the stop command gets before the JVM is killed, then seconds
+# between SIGTERM and SIGKILL.
+jvm_stop_timeout: 300
+jvm_kill_grace: 30
+
+# Seconds each JVM gets to start.
+jvm_start_timeout: 600
+
+# JVMs never stopped or started by batch, by server name.
+jvm_batch_exclude: []

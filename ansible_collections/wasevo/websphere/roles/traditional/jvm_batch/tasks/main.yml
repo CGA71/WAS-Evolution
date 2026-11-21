@@ -1,0 +1,139 @@
+---
+# Stop or start one batch of application server JVMs on this node.
+#
+#   1. read the node: every application server of every profile, its -Xmx,
+#      whether it runs - from the profile's own configuration (setupCmdLine,
+#      serverindex.xml, server.xml), so no name is composed or assumed;
+#   2. place each JVM in its batch (jvm_batches) and keep the one asked for;
+#   3. stop them all at once - the stop command, then a kill for any JVM
+#      still alive after jvm_stop_timeout - or start them all at once;
+#   4. refuse to call it done while a JVM of the batch is in the wrong state.
+#
+# Everything as was: the JVMs are its processes, and a kill reaches nothing
+# else. was never uses sudo (inventories/aix/group_vars/was_servers.yml).
+# A check run reads and reports, and stops or starts nothing.
+
+- name: JVM batch - the request
+  ansible.builtin.assert:
+    that:
+      - jvm_batch_action in ['stop', 'start']
+      - (jvm_batch | string | upper) == 'ALL' or (jvm_batch | string) in (jvm_batches | map(attribute='name') | map('string'))
+    fail_msg: >-
+      jvm_batch is "{{ jvm_batch }}": one of
+      {{ jvm_batches | map(attribute='name') | join(', ') }}, or ALL.
+      jvm_batch_action is "{{ jvm_batch_action }}": stop or start - set by the
+      playbook.
+    quiet: true
+  tags: [always]
+
+# The script is the was account's tooling, not configuration: it is put in
+# place even in a check run, so the check can read the node.
+- name: JVM batch - the batch script, on the server
+  ansible.builtin.copy:
+    src: jvm_batch.sh
+    dest: "{{ jvm_batch_script }}"
+    mode: "0700"
+  become: true
+  check_mode: false
+
+- name: JVM batch - read the node
+  ansible.builtin.command:
+    cmd: /bin/sh {{ jvm_batch_script }} discover
+  environment: "{{ _jvm_env }}"
+  register: _jvm_discover
+  changed_when: false
+  check_mode: false
+  become: true
+
+- name: JVM batch - place each JVM in its batch
+  ansible.builtin.set_fact:
+    _jvm_all: >-
+      {%- set out = [] -%}
+      {%- set bounds = jvm_batches | sort(attribute='max_xmx_mb') -%}
+      {%- for l in _jvm_discover.stdout_lines | select('search', '[|]') -%}
+      {%-   set f = l.split('|') -%}
+      {%-   set fit = bounds | selectattr('max_xmx_mb', '>=', f[4] | int) | list -%}
+      {%-   set _ = out.append({'profile': f[0], 'cell': f[1], 'node': f[2], 'server': f[3],
+                                'xmx': f[4] | int, 'state': f[5], 'pid': f[6] | default(''),
+                                'batch': (fit | first).name | string if fit else 'ABOVE'}) -%}
+      {%- endfor -%}{{ out }}
+
+- name: JVM batch - the JVMs of this batch
+  ansible.builtin.set_fact:
+    _jvm_selected: >-
+      {{ (_jvm_all if (jvm_batch | string | upper) == 'ALL'
+          else _jvm_all | selectattr('batch', 'equalto', jvm_batch | string))
+         | rejectattr('server', 'in', jvm_batch_exclude) | list }}
+
+- name: JVM batch - the node, by batch
+  ansible.builtin.debug:
+    msg: >-
+      {{ _b }} : {{ _jvm_all | selectattr('batch', 'equalto', _b)
+                    | map(attribute='server') | join(', ') or '-' }}
+  loop: "{{ (jvm_batches | sort(attribute='max_xmx_mb') | map(attribute='name') | map('string') | list) + ['ABOVE'] }}"
+  loop_control:
+    loop_var: _b
+    label: "{{ _b }}"
+
+- name: JVM batch - JVMs above the last batch are only reached by ALL
+  ansible.builtin.debug:
+    msg: >-
+      {{ _above | map(attribute='server') | join(', ') }}: -Xmx above
+      {{ jvm_batches | map(attribute='max_xmx_mb') | max }} MB, in no batch.
+      Add a batch to jvm_batches, or act on them with ALL.
+  vars:
+    _above: "{{ _jvm_all | selectattr('batch', 'equalto', 'ABOVE') | list }}"
+  when: _above | length > 0
+
+- name: JVM batch - plan
+  ansible.builtin.debug:
+    msg:
+      - "action  : {{ jvm_batch_action }} batch {{ jvm_batch }}"
+      - "JVMs    : {{ _jvm_selected | map(attribute='server') | join(', ') or 'none on this node' }}"
+      - "already : {{ _jvm_selected | selectattr('state', 'equalto', _done_state) | map(attribute='server') | join(', ') or '-' }}"
+  vars:
+    _done_state: "{{ 'stopped' if jvm_batch_action == 'stop' else 'running' }}"
+
+- name: JVM batch - {{ jvm_batch_action }}
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', jvm_batch_script, jvm_batch_action]
+              + (_jvm_selected | map(attribute='profile') | zip(_jvm_selected | map(attribute='server'))
+                 | map('join', ':') | list) }}"
+  environment: "{{ _jvm_env | combine(_jvm_cred) }}"
+  register: _jvm_run
+  become: true
+  # The whole batch at once: the longest stop is the timeout plus the kill
+  # grace, the longest start the start timeout - plus a margin.
+  async: "{{ ([jvm_stop_timeout | int + jvm_kill_grace | int, jvm_start_timeout | int] | max) + 300 }}"
+  poll: 15
+  changed_when: >-
+    _jvm_run.stdout_lines | default([])
+    | select('search', '[|](stopped|killed|started)([|]|$)') | list | length > 0
+  when:
+    - _jvm_selected | length > 0
+    - not ansible_check_mode
+  vars:
+    _jvm_cred: >-
+      {{ {'WAS_STOP_USER': was_admin_user, 'WAS_STOP_PASSWORD': was_admin_password}
+         if (jvm_batch_action == 'stop' and jvm_stop_with_credentials | bool
+             and was_admin_user | default('') | length > 0)
+         else {} }}
+
+- name: JVM batch - result
+  ansible.builtin.debug:
+    msg: "{{ _jvm_run.stdout_lines | default([]) }}"
+  when: _jvm_run.stdout_lines is defined
+
+- name: JVM batch - every JVM of the batch must be {{ 'stopped' if jvm_batch_action == 'stop' else 'running' }}
+  ansible.builtin.assert:
+    that:
+      - _bad | length == 0
+    fail_msg: >-
+      {{ _bad | join('; ') }}. Each server's log is in its LOG_ROOT
+      directory ({{ was_log_root | default('<profile>/logs', true) }}/<server>/).
+    success_msg: >-
+      batch {{ jvm_batch }}: {{ _jvm_run.stdout_lines | default([]) | length }}
+      JVM(s) {{ 'stopped' if jvm_batch_action == 'stop' else 'running' }}
+  vars:
+    _bad: "{{ _jvm_run.stdout_lines | default([]) | select('search', '[|](STILL-RUNNING|FAILED)[|]') | list }}"
+  when: _jvm_run.stdout_lines is defined

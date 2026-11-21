@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: jvm_batch
+  author: neo
+  description: >-
+    Stop or start the application server JVMs of a node by batch, a batch
+    being the JVMs whose maximum heap falls in a size range. Stop by the stop
+    command, kill when it takes too long; everything as the WAS account.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+dependencies: []
