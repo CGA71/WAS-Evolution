@@ -36,10 +36,10 @@ site_binaries_repository_type: nfs
 site_was_user: was
 site_was_group: was
 
-# The account Ansible CONNECTS as - not necessarily the owner above. It must
-# reach root (50_connection.yml: sudo su -). Unchanged from the account the
-# jobs already connected with; set it to the account whose key the AWX
-# Machine credential holds. An inventory value outranks the credential's
-# username, so this line is what decides.
-site_ssh_user: wasadmin
+# Every action that builds, configures or changes WebSphere runs AS THIS
+# ACCOUNT, with its own password - not as root, and not as the account Ansible
+# connects with (50_connection.yml). The password is never written in clear:
+# it is vault_site_was_password, in the encrypted 90_vault.yml beside this
+# file, opened at run time by the AWX Vault credential.
+site_was_password: "{{ vault_site_was_password }}"
 site_jython_dirname: jython-ansible

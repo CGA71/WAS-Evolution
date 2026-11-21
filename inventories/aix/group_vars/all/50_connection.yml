@@ -4,9 +4,11 @@
 # The private key is supplied by the AWX Machine Credential, by --private-key
 # on a command-line run, or by the CI variable AIX_SSH_PRIVATE_KEY. It is never
 # named here.
-# The connecting account, which is not the owner of the installation
-# (00_site.yml).
-ansible_user: "{{ site_ssh_user }}"
+# THE CONNECTING ACCOUNT IS NOT SET HERE. It is the username of the AWX
+# Machine credential - and only as long as no inventory sets ansible_user,
+# which would outrank it. On a command line: -u <account>; in the pipeline:
+# the CI variable AIX_SSH_USER. It is not the owner of WebSphere (was,
+# 00_site.yml): it connects, then reaches root through sudo su -.
 
 # AIX ships no Python 3 in the base system. The AIX Toolbox for Open Source
 # Software installs it under /opt/freeware, together with the other tools the

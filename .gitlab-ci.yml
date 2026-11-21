@@ -24,8 +24,9 @@
 #
 # CI/CD variables (Settings > CI/CD > Variables), none of them in this file:
 #
-#   AIX_SSH_PRIVATE_KEY   File. The private key of the WAS account on
-#                         ServeurAIX (site_ssh_user in inventories/aix).
+#   AIX_SSH_USER          The account the jobs connect with - the one the AWX
+#                         Machine credential names. Not the owner of WebSphere.
+#   AIX_SSH_PRIVATE_KEY   File. The private key of that account on ServeurAIX.
 #   AIX_SSH_KNOWN_HOSTS   File or variable. ServeurAIX's host key line(s), as
 #                         ssh-keyscan prints them. Without it the key is taken
 #                         on first use, and the job says so.
@@ -364,6 +365,8 @@ release-version:
       install -m 600 "$AIX_SSH_PRIVATE_KEY" ~/.ssh/id_aix
       export ANSIBLE_PRIVATE_KEY_FILE=~/.ssh/id_aix
       echo "export ANSIBLE_PRIVATE_KEY_FILE=$HOME/.ssh/id_aix" >> ~/.aix-env
+      # The connecting account: the inventory no longer names one.
+      echo "export ANSIBLE_REMOTE_USER=${AIX_SSH_USER:?AIX_SSH_USER is not set}" >> ~/.aix-env
       if [ -n "${AIX_SSH_KNOWN_HOSTS:-}" ]; then
         if [ -f "$AIX_SSH_KNOWN_HOSTS" ]; then cat "$AIX_SSH_KNOWN_HOSTS"
         else printf '%s\n' "$AIX_SSH_KNOWN_HOSTS"; fi > ~/.ssh/known_hosts
