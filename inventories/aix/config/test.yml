@@ -1,10 +1,11 @@
 ---
-# TEST - what Installation Manager installs and updates, server by server.
-# See dev.yml for the keys.
+# TEST - ce qu'Installation Manager installe et met à jour, serveur par
+# serveur. Voir dev.yml pour les clés.
 #
-# EMPTY: the share holds no response file for TEST. Declare each TEST server
-# here before running the fix pack job for TEST - until then the job says
-# which server it has no entry for, and changes nothing. For example:
+# VIDE : le partage ne contient aucun fichier réponse pour TEST. Déclarer
+# chaque serveur TEST ici avant de lancer le job de fix pack pour TEST -
+# d'ici là, le job indique pour quel serveur il n'a pas d'entrée, et ne
+# modifie rien. Par exemple :
 #
 #   imcl_servers:
 #     ServeurAIX:

@@ -1,21 +1,22 @@
 ---
-# PREPROD - what Installation Manager installs and updates, server by server.
-# See dev.yml for the keys.
+# PREPROD - ce qu'Installation Manager installe et met à jour, serveur par
+# serveur. Voir dev.yml pour les clés.
 
 imcl_level: FP9.0.5.28
 
-# The multi-site IHS servers name each instance Ihs<site>90Preprod and its
-# plugin Plugin<site>90Preprod: the "site:" short form of ihsplg.xml.j2.
+# Les serveurs IHS multi-sites nomment chaque instance Ihs<site>90Preprod et
+# son plugin Plugin<site>90Preprod : c'est la forme courte "site:" de
+# ihsplg.xml.j2.
 imcl_ihs_profile_suffix: Preprod
 
 imcl_servers:
 
-  # The deployment manager's server (pp-dmgr-01_WAS_response_file.xml).
+  # Le serveur du gestionnaire de déploiement (pp-dmgr-01_WAS_response_file.xml).
   pp-dmgr-01:
     WASDMR:
       profile: Was90PreProd
 
-  # WAS node and IHS (pp-was-01_WAS_response_file.xml).
+  # Nœud WAS et IHS (pp-was-01_WAS_response_file.xml).
   pp-was-01:
     WAS:
       profile: Was90PreProd
@@ -23,9 +24,9 @@ imcl_servers:
       - profile: IBM HTTP Server V9.0
         location: /usr/IBM/IHS9
 
-  # WAS node and IHS (pp-was-02_WAS_response_file.xml). Was90Prod, not
-  # Was90PreProd: as on the server. If that is the profile its WAS is
-  # registered under, it must stay - check with
+  # Nœud WAS et IHS (pp-was-02_WAS_response_file.xml). Was90Prod et non
+  # Was90PreProd : comme sur le serveur. Si c'est bien le profil sous lequel
+  # son WAS est enregistré, il doit rester ainsi - à vérifier avec
   #   imcl listInstalledPackages -long
   pp-was-02:
     WAS:
@@ -34,7 +35,7 @@ imcl_servers:
       - profile: IBM HTTP Server V9.0
         location: /usr/IBM/IHS9
 
-  # Multi-site IHS server (pp-ihs-01_IHS_PLUGINS_response_file.xml).
+  # Serveur IHS multi-sites (pp-ihs-01_IHS_PLUGINS_response_file.xml).
   pp-ihs-01:
     IHSPLG:
       - site: SITEA
@@ -47,8 +48,8 @@ imcl_servers:
       - site: SICAP
       - site: Ged
 
-  # Multi-site IHS server (pp-ihs-02_IHS_PLUGINS_response_file.xml). STATRES
-  # has no plugin there.
+  # Serveur IHS multi-sites (pp-ihs-02_IHS_PLUGINS_response_file.xml). STATRES
+  # n'y a pas de plugin.
   pp-ihs-02:
     IHSPLG:
       - site: SITEA

@@ -1,18 +1,18 @@
 ---
-# PROD - what Installation Manager installs and updates, server by server.
-# See dev.yml for the keys. A PROD run still needs the production
-# acknowledgement of the form.
+# PROD - ce qu'Installation Manager installe et met à jour, serveur par
+# serveur. Voir dev.yml pour les clés. Un lancement sur PROD exige toujours la
+# confirmation de production du formulaire.
 
 imcl_level: FP9.0.5.28
 
 imcl_servers:
 
-  # The deployment manager's server (prod-dmgr-01_WAS_response_file.xml).
+  # Le serveur du gestionnaire de déploiement (prod-dmgr-01_WAS_response_file.xml).
   prod-dmgr-01:
     WASDMR:
       profile: Was90Prod
 
-  # WAS node and IHS (prod-was-01_WAS_response_file.xml).
+  # Nœud WAS et IHS (prod-was-01_WAS_response_file.xml).
   prod-was-01:
     WAS:
       profile: Was90Prod
@@ -20,7 +20,7 @@ imcl_servers:
       - profile: IBM HTTP Server V9.0
         location: /usr/IBM/IHS9
 
-  # WAS node and IHS (prod-was-02_WAS_response_file.xml).
+  # Nœud WAS et IHS (prod-was-02_WAS_response_file.xml).
   prod-was-02:
     WAS:
       profile: Was90Prod
@@ -28,7 +28,7 @@ imcl_servers:
       - profile: IBM HTTP Server V9.0
         location: /usr/IBM/IHS9
 
-  # WAS node, the GED IHS on port 8081 and its plugin
+  # Nœud WAS, l'IHS de la GED sur le port 8081 et son plugin
   # (prod-was-03_WAS_IHS_PLUGIN_response_file.xml).
   prod-was-03:
     WAS:

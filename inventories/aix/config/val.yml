@@ -1,18 +1,18 @@
 ---
-# VAL - what Installation Manager installs and updates, server by server.
-# "valid" in the server's own directory names. See dev.yml for the keys.
+# VAL - ce qu'Installation Manager installe et met à jour, serveur par serveur.
+# "valid" dans les noms de répertoires du serveur. Voir dev.yml pour les clés.
 
 imcl_level: FP9.0.5.28
 
 imcl_servers:
 
-  # The deployment manager's server (val-dmgr-01_WAS_response_file.xml - not
-  # photographed, deduced: see response_files/README.md).
+  # Le serveur du gestionnaire de déploiement (val-dmgr-01_WAS_response_file.xml -
+  # non photographié, déduit : voir response_files/README.md).
   val-dmgr-01:
     WASDMR:
       profile: Was90Val
 
-  # WAS node and one IHS on port 80, without plugin
+  # Nœud WAS et un IHS sur le port 80, sans plugin
   # (val-was-01_WAS_IHS_response_file.xml).
   val-was-01:
     WAS:
@@ -22,9 +22,9 @@ imcl_servers:
         location: /usr/IBM/IHS9
         port: "80"
 
-  # The IHS server: five instances, three with a plugin
-  # (val-ihs-01_IHS_response_file.xml). Their Windows service name is the
-  # generic one, not the profile.
+  # Le serveur IHS : cinq instances, dont trois avec plugin
+  # (val-ihs-01_IHS_response_file.xml). Leur nom de service Windows est le nom
+  # générique, pas celui du profil.
   val-ihs-01:
     IHSPLG:
       - profile: Ihs90Part
@@ -51,9 +51,9 @@ imcl_servers:
         service_name: IBM HTTP Server V9.0
         port: "8081"
 
-  # The ESB IHS alone (Ihs_Esb_response_file.xml - not photographed,
-  # deduced). On which server it runs is not known from the share: the key
-  # is the file's name until it is.
+  # L'IHS de l'ESB seul (Ihs_Esb_response_file.xml - non photographié,
+  # déduit). Le partage ne dit pas sur quel serveur il tourne : la clé reste
+  # le nom du fichier tant qu'on ne le sait pas.
   Ihs_Esb:
     IHSPLG:
       - profile: Ihs90Esb
