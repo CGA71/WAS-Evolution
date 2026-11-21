@@ -34,3 +34,6 @@ repository.config
 # Local renders
 build/
 rendered/
+
+# Personal Claude Code permissions, not shared
+.claude/settings.local.json
