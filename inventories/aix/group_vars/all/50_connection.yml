@@ -17,16 +17,8 @@
 # named explicitly.
 ansible_python_interpreter: /opt/freeware/bin/python3
 
-# Root is reached the way the site's operators reach it: the connecting
-# account may run "sudo su -", nothing narrower. Ansible's sudo method runs
-# its own command line through sudo, which such a sudoers rule refuses; the su
-# method with "sudo su -" as its executable runs exactly
-#   sudo su - root -c '<the module>'
-# which it accepts. Where the account has full sudo, this works as well. The
-# become password, if sudo asks for one, is the connecting account's own: the
-# AWX Machine credential's "Privilege Escalation Password".
-ansible_become_method: su
-ansible_become_exe: "sudo su -"
+# Privilege escalation on the WAS servers - was, or root - is in
+# group_vars/was_servers.yml: it does not apply to the AWX web front.
 
 # /tmp on AIX is often a small filesystem; Ansible's temporary files go under
 # the account's home instead.

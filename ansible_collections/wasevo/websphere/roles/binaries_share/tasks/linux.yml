@@ -10,3 +10,6 @@
     opts: "{{ binaries_share_options }}"
     state: "{{ 'mounted' if (binaries_share_persistent | bool) else 'ephemeral' }}"
   become: true
+  # Root, through sudo su -: this task changes the system, not WebSphere.
+  vars:
+    wasevo_become_as: root

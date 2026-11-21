@@ -65,6 +65,9 @@
   ansible.builtin.command:
     cmd: "{{ forge_aix_dnf }} install -y {{ forge_aix_toolbox_packages | join(' ') }}"
   become: true
+  # Root, through sudo su -: this task changes the system, not WebSphere.
+  vars:
+    wasevo_become_as: root
   register: prereqs_packages
   changed_when: "'Nothing to do' not in prereqs_packages.stdout"
   when:
@@ -120,6 +123,9 @@
   changed_when: false
   check_mode: false
   become: true
+  # Root, through sudo su -: this task changes the system, not WebSphere.
+  vars:
+    wasevo_become_as: root
 
 - name: Set the limits that differ
   ansible.builtin.command:
@@ -128,6 +134,8 @@
   changed_when: true
   when: _aix_to_set | length > 0
   vars:
+    # Root, through sudo su -: this task changes the system, not WebSphere.
+    wasevo_become_as: root
     _aix_current: "{{ dict(_aix_lsuser.stdout | regex_findall('(\\w+)=(\\S+)')) }}"
     _aix_to_set: >-
       {%- set out = [] -%}

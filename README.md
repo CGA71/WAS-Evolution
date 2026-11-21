@@ -462,22 +462,7 @@ There is no environment group, on purpose: the same server is built as any envir
 
 **Root through `sudo su -`.** On this site the connecting account may run `sudo su -` and nothing narrower, which Ansible's `sudo` method does not fit: it sends its own command line to sudo. [`50_connection.yml`](inventories/aix/group_vars/all/50_connection.yml) therefore sets `ansible_become_method: su` with `ansible_become_exe: "sudo su -"`, so every escalation runs as `sudo su - root -c '<module>'` — the operators' own path, and one that works unchanged where an account has full sudo. A sudo password, if one is asked, is the connecting account's: the AWX Machine credential's *Privilege Escalation Password*.
 
-**Three accounts, three roles.** The account Ansible **connects** with is the AWX Machine credential's username — the inventory sets no `ansible_user`, which would outrank it (`-u` on a command line, `AIX_SSH_USER` in the pipeline). It reaches **root** through `sudo su -`, for what only root may do: mounting the share, the system settings. Everything that **builds, configures or changes WebSphere** runs as **`was`**, the owner of `/usr/IBM/WebSphere9`, with its own password: `site_was_password`, read from the encrypted [`90_vault.yml`](inventories/aix/group_vars/all/) and never written in clear.
-
-**Storing the `was` password in the vault.** Once, on any machine with `ansible-core` (Linux, WSL, or an AWX execution environment):
-
-```sh
-cd WAS-Evolution
-# 1. create the encrypted file; ansible-vault asks for the vault password twice
-ansible-vault create --vault-id aix@prompt inventories/aix/group_vars/all/90_vault.yml
-#    and type in the editor it opens:
-#      vault_site_was_password: "<the was password>"
-# 2. check it is encrypted, then commit it
-head -1 inventories/aix/group_vars/all/90_vault.yml   # $ANSIBLE_VAULT;1.2;AES256;aix
-git add inventories/aix/group_vars/all/90_vault.yml && git commit -m "AIX: the was password, vaulted"
-```
-
-Then in AWX: **Credentials → Add**, type **Vault**, *Vault Password* the one chosen above, *Vault Identifier* `aix`; attach it to every `WAS AIX` job template beside the Machine credential. The vault password itself goes into the site's password safe, nowhere in the repository. To change the `was` password: `ansible-vault edit --vault-id aix@prompt …/90_vault.yml`; to change the vault password: `ansible-vault rekey`, then update the AWX credential. A pipeline run would need it as a masked CI variable passed through `--vault-id aix@<file>`.
+**Three accounts, three roles.** The account Ansible **connects** with is the AWX Machine credential's — the inventory sets no `ansible_user`, which would outrank it (`-u` on a command line, `AIX_SSH_USER` in the pipeline). From it, two escalations, set in [`group_vars/was_servers.yml`](inventories/aix/group_vars/was_servers.yml): everything that **builds, configures or changes WebSphere** runs as **`was`**, through `su - was` with its own password; what changes the **system** — mounting the share, directories, AIX packages and limits (`binaries_share`, `prereqs_os`) — runs as **root** through `sudo su -`, each such task marked `vars: {wasevo_become_as: root}`. `was` never uses sudo, and WebSphere is never touched as root, so nothing in its tree ends up owned by root. The `was` password lives in the encrypted `90_vault.yml`, opened by an AWX Vault credential: the procedure is [`docs/vault.md`](docs/vault.md).
 
 **The share as the site lays it out.** The media is `nfs-server:/export/was90`, mounted on `/tmp/wasinst` — `Imcl`, `WasND`, `Supplement`, `SdkJava8`, then `Fixes/FP9.0.5.<n>/{WAS,SDK,IHSPLG}`. [`25_install_dirs.yml`](inventories/aix/group_vars/all/25_install_dirs.yml) points each install role at its directory, and the fix pack job at **one** level, `Fixes/FP9.0.5.28` (the level of the response files): `Fixes/` holds every level since 9.0.5.13, and `imcl updateAll` given them all would install the highest.
 
@@ -2086,22 +2071,7 @@ Pas de groupe d'environnement, volontairement : le même serveur se construit so
 
 **Root par `sudo su -`.** Sur ce site, le compte de connexion peut lancer `sudo su -` et rien de plus restreint, ce que la méthode `sudo` d'Ansible ne sait pas faire : elle envoie sa propre ligne de commande à sudo. [`50_connection.yml`](inventories/aix/group_vars/all/50_connection.yml) pose donc `ansible_become_method: su` avec `ansible_become_exe: "sudo su -"` : chaque élévation s'exécute en `sudo su - root -c '<module>'` — le chemin des exploitants, qui fonctionne tel quel là où un compte a sudo complet. Le mot de passe sudo, s'il est demandé, est celui du compte de connexion : le *Privilege Escalation Password* de la credential Machine AWX.
 
-**Trois comptes, trois rôles.** Le compte avec lequel Ansible **se connecte** est le nom d'utilisateur de la credential Machine AWX — l'inventaire ne fixe aucun `ansible_user`, qui l'emporterait sur elle (`-u` en ligne de commande, `AIX_SSH_USER` dans le pipeline). Il devient **root** par `sudo su -`, pour ce que seul root peut faire : monter le partage, les réglages système. Tout ce qui **construit, configure ou modifie WebSphere** s'exécute en **`was`**, propriétaire de `/usr/IBM/WebSphere9`, avec son propre mot de passe : `site_was_password`, lu dans le fichier chiffré [`90_vault.yml`](inventories/aix/group_vars/all/) et jamais écrit en clair.
-
-**Enregistrer le mot de passe de `was` dans le vault.** Une fois, sur une machine qui a `ansible-core` (Linux, WSL, ou un environnement d'exécution AWX) :
-
-```sh
-cd WAS-Evolution
-# 1. créer le fichier chiffré ; ansible-vault demande deux fois le mot de passe du vault
-ansible-vault create --vault-id aix@prompt inventories/aix/group_vars/all/90_vault.yml
-#    et saisir dans l'éditeur qui s'ouvre :
-#      vault_site_was_password: "<le mot de passe de was>"
-# 2. vérifier qu'il est chiffré, puis le commiter
-head -1 inventories/aix/group_vars/all/90_vault.yml   # $ANSIBLE_VAULT;1.2;AES256;aix
-git add inventories/aix/group_vars/all/90_vault.yml && git commit -m "AIX: the was password, vaulted"
-```
-
-Puis dans AWX : **Credentials → Add**, type **Vault**, *Vault Password* celui choisi ci-dessus, *Vault Identifier* `aix` ; l'attacher à chaque job template `WAS AIX` à côté de la credential Machine. Le mot de passe du vault va dans le coffre-fort de mots de passe du site, nulle part dans le dépôt. Pour changer le mot de passe de `was` : `ansible-vault edit --vault-id aix@prompt …/90_vault.yml` ; pour changer celui du vault : `ansible-vault rekey`, puis mettre à jour la credential AWX. Un run du pipeline en aurait besoin comme variable CI masquée, passée par `--vault-id aix@<fichier>`.
+**Trois comptes, trois rôles.** Le compte avec lequel Ansible **se connecte** est celui de la credential Machine AWX — l'inventaire ne fixe aucun `ansible_user`, qui l'emporterait sur elle (`-u` en ligne de commande, `AIX_SSH_USER` dans le pipeline). À partir de lui, deux élévations, réglées dans [`group_vars/was_servers.yml`](inventories/aix/group_vars/was_servers.yml) : tout ce qui **construit, configure ou modifie WebSphere** s'exécute en **`was`**, par `su - was` avec son propre mot de passe ; ce qui change le **système** — monter le partage, l'arborescence, les paquets et limites AIX (`binaries_share`, `prereqs_os`) — s'exécute en **root** par `sudo su -`, chaque tâche concernée marquée `vars: {wasevo_become_as: root}`. `was` n'utilise jamais sudo, et WebSphere n'est jamais touché en root : rien dans son arborescence ne finit propriété de root. Le mot de passe de `was` vit dans le fichier chiffré `90_vault.yml`, ouvert par une credential Vault AWX : la procédure est dans [`docs/vault.md`](docs/vault.md).
 
 **Le partage tel que le site l'organise.** Les médias sont `nfs-server:/export/was90`, monté sur `/tmp/wasinst` — `Imcl`, `WasND`, `Supplement`, `SdkJava8`, puis `Fixes/FP9.0.5.<n>/{WAS,SDK,IHSPLG}`. [`25_install_dirs.yml`](inventories/aix/group_vars/all/25_install_dirs.yml) pointe chaque rôle d'installation sur son répertoire, et le job de fix packs sur **un seul** niveau, `Fixes/FP9.0.5.28` (celui des fichiers réponse) : `Fixes/` contient tous les niveaux depuis 9.0.5.13, et `imcl updateAll` à qui on les donne tous installerait le plus haut.
 

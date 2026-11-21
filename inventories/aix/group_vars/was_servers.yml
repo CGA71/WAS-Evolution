@@ -1,0 +1,38 @@
+---
+# Privilege escalation on the WAS servers: two targets, one switch.
+#
+#   WebSphere - build, configure, change: install, fix packs, profiles,
+#   cluster, resources, start and stop. As was, the owner of
+#   /usr/IBM/WebSphere9, with ITS OWN PASSWORD:
+#       su - was -c '<the module>'
+#
+#   The system - what only root may do: mount the binaries share, the
+#   directory layout, the AIX packages and user limits (roles binaries_share
+#   and prereqs_os). As root, the way the site's operators reach it - the
+#   connecting account may run "sudo su -", nothing narrower:
+#       sudo su - root -c '<the module>'
+#
+# A task that needs root says so - `vars: {wasevo_become_as: root}` beside its
+# `become: true`. Every other `become: true` of the collection lands on was:
+# WebSphere is never touched as root, so nothing in its tree ends up owned by
+# root.
+#
+# The connecting account itself is the AWX Machine credential's
+# (50_connection.yml). Ansible's sudo method cannot be used: it runs its own
+# command line through sudo, which a "sudo su -" rule refuses; the su method
+# with "sudo su -" as its executable runs exactly what the rule allows.
+
+wasevo_become_as: was
+
+ansible_become_method: su
+ansible_become_user: "{{ 'root' if wasevo_become_as == 'root' else site_was_user }}"
+ansible_become_exe: "{{ 'sudo su -' if wasevo_become_as == 'root' else 'su -' }}"
+
+# was: its password, from the vault (00_site.yml, docs/vault.md).
+# root: what sudo asks the connecting account for - nothing when the sudoers
+# rule is NOPASSWD. This variable outranks the AWX credential's "Privilege
+# Escalation Password", so when sudo does ask, the connecting account's
+# password goes into the vault too, as vault_site_root_become_password.
+ansible_become_password: >-
+  {{ (vault_site_root_become_password | default(''))
+     if wasevo_become_as == 'root' else site_was_password }}

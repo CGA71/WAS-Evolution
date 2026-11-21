@@ -64,6 +64,9 @@
         state: directory
         mode: "{{ binaries_share_mount_point_mode }}"
       become: true
+      # Root, through sudo su -: this task changes the system, not WebSphere.
+      vars:
+        wasevo_become_as: root
       when: not binaries_share_point_stat.stat.exists
 
     - name: Refuse a mount point that is not a directory

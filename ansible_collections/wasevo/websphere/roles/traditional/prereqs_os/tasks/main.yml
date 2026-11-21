@@ -53,6 +53,9 @@
         name: "{{ forge_os_packages[ansible_facts.os_family] }}"
         state: present
       become: true
+      # Root, through sudo su -: this task changes the system, not WebSphere.
+      vars:
+        wasevo_become_as: root
       register: prereqs_packages
       # One retry: a transient mirror failure should not fail a whole workflow
       # node.
@@ -101,6 +104,9 @@
   loop_control:
     label: "{{ item.domain }} {{ item.type }} {{ item.item }}={{ item.value }}"
   become: true
+  # Root, through sudo su -: this task changes the system, not WebSphere.
+  vars:
+    wasevo_become_as: root
   when: ansible_facts.os_family != 'AIX'
   tags: [prereqs, limits]
 
@@ -117,6 +123,9 @@
     mode: "0755"
   loop: "{{ forge_required_dirs }}"
   become: true
+  # Root, through sudo su -: this task changes the system, not WebSphere.
+  vars:
+    wasevo_become_as: root
   tags: [prereqs, dirs]
 
 - name: Summary

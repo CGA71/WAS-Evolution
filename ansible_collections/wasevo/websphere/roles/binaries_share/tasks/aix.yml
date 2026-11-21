@@ -87,6 +87,9 @@
                   account         = false
         backup: true
       become: true
+      # Root, through sudo su -: this task changes the system, not WebSphere.
+      vars:
+        wasevo_become_as: root
       when: not (binaries_share_lsfs.rc == 0 and binaries_share_ours.stdout | trim == '0')
 
 # ---------------------------------------------------------------------------
@@ -103,6 +106,9 @@
          else ('mount -o ' ~ binaries_share_options ~ ' ' ~ binaries_share_host ~ ':'
                ~ binaries_share_export ~ ' ' ~ binaries_share_point) }}
   become: true
+  # Root, through sudo su -: this task changes the system, not WebSphere.
+  vars:
+    wasevo_become_as: root
   register: binaries_share_mount
   changed_when: true
   when: not (binaries_share_mounted | bool)
