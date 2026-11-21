@@ -48,6 +48,12 @@ im_installer_cmd: "{{ im_installer_dir }}/eclipse/tools/imcl"
 # Where it recorded them, on the server:
 #   grep cic.appDataLocation /usr/IBM/WebSphere9/Imcl/eclipse/configuration/config.ini
 #   imcl listInstalledPackages -long     (and the preferences for the shared dir)
+#
+# On this site the registry is was's (checked 21 November 2026): Installation
+# Manager is installed in user mode for was, which owns WAS, IHS and the
+# plugin. Every imcl call therefore runs as was - the become of the WAS
+# servers (group_vars/was_servers.yml) - and never as root, whose registry
+# would be another, empty one.
 im_agent_data_dir: ""
 im_shared_resources_dir: ""
 

@@ -41,6 +41,11 @@ ansible_become_password: >-
 # IBM HTTP Server: the Apache parent process of an instance runs as root, its
 # workers as was (User / Group of its httpd.conf) - as observed on the site's
 # servers. Stopping and starting an instance is therefore root's, through
-# sudo su -: only root can signal the parent. The IHS fix pack itself (imcl)
-# is not concerned by this line.
+# sudo su -: only root can signal the parent.
+#
+# The IHS fix pack itself is NOT root's: the files of IHS and the plugin
+# belong to was, and Installation Manager keeps its registry as was
+# (cic.appDataLocation, checked on the server 21 November 2026). imcl runs as
+# was for every component - WAS, WASDMR and IHSPLG alike; run as root it would
+# read another, empty registry and find nothing installed.
 ihs_control_become_as: root
