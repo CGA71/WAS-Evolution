@@ -7,7 +7,7 @@
 # through templates/imcl/. A change here is a change to what DEV runs.
 #
 # Per server - the key is the server the job runs on (form question
-# "Serveur", or imcl_server on the host in hosts.yml) - the components it
+# "Server", or imcl_server on the host in hosts.yml) - the components it
 # carries:
 #   WAS / WASDMR   profile: the Installation Manager profile id its WAS is
 #                  registered under

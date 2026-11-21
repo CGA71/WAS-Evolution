@@ -11,7 +11,7 @@
 #
 #   ansible-playbook -i inventories/aix <this> -e was_environment=DEV -e imcl_server=DMGR
 #
-# AWX: "WAS AIX - Fix pack: deployment manager", form Env, Serveur. When the fix
+# AWX: "WAS AIX - Fix pack: deployment manager", form Environment, Server. When the fix
 # pack fails, the deployment manager stays stopped: starting binaries a failed
 # update left half-written is not a decision a playbook takes.
 

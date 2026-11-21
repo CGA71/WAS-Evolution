@@ -3,7 +3,7 @@
   "description": "Which batch of application server JVMs to stop or start: the JVMs whose maximum heap is in the batch's range (inventories/aix/group_vars/all/45_jvm_batches.yml).",
   "spec": [
     {
-      "question_name": "Lot de JVM",
+      "question_name": "JVM batch",
       "question_description": "512: -Xmx up to 512 MB. 1024: up to 1024 MB. 1536: up to 1536 MB. 2048: up to 2048 MB. ALL: every JVM of the node, the ones above 2048 MB included. The JVMs of a batch are stopped, or started, all at once. NODEAGENT: the node agent of the node. DMGR: the deployment manager.",
       "variable": "jvm_batch",
       "type": "multiplechoice",

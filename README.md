@@ -488,9 +488,9 @@ The fix pack job **WAS AIX - 2. Fix packs: Installation Manager** has its own fo
 
 | Question | Variable | Answers |
 |---|---|---|
-| Env | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — which environment's configuration to deploy |
-| Composants | `imcl_selected_components` | IHSPLG (IHS instances and their plugins), WAS (WAS ND on a node server), WASDMR (WAS ND on the deployment manager's server) — one or several |
-| Serveur | `imcl_server` | the server as the configuration names it; blank: the host's `imcl_server`, else its inventory name |
+| Environment | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — which environment's configuration to deploy |
+| Components | `imcl_selected_components` | IHSPLG (IHS instances and their plugins), WAS (WAS ND on a node server), WASDMR (WAS ND on the deployment manager's server) — one or several |
+| Server | `imcl_server` | the server as the configuration names it; blank: the host's `imcl_server`, else its inventory name |
 
 **The repository is the guarantor of what each environment runs.** Three places, one mechanism:
 
@@ -1656,7 +1656,7 @@ Three paths, in this order, each with its own stop and start. Each one applies t
 | 2 | **WAS on the nodes** — many JVMs | workflow *WAS AIX - Fix pack WAS by JVM batch* | stop 512 → 1024 → 1536 → 2048 → stop the node agent → WAS (WAS ND + SDK) → start the node agent → start 512 → … → 2048 |
 | 3 | **IHS and the plugin** | job *WAS AIX - Fix pack: IHS and plugin* ([`traditional_fixpack_ihs.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_fixpack_ihs.yml), role [`ihs_fixpack`](ansible_collections/wasevo/websphere/roles/traditional/ihs_fixpack/defaults/main.yml)) | stop every Apache instance → IHSPLG (IHS + plugin + SDK) → start every instance |
 
-The three ask **Env** and **Serveur** (`ci/awx/surveys/fixpack-target.json`); [`ci/awx/apply-fixpack.sh`](ci/awx/apply-fixpack.sh) declares them. When a fix pack fails, what it was applied to stays stopped: starting binaries a failed update left half-written is not a decision a playbook takes.
+The three ask **Environment** and **Server** (`ci/awx/surveys/fixpack-target.json`); [`ci/awx/apply-fixpack.sh`](ci/awx/apply-fixpack.sh) declares them. When a fix pack fails, what it was applied to stays stopped: starting binaries a failed update left half-written is not a decision a playbook takes.
 
 ### JVM batches
 
@@ -2151,9 +2151,9 @@ Le job de fix pack **WAS AIX - 2. Fix packs: Installation Manager** a son propre
 
 | Question | Variable | Réponses |
 |---|---|---|
-| Env | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — la configuration de quel environnement déployer |
-| Composants | `imcl_selected_components` | IHSPLG (instances IHS et leurs plugins), WAS (WAS ND d'un serveur de nœud), WASDMR (WAS ND du serveur du gestionnaire de déploiement) — un ou plusieurs |
-| Serveur | `imcl_server` | le serveur tel que la configuration le nomme ; vide : l'`imcl_server` de l'hôte, sinon son nom d'inventaire |
+| Environment | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — la configuration de quel environnement déployer |
+| Components | `imcl_selected_components` | IHSPLG (instances IHS et leurs plugins), WAS (WAS ND d'un serveur de nœud), WASDMR (WAS ND du serveur du gestionnaire de déploiement) — un ou plusieurs |
+| Server | `imcl_server` | le serveur tel que la configuration le nomme ; vide : l'`imcl_server` de l'hôte, sinon son nom d'inventaire |
 
 **Le dépôt est le garant de ce que chaque environnement exécute.** Trois endroits, un seul mécanisme :
 
@@ -3361,7 +3361,7 @@ Trois chemins, dans cet ordre, chacun avec son arrêt et sa relance. Chacun appl
 | 2 | **WAS sur les nœuds** — beaucoup de JVM | workflow *WAS AIX - Fix pack WAS by JVM batch* | arrêt 512 → 1024 → 1536 → 2048 → arrêt du node agent → WAS (WAS ND + SDK) → démarrage du node agent → démarrage 512 → … → 2048 |
 | 3 | **IHS et le plugin** | job *WAS AIX - Fix pack: IHS and plugin* ([`traditional_fixpack_ihs.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_fixpack_ihs.yml), rôle [`ihs_fixpack`](ansible_collections/wasevo/websphere/roles/traditional/ihs_fixpack/defaults/main.yml)) | arrêt de chaque instance Apache → IHSPLG (IHS + plugin + SDK) → démarrage de chaque instance |
 
-Les trois demandent **Env** et **Serveur** (`ci/awx/surveys/fixpack-target.json`) ; [`ci/awx/apply-fixpack.sh`](ci/awx/apply-fixpack.sh) les déclare. Quand un fix pack échoue, ce à quoi il s'appliquait reste arrêté : démarrer des binaires qu'une mise à jour ratée a laissés à moitié écrits n'est pas une décision qu'un playbook prend.
+Les trois demandent **Environment** et **Server** (`ci/awx/surveys/fixpack-target.json`) ; [`ci/awx/apply-fixpack.sh`](ci/awx/apply-fixpack.sh) les déclare. Quand un fix pack échoue, ce à quoi il s'appliquait reste arrêté : démarrer des binaires qu'une mise à jour ratée a laissés à moitié écrits n'est pas une décision qu'un playbook prend.
 
 ### Les lots de JVM
 

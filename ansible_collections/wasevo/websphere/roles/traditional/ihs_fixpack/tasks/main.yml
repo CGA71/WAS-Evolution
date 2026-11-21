@@ -37,7 +37,7 @@
     fail_msg: >-
       {{ was_environment }} declares no IHS instance for the server
       "{{ _ihs_server }}" in {{ env_config_file | basename }} (component
-      IHSPLG). Answer the form's "Serveur" question with a server of the file,
+      IHSPLG). Answer the form's "Server" question with a server of the file,
       or declare its instances.
     success_msg: "{{ _ihs_server }}: {{ _ihs_instances | join(', ') }}"
 

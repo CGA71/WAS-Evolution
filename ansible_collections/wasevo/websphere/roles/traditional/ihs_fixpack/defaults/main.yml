@@ -7,7 +7,7 @@
 # file is rendered from, so what is stopped is exactly what is updated.
 
 # The server the job runs on, as config/<env>.yml names it - the form's
-# "Serveur" question. Empty: the host's imcl_server, else its inventory name.
+# "Server" question. Empty: the host's imcl_server, else its inventory name.
 imcl_server: ""
 
 # The pid file of an instance, relative to its directory (PidFile in

@@ -13,14 +13,14 @@
 #          -> start the node agent -> start 512 -> 1024 -> 1536 -> 2048
 #      its stop and start nodes being two job templates, launchable alone to
 #      relaunch or restart one batch:
-#        WAS AIX - JVM stop by batch     traditional_jvm_stop.yml   form: Lot de JVM
-#        WAS AIX - JVM start by batch    traditional_jvm_start.yml  form: Lot de JVM
+#        WAS AIX - JVM stop by batch     traditional_jvm_stop.yml   form: JVM batch
+#        WAS AIX - JVM start by batch    traditional_jvm_start.yml  form: JVM batch
 #
 #   3. IBM HTTP Server and its plugin, a job:
 #        WAS AIX - Fix pack: IHS and plugin        traditional_fixpack_ihs.yml
 #        stop the Apache instances -> IHSPLG (IHS + plugin + Java SDK) -> start them
 #
-# The fix pack jobs and the workflow ask Env and Serveur
+# The fix pack jobs and the workflow ask Environment and Server
 # (surveys/fixpack-target.json); each stop and start node of the workflow
 # carries its own batch.
 #

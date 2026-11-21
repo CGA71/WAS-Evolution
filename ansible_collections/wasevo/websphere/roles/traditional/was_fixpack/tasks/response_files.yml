@@ -55,7 +55,7 @@
       {%-   set _ = p.append(was_environment ~ ' declares no server "' ~ _imcl_server ~ '" in '
                              ~ (env_config_file | basename) ~ ' - it declares: '
                              ~ ((_servers.keys() | join(', ')) or 'none') ~ '. Answer the form question'
-                             ~ ' "Serveur", or set imcl_server on the host in hosts.yml, or declare the'
+                             ~ ' "Server", or set imcl_server on the host in hosts.yml, or declare the'
                              ~ ' server in the file.') -%}
       {%- endif -%}
       {{ p }}

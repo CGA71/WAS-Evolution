@@ -10,7 +10,7 @@
 #
 #   ansible-playbook -i inventories/aix <this> -e was_environment=PREPROD -e imcl_server=pp-ihs-01
 #
-# AWX: "WAS AIX - Fix pack: IHS and plugin", form Env, Serveur.
+# AWX: "WAS AIX - Fix pack: IHS and plugin", form Environment, Server.
 
 - name: IHS and plugin - stop, fix pack, start
   hosts: "{{ fixpack_ihs_hosts | default('was_install') }}"
