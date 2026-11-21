@@ -75,13 +75,22 @@ plugin_home: /usr/IBM/Plugins9
 # --- Where the IBM media is staged ----------------------------------------
 # On the binaries share (20_paths.yml). Read only for a new installation.
 
-im_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_im"
-was_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_was90"
+# The site's layout of the share - see 20_paths.yml.
+im_media_dir: "{{ was_install_binaries_base_dir }}/Imcl"
+was_media_dir: "{{ was_install_binaries_base_dir }}/WasND"
 # The "WAS 9.0 Supplements" repository: IHS, the plugin and the WebSphere
 # Customization Tools - one repository for both roles. The Java SDK they need
-# is read from was_media_dir.
-ihs_media_dir: "{{ was_install_binaries_base_dir }}/IBM/install_ihs90"
+# is its own repository here, SdkJava8.
+ihs_media_dir: "{{ was_install_binaries_base_dir }}/Supplement"
 plugin_media_dir: "{{ ihs_media_dir }}"
+ihs_sdk_media_dir: "{{ was_install_binaries_base_dir }}/SdkJava8"
+plugin_sdk_media_dir: "{{ ihs_sdk_media_dir }}"
+
+# ONE fix pack level, not the whole Fixes directory: it holds every level the
+# site ever applied (FP9.0.5.13 ... FP9.0.5.29), and handing them all to
+# imcl updateAll installs the highest one it finds. The level is the one the
+# response files are written for (36_response_files.yml).
+was_fixpack_media_dir: "{{ was_install_binaries_base_dir }}/Fixes/{{ imcl_response_files_level }}"
 
 # --- Free space checked before an install or a fix pack -------------------
 # On the filesystems that receive the binaries, not on /usr/IBM/WebSphere9,

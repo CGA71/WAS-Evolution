@@ -454,9 +454,13 @@ There is no environment group, on purpose: the same server is built as any envir
 | The WAS account (`wasadmin`) with an SSH key and `sudo` | The system administrator | the connection itself |
 | `nofiles`, `nproc` limits | `prereqs_os`, with `chuser` — the AIX equivalent of `/etc/security/limits.d` | `lsuser`, only the attributes that differ are written |
 | `/app`, `/opt/exploit`, sized | JFS2 filesystems (`crfs`) | `forge_preflight`: free space through `df -Pk` |
-| The binaries share on `/mnt/binaries` | `binaries_share` (`binaries_mount.yml`), through sudo; `/etc/filesystems` stanza | `binaries_mount_check.yml` |
+| The binaries share `nfs-server:/export/was90` on `/tmp/wasinst` | `binaries_share` (`binaries_mount.yml`), as root through `sudo su -`; mounted on demand, no `/etc/filesystems` stanza | `binaries_mount_check.yml` |
 
 `ansible_python_interpreter` is `/opt/freeware/bin/python3` (interpreter discovery does not look there), and Ansible's temporary files go under the account's home, because `/tmp` is often small on AIX.
+
+**Root through `sudo su -`.** On this site the connecting account may run `sudo su -` and nothing narrower, which Ansible's `sudo` method does not fit: it sends its own command line to sudo. [`50_connection.yml`](inventories/aix/group_vars/all/50_connection.yml) therefore sets `ansible_become_method: su` with `ansible_become_exe: "sudo su -"`, so every escalation runs as `sudo su - root -c '<module>'` — the operators' own path, and one that works unchanged where an account has full sudo. A sudo password, if one is asked, is the connecting account's: the AWX Machine credential's *Privilege Escalation Password*.
+
+**The share as the site lays it out.** The media is `nfs-server:/export/was90`, mounted on `/tmp/wasinst` — `Imcl`, `WasND`, `Supplement`, `SdkJava8`, then `Fixes/FP9.0.5.<n>/{WAS,SDK,IHSPLG}`. [`25_install_dirs.yml`](inventories/aix/group_vars/all/25_install_dirs.yml) points each install role at its directory, and the fix pack job at **one** level, `Fixes/FP9.0.5.28` (the level of the response files): `Fixes/` holds every level since 9.0.5.13, and `imcl updateAll` given them all would install the highest.
 
 ### The DSI's environments: a family and an instance
 
@@ -2055,9 +2059,13 @@ Pas de groupe d'environnement, volontairement : le même serveur se construit so
 | Le compte WAS (`wasadmin`) avec une clé SSH et `sudo` | L'administrateur système | la connexion elle-même |
 | Limites `nofiles`, `nproc` | `prereqs_os`, avec `chuser` — l'équivalent AIX de `/etc/security/limits.d` | `lsuser` ; seuls les attributs différents sont écrits |
 | `/app`, `/opt/exploit`, dimensionnés | Systèmes de fichiers JFS2 (`crfs`) | `forge_preflight` : espace libre par `df -Pk` |
-| Le partage des binaires sur `/mnt/binaries` | `binaries_share` (`binaries_mount.yml`), par sudo ; stanza `/etc/filesystems` | `binaries_mount_check.yml` |
+| Le partage des binaires `nfs-server:/export/was90` sur `/tmp/wasinst` | `binaries_share` (`binaries_mount.yml`), en root via `sudo su -` ; monté à la demande, sans stanza `/etc/filesystems` | `binaries_mount_check.yml` |
 
 `ansible_python_interpreter` vaut `/opt/freeware/bin/python3` (la découverte d'interpréteur n'y regarde pas), et les fichiers temporaires d'Ansible vont sous le home du compte, car `/tmp` est souvent petit sur AIX.
+
+**Root par `sudo su -`.** Sur ce site, le compte de connexion peut lancer `sudo su -` et rien de plus restreint, ce que la méthode `sudo` d'Ansible ne sait pas faire : elle envoie sa propre ligne de commande à sudo. [`50_connection.yml`](inventories/aix/group_vars/all/50_connection.yml) pose donc `ansible_become_method: su` avec `ansible_become_exe: "sudo su -"` : chaque élévation s'exécute en `sudo su - root -c '<module>'` — le chemin des exploitants, qui fonctionne tel quel là où un compte a sudo complet. Le mot de passe sudo, s'il est demandé, est celui du compte de connexion : le *Privilege Escalation Password* de la credential Machine AWX.
+
+**Le partage tel que le site l'organise.** Les médias sont `nfs-server:/export/was90`, monté sur `/tmp/wasinst` — `Imcl`, `WasND`, `Supplement`, `SdkJava8`, puis `Fixes/FP9.0.5.<n>/{WAS,SDK,IHSPLG}`. [`25_install_dirs.yml`](inventories/aix/group_vars/all/25_install_dirs.yml) pointe chaque rôle d'installation sur son répertoire, et le job de fix packs sur **un seul** niveau, `Fixes/FP9.0.5.28` (celui des fichiers réponse) : `Fixes/` contient tous les niveaux depuis 9.0.5.13, et `imcl updateAll` à qui on les donne tous installerait le plus haut.
 
 ### Les environnements de la DSI : une famille et une instance
 

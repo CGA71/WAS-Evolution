@@ -31,3 +31,7 @@ was_expected_version: "9.0.0.0"
 # offer is what the server gets. Pin it here (e.g. "9.0.5.28") once the site
 # has decided its level.
 was_fixpack_target_version: ""
+
+# The share is mounted on demand, as the site does by hand: no stanza in
+# /etc/filesystems, so a reboot does not try to reach the NIM server.
+binaries_share_persistent: false

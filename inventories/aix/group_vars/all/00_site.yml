@@ -13,9 +13,11 @@
 #   binaries_mount_check.yml  then VERIFIES it: mounted, of this type,
 #                             readable, carrying the media.
 #
-# TO BE REPLACED with the site's export, as <server>:<export>. This is what
-# binaries_mount.yml mounts.
-site_binaries_repository: "nfsserver:/export/binaries"
+# The site's export, as <server>:<export>: the NIM server's WAS 9 media. By
+# hand, the same mount reads, as root:
+#   mount nfs-server:/export/was90 /tmp/wasinst
+# This is what binaries_mount.yml mounts, on was_install_binaries_base_dir.
+site_binaries_repository: "nfs-server:/export/was90"
 # nfs to mount it; jfs2 (a local filesystem) or none: nothing to mount.
 site_binaries_repository_type: nfs
 
