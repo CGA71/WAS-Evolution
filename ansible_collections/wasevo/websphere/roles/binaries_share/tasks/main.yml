@@ -48,12 +48,30 @@
         success_msg: >-
           {{ binaries_share_host }}:{{ binaries_share_export }} on {{ binaries_share_point }}
 
-    - name: The mount point must exist
+    # An existing mount point is left exactly as it is. ansible.builtin.file
+    # with a mode would chmod it - and when the share is already mounted
+    # there, that is the root of the NFS export: its setgid bit and group
+    # write would go, or, under root squashing, the chmod would fail the job.
+    - name: Is the mount point there
+      ansible.builtin.stat:
+        path: "{{ binaries_share_point }}"
+      register: binaries_share_point_stat
+      check_mode: false
+
+    - name: Create the mount point, only when it is missing
       ansible.builtin.file:
         path: "{{ binaries_share_point }}"
         state: directory
         mode: "{{ binaries_share_mount_point_mode }}"
       become: true
+      when: not binaries_share_point_stat.stat.exists
+
+    - name: Refuse a mount point that is not a directory
+      ansible.builtin.assert:
+        that:
+          - binaries_share_point_stat.stat.isdir
+        fail_msg: "{{ binaries_share_point }} exists and is not a directory."
+      when: binaries_share_point_stat.stat.exists
 
     - name: AIX
       ansible.builtin.include_tasks: aix.yml
