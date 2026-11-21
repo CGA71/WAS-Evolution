@@ -6,8 +6,13 @@
 # Installation Manager installs, where, with which features - WAS ND, IBM HTTP
 # Server and the web server plugin, each with its Java 8 SDK.
 #
-# They are kept as they are on the server, in /tmp/wasinst/response_files/,
-# one directory per environment family and one per fix pack level:
+# THIS REPOSITORY IS THEIR SOURCE. They were rebuilt from the copy on the
+# binaries share (/tmp/wasinst/response_files/), which is no longer read: the
+# share carries the installation binaries and the fix packs, the response
+# files are versioned here, and a job that needs them copies the
+# environment's files to the server. A change to a response file is a commit.
+#
+# One directory per environment family and one per fix pack level:
 #
 #   inventories/aix/response_files/
 #     test/FP9.0.5.28/       empty: no response file on the server yet
