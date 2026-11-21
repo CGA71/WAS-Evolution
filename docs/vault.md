@@ -42,7 +42,9 @@ ansible-vault create --vault-id aix@prompt inventories/aix/group_vars/all/90_vau
 vault_site_was_password: "le mot de passe de was"
 ```
 
-**Si `sudo su -` demande un mot de passe** au compte de connexion (règle sudoers sans `NOPASSWD`), ajouter aussi :
+**Sur ce site, c'est tout** : `sudo su -` ne demande aucun mot de passe au compte de connexion (vérifié à la main le 21 novembre 2026), le vault ne contient donc que le mot de passe de `was`.
+
+Seulement si un serveur venait à en demander un (règle sudoers sans `NOPASSWD`), ajouter aussi :
 
 ```yaml
 vault_site_root_become_password: "le mot de passe du compte de connexion"

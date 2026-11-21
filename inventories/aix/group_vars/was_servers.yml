@@ -29,10 +29,11 @@ ansible_become_user: "{{ 'root' if wasevo_become_as == 'root' else site_was_user
 ansible_become_exe: "{{ 'sudo su -' if wasevo_become_as == 'root' else 'su -' }}"
 
 # was: its password, from the vault (00_site.yml, docs/vault.md).
-# root: what sudo asks the connecting account for - nothing when the sudoers
-# rule is NOPASSWD. This variable outranks the AWX credential's "Privilege
-# Escalation Password", so when sudo does ask, the connecting account's
-# password goes into the vault too, as vault_site_root_become_password.
+# root: nothing. On this site "sudo su -" asks the connecting account for no
+# password (checked by hand, 21 November 2026), so the vault holds only was's.
+# Should a server ever ask: this variable outranks the AWX credential's
+# "Privilege Escalation Password", so that password would go into the vault
+# too, as vault_site_root_become_password.
 ansible_become_password: >-
   {{ (vault_site_root_become_password | default(''))
      if wasevo_become_as == 'root' else site_was_password }}
