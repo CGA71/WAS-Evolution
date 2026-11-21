@@ -86,8 +86,8 @@ was_jython_dir: "{{ was_app_base_dir }}/{{ site_jython_dirname }}"
 #   /tmp/wasinst/Fixes/FP9.0.5.<n>/     one directory per fix pack level:
 #                                       WAS/, SDK/<sdk level>/, IHSPLG/
 #   /tmp/wasinst/Fixes/IMCL, Fixes/SDK  Installation Manager and SDK updates
-#   /tmp/wasinst/response_files/        the imcl response files, also kept in
-#                                       this inventory as the templates' reference (36_imcl.yml)
+#   /tmp/wasinst/response_files/        the former imcl response files - no
+#                                       longer read: templates/imcl/ replaces them
 #
 # 25_install_dirs.yml maps each install role onto it.
 #

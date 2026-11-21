@@ -20,9 +20,7 @@
 #                               per kind of component
 #
 # The repository is the guarantor of what is deployed per environment: a
-# change to a server's installation is a commit to config/<env>.yml. The
-# files rebuilt from the server (response_files/) are the reference the
-# templates are checked against in CI (ci/check-imcl-templates.py).
+# change to a server's installation is a commit to config/<env>.yml.
 
 # --------------------------------------------------------------------------
 # The components the form offers, and what each one is made of

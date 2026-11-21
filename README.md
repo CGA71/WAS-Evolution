@@ -502,7 +502,7 @@ The fix pack job **WAS AIX - 2. Fix packs: Installation Manager** has its own fo
 
 The generic role [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) loads `config/<family>.yml` from the answer — `DEV01` reads `dev.yml` — and is meant for the other roles too. The job then renders one file per component, as `was`, 0600, runs `imcl input <file> -repositories <share>/Fixes/<level>/{WAS|IHSPLG},<…>/SDK/<sdk>`, checks with `listInstalledPackages` that every offering is at its level, and removes the file. Job type *Check* renders and shows without running imcl. Launched from the build workflow, with no component chosen, the job keeps its discovery mode (`imcl updateAll`).
 
-The fifteen files rebuilt from the servers stay in [`response_files/`](inventories/aix/response_files/README.md) as the **reference**: the CI job `imcl-templates` ([`ci/check-imcl-templates.py`](ci/check-imcl-templates.py)) renders every server of every environment and compares, profile by profile and offering by offering, with what the server uses. All fifteen match.
+The fifteen files rebuilt from the servers were used once, to prove the templates render exactly what each server used (all fifteen matched), then removed: the repository, not the share, is now the source. They remain in the git history.
 
 ### Building it by hand
 
@@ -2165,7 +2165,7 @@ Le job de fix pack **WAS AIX - 2. Fix packs: Installation Manager** a son propre
 
 Le rôle générique [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) charge `config/<famille>.yml` d'après la réponse — `DEV01` lit `dev.yml` — et servira aux autres rôles. Le job rend ensuite un fichier par composant, en `was`, en 0600, lance `imcl input <fichier> -repositories <partage>/Fixes/<niveau>/{WAS|IHSPLG},<…>/SDK/<sdk>`, vérifie par `listInstalledPackages` que chaque offre est à son niveau, et supprime le fichier. Le Job type *Check* rend et affiche sans lancer imcl. Lancé depuis le workflow de construction, sans composant choisi, le job garde son mode découverte (`imcl updateAll`).
 
-Les quinze fichiers reconstruits depuis les serveurs restent dans [`response_files/`](inventories/aix/response_files/README.md) comme **référence** : le job CI `imcl-templates` ([`ci/check-imcl-templates.py`](ci/check-imcl-templates.py)) rend chaque serveur de chaque environnement et compare, profil par profil et offre par offre, avec ce que le serveur utilise. Les quinze correspondent.
+Les quinze fichiers reconstruits depuis les serveurs ont servi une fois, à prouver que les templates rendent exactement ce que chaque serveur utilisait (les quinze correspondaient), puis ont été supprimés : le dépôt, et non plus le partage, est la source. Ils restent dans l'historique git.
 
 ### Le construire à la main
 

@@ -7,7 +7,7 @@ imcl_level: FP9.0.5.28
 imcl_servers:
 
   # Le serveur du gestionnaire de déploiement (val-dmgr-01_WAS_response_file.xml -
-  # non photographié, déduit : voir response_files/README.md).
+  # non photographié, déduit des autres environnements : à confirmer).
   val-dmgr-01:
     WASDMR:
       profile: Was90Val
