@@ -1646,9 +1646,21 @@ An AWX survey cannot list what is in a cell: its choices are fixed when the temp
 Installing it: run `apply-application-workflows.sh`, launch "Applications - portal" once (the `awx_web` group: the web server in front of AWX), include the rendered `applications.nginx.conf` — or `.httpd.conf` — in that server's configuration, reload it, open `https://<awx>/wasevo/applications/`.
 
 
-## 26. Fix pack by JVM batch: stop, apply, start
+## 26. Fix packs: the deployment manager, WAS by JVM batch, IHS and plugin
 
-A node carries many JVMs. Stopping or starting them all at once is a memory and CPU storm; one at a time takes hours. So they are stopped and started **by batch**: a batch is every application server JVM whose maximum heap falls in a size range, and the JVMs of a batch are handled all at once.
+Three paths, in this order, each with its own stop and start. Each one applies the environment's response file (section 16) for its component — and **the Java SDK goes with it**: every template carries `com.ibm.java.jdk.v8` beside the product, imcl updates both in one `input`, and the job checks both levels afterwards.
+
+| # | What | AWX | Sequence |
+|---|---|---|---|
+| 1 | **The deployment manager** — first, alone | job *WAS AIX - Fix pack: deployment manager* ([`traditional_fixpack_dmgr.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_fixpack_dmgr.yml)) | stop the deployment manager → WASDMR (WAS ND + SDK) → start it |
+| 2 | **WAS on the nodes** — many JVMs | workflow *WAS AIX - Fix pack WAS by JVM batch* | stop 512 → 1024 → 1536 → 2048 → stop the node agent → WAS (WAS ND + SDK) → start the node agent → start 512 → … → 2048 |
+| 3 | **IHS and the plugin** | job *WAS AIX - Fix pack: IHS and plugin* ([`traditional_fixpack_ihs.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_fixpack_ihs.yml), role [`ihs_fixpack`](ansible_collections/wasevo/websphere/roles/traditional/ihs_fixpack/defaults/main.yml)) | stop every Apache instance → IHSPLG (IHS + plugin + SDK) → start every instance |
+
+The three ask **Env** and **Serveur** (`ci/awx/surveys/fixpack-target.json`); [`ci/awx/apply-fixpack.sh`](ci/awx/apply-fixpack.sh) declares them. When a fix pack fails, what it was applied to stays stopped: starting binaries a failed update left half-written is not a decision a playbook takes.
+
+### JVM batches
+
+A node carries many JVMs. Stopping or starting them all at once is a memory and CPU storm; one at a time takes hours. So they are stopped and started **by batch**: a batch is every application server JVM whose maximum heap falls in a size range, handled all at once.
 
 | Batch | JVMs |
 |---|---|
@@ -1656,19 +1668,21 @@ A node carries many JVMs. Stopping or starting them all at once is a memory and 
 | `1024` | ≤ 1024 MB |
 | `1536` | ≤ 1536 MB |
 | `2048` | ≤ 2048 MB |
-| `ALL` | every JVM of the node, those above the last bound included |
+| `ALL` | every application server of the node, those above the last bound included |
+| `NODEAGENT` | the node agent (`stopNode.sh` / `startNode.sh`) |
+| `DMGR` | the deployment manager (`stopManager.sh` / `startManager.sh`) |
 
-The batches are **modifiable** in [`group_vars/all/45_jvm_batches.yml`](inventories/aix/group_vars/all/45_jvm_batches.yml) — add one, move a bound — with the stop and start timeouts and a list of JVMs never touched. A JVM's heap is `-Xmx` in its generic JVM arguments, else its *maximum heap size*, else 256 MB (WAS's default when none is set).
+The size batches are **modifiable** in [`group_vars/all/45_jvm_batches.yml`](inventories/aix/group_vars/all/45_jvm_batches.yml) — add one, move a bound — with the timeouts and a list of JVMs never touched. A JVM's heap is `-Xmx` in its generic JVM arguments, else its *maximum heap size*, else 256 MB.
 
-**How a batch is stopped.** The role [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/defaults/main.yml) reads the node from each profile's own configuration (`setupCmdLine.sh`, `serverindex.xml`, `server.xml`) — no name is composed — and places each application server in its batch; node agents and the deployment manager are never in one. It runs `stopServer.sh` for every JVM of the batch at once; a JVM still alive after `jvm_stop_timeout` (300 s) is **killed**, SIGTERM then SIGKILL after `jvm_kill_grace` (30 s). Starting runs `startServer.sh` the same way and waits for each JVM to be open for e-business. Everything as `was`, which owns the processes — a kill reaches nothing else. A check run reads and reports, and stops nothing.
+The role [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/defaults/main.yml) reads the node from each profile's own configuration (`setupCmdLine.sh`, `serverindex.xml`, `server.xml`) — no name is composed — and runs the stop command of every process of the batch at once; one still alive after `jvm_stop_timeout` (300 s) is **killed**, SIGTERM then SIGKILL after `jvm_kill_grace` (30 s). Starting runs the start command the same way. Everything as `was`, which owns the processes — a kill reaches nothing else.
 
-**Three playbooks, one workflow.** [`traditional_jvm_stop.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_stop.yml) and [`traditional_jvm_start.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_start.yml) take the batch from their form (*Lot de JVM*); the fix pack is the job of section 16. [`ci/awx/apply-batch-workflow.sh`](ci/awx/apply-batch-workflow.sh) declares them in AWX as the workflow **WAS AIX - Fix pack by JVM batch**:
+**WAS AIX - JVM stop by batch** and **WAS AIX - JVM start by batch** ([`traditional_jvm_stop.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_stop.yml), [`traditional_jvm_start.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_start.yml)) are the workflow's nodes, and can be launched alone to relaunch or restart one batch.
 
-```
-stop 512 → stop 1024 → stop 1536 → stop 2048 → fix pack (Env, Composants, Serveur) → start 512 → start 1024 → start 1536 → start 2048
-```
+### IHS instances
 
-Each node is a job template that can be launched alone: restart one batch, or stop and start a batch again, from **WAS AIX - JVM stop by batch** and **WAS AIX - JVM start by batch**. The CI job `jvm-batch` runs the batch script against a fake profile: discovery and heap reading, the stop, the kill of a JVM that ignores it, the start.
+An IHS profile is an Apache instance. The instances of a server are its IHSPLG entries in `config/<env>.yml` — the list the response file is rendered from, so what is stopped is exactly what is updated. Each is stopped with `apachectl -k stop`, killed past `ihs_stop_timeout` (its workers, then the parent), and started with `apachectl -k start`. As `was` by default; an instance on a port below 1024 needs `ihs_control_become_as: root`.
+
+The CI jobs `jvm-batch` run both scripts against fakes: discovery and heap reading, the stop, the kill of a process that ignores it, the start, the node agent, the Apache instances.
 
 ---
 
@@ -3337,9 +3351,21 @@ Un survey AWX ne sait pas lister le contenu d'une cellule : ses choix sont figé
 
 Mise en place : lancer `apply-application-workflows.sh`, lancer une fois « Applications - portal » (le groupe `awx_web` : le serveur web placé devant AWX), inclure le `applications.nginx.conf` — ou `.httpd.conf` — rendu dans la configuration de ce serveur, le recharger, ouvrir `https://<awx>/wasevo/applications/`.
 
-## 26. Fix pack par lot de JVM : arrêter, appliquer, démarrer
+## 26. Fix packs : le gestionnaire de déploiement, WAS par lot de JVM, IHS et plugin
 
-Un nœud porte de nombreuses JVM. Les arrêter ou les démarrer toutes à la fois, c'est une tempête mémoire et CPU ; une par une, c'est des heures. Elles sont donc arrêtées et démarrées **par lot** : un lot, ce sont toutes les JVM de serveurs d'applications dont le heap maximum tombe dans une tranche de taille, et les JVM d'un lot sont traitées en même temps.
+Trois chemins, dans cet ordre, chacun avec son arrêt et sa relance. Chacun applique le fichier réponse de l'environnement (section 16) pour son composant — et **le SDK Java l'accompagne** : chaque template porte `com.ibm.java.jdk.v8` à côté du produit, imcl met à jour les deux dans un seul `input`, et le job vérifie les deux niveaux ensuite.
+
+| # | Quoi | AWX | Enchaînement |
+|---|---|---|---|
+| 1 | **Le gestionnaire de déploiement** — en premier, seul | job *WAS AIX - Fix pack: deployment manager* ([`traditional_fixpack_dmgr.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_fixpack_dmgr.yml)) | arrêt du dmgr → WASDMR (WAS ND + SDK) → démarrage |
+| 2 | **WAS sur les nœuds** — beaucoup de JVM | workflow *WAS AIX - Fix pack WAS by JVM batch* | arrêt 512 → 1024 → 1536 → 2048 → arrêt du node agent → WAS (WAS ND + SDK) → démarrage du node agent → démarrage 512 → … → 2048 |
+| 3 | **IHS et le plugin** | job *WAS AIX - Fix pack: IHS and plugin* ([`traditional_fixpack_ihs.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_fixpack_ihs.yml), rôle [`ihs_fixpack`](ansible_collections/wasevo/websphere/roles/traditional/ihs_fixpack/defaults/main.yml)) | arrêt de chaque instance Apache → IHSPLG (IHS + plugin + SDK) → démarrage de chaque instance |
+
+Les trois demandent **Env** et **Serveur** (`ci/awx/surveys/fixpack-target.json`) ; [`ci/awx/apply-fixpack.sh`](ci/awx/apply-fixpack.sh) les déclare. Quand un fix pack échoue, ce à quoi il s'appliquait reste arrêté : démarrer des binaires qu'une mise à jour ratée a laissés à moitié écrits n'est pas une décision qu'un playbook prend.
+
+### Les lots de JVM
+
+Un nœud porte de nombreuses JVM. Les arrêter ou les démarrer toutes à la fois, c'est une tempête mémoire et CPU ; une par une, c'est des heures. Elles sont donc arrêtées et démarrées **par lot** : un lot, ce sont toutes les JVM de serveurs d'applications dont le heap maximum tombe dans une tranche de taille, traitées en même temps.
 
 | Lot | JVM |
 |---|---|
@@ -3347,16 +3373,18 @@ Un nœud porte de nombreuses JVM. Les arrêter ou les démarrer toutes à la foi
 | `1024` | ≤ 1024 Mo |
 | `1536` | ≤ 1536 Mo |
 | `2048` | ≤ 2048 Mo |
-| `ALL` | toutes les JVM du nœud, y compris celles au-delà de la dernière borne |
+| `ALL` | tous les serveurs d'applications du nœud, y compris au-delà de la dernière borne |
+| `NODEAGENT` | le node agent (`stopNode.sh` / `startNode.sh`) |
+| `DMGR` | le gestionnaire de déploiement (`stopManager.sh` / `startManager.sh`) |
 
-Les lots sont **modifiables** dans [`group_vars/all/45_jvm_batches.yml`](inventories/aix/group_vars/all/45_jvm_batches.yml) — en ajouter un, déplacer une borne — avec les délais d'arrêt et de démarrage et une liste de JVM jamais touchées. Le heap d'une JVM, c'est `-Xmx` dans ses arguments JVM génériques, sinon sa *taille maximale de heap*, sinon 256 Mo (le défaut de WAS quand rien n'est fixé).
+Les lots de taille sont **modifiables** dans [`group_vars/all/45_jvm_batches.yml`](inventories/aix/group_vars/all/45_jvm_batches.yml) — en ajouter un, déplacer une borne — avec les délais et une liste de JVM jamais touchées. Le heap d'une JVM, c'est `-Xmx` dans ses arguments JVM génériques, sinon sa *taille maximale de heap*, sinon 256 Mo.
 
-**Comment un lot est arrêté.** Le rôle [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/defaults/main.yml) lit le nœud dans la configuration de chaque profil (`setupCmdLine.sh`, `serverindex.xml`, `server.xml`) — aucun nom n'est composé — et range chaque serveur d'applications dans son lot ; les node agents et le gestionnaire de déploiement n'y sont jamais. Il lance `stopServer.sh` pour toutes les JVM du lot à la fois ; une JVM encore vivante après `jvm_stop_timeout` (300 s) est **tuée**, SIGTERM puis SIGKILL après `jvm_kill_grace` (30 s). Le démarrage lance `startServer.sh` de la même façon et attend que chaque JVM soit ouverte. Le tout en `was`, propriétaire des processus — un kill n'atteint rien d'autre. Un run en mode Check lit et rapporte, et n'arrête rien.
+Le rôle [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/defaults/main.yml) lit le nœud dans la configuration de chaque profil (`setupCmdLine.sh`, `serverindex.xml`, `server.xml`) — aucun nom n'est composé — et lance la commande d'arrêt de chaque processus du lot à la fois ; un processus encore vivant après `jvm_stop_timeout` (300 s) est **tué**, SIGTERM puis SIGKILL après `jvm_kill_grace` (30 s). Le démarrage lance la commande de démarrage de la même façon. Le tout en `was`, propriétaire des processus — un kill n'atteint rien d'autre.
 
-**Trois playbooks, un workflow.** [`traditional_jvm_stop.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_stop.yml) et [`traditional_jvm_start.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_start.yml) prennent le lot dans leur formulaire (*Lot de JVM*) ; le fix pack est le job de la section 16. [`ci/awx/apply-batch-workflow.sh`](ci/awx/apply-batch-workflow.sh) les déclare dans AWX en un workflow **WAS AIX - Fix pack by JVM batch** :
+**WAS AIX - JVM stop by batch** et **WAS AIX - JVM start by batch** ([`traditional_jvm_stop.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_stop.yml), [`traditional_jvm_start.yml`](ansible_collections/wasevo/websphere/playbooks/traditional_jvm_start.yml)) sont les nœuds du workflow, et se lancent seuls pour relancer ou redémarrer un lot.
 
-```
-arrêt 512 → arrêt 1024 → arrêt 1536 → arrêt 2048 → fix pack (Env, Composants, Serveur) → démarrage 512 → démarrage 1024 → démarrage 1536 → démarrage 2048
-```
+### Les instances IHS
 
-Chaque nœud est un job template lançable seul : relancer un lot, ou arrêter puis redémarrer un lot, depuis **WAS AIX - JVM stop by batch** et **WAS AIX - JVM start by batch**. Le job CI `jvm-batch` exécute le script de lot contre un faux profil : découverte et lecture du heap, l'arrêt, le kill d'une JVM qui l'ignore, le démarrage.
+Un profil IHS est une instance Apache. Les instances d'un serveur sont ses entrées IHSPLG dans `config/<env>.yml` — la liste d'où le fichier réponse est rendu : ce qui est arrêté est exactement ce qui est mis à jour. Chacune est arrêtée par `apachectl -k stop`, tuée au-delà de `ihs_stop_timeout` (ses workers, puis le parent), et démarrée par `apachectl -k start`. En `was` par défaut ; une instance sur un port inférieur à 1024 demande `ihs_control_become_as: root`.
+
+Le job CI `jvm-batch` exécute les deux scripts contre des simulacres : découverte et lecture du heap, l'arrêt, le kill d'un processus qui l'ignore, le démarrage, le node agent, les instances Apache.

@@ -1,0 +1,20 @@
+---
+# IBM HTTP Server and its plugin, on one server.
+#
+#   stop every Apache instance -> fix pack IHSPLG -> start every instance
+#
+# The instances - an IHS profile is an Apache instance - are the server's
+# IHSPLG entries in its environment's configuration (config/<env>.yml): what
+# is stopped is exactly what is updated. IHS and the plugin are updated
+# together, with the Java SDK they carry (templates/imcl/ihsplg.xml.j2).
+#
+#   ansible-playbook -i inventories/aix <this> -e was_environment=PREPROD -e imcl_server=pp-ihs-01
+#
+# AWX: "WAS AIX - Fix pack: IHS and plugin", form Env, Serveur.
+
+- name: IHS and plugin - stop, fix pack, start
+  hosts: "{{ fixpack_ihs_hosts | default('was_install') }}"
+  gather_facts: true
+
+  roles:
+    - role: wasevo.websphere.traditional.ihs_fixpack

@@ -1,0 +1,31 @@
+---
+# The IHS and plugin fix pack of one server, around its Apache instances.
+#
+# An IHS profile is an Apache instance: its own directory, its own apachectl,
+# its own pid file. The instances of the server are the IHSPLG entries of its
+# environment's configuration (config/<env>.yml) - the same list the response
+# file is rendered from, so what is stopped is exactly what is updated.
+
+# The server the job runs on, as config/<env>.yml names it - the form's
+# "Serveur" question. Empty: the host's imcl_server, else its inventory name.
+imcl_server: ""
+
+# The pid file of an instance, relative to its directory (PidFile in
+# conf/httpd.conf).
+ihs_pid_file: logs/httpd.pid
+
+# Seconds apachectl -k stop gets before the instance is killed - its workers
+# then the parent, SIGTERM then SIGKILL after ihs_kill_grace - and seconds an
+# instance gets to start.
+ihs_stop_timeout: 60
+ihs_kill_grace: 15
+ihs_start_timeout: 60
+
+# Who stops and starts the instances. was by default, like everything of
+# WebSphere. An instance listening below 1024 - port 80, 443 - must be started
+# by root, which then hands its workers to the User of httpd.conf: set root
+# for a server that has one.
+ihs_control_become_as: was
+
+# Where the control script is put on the server.
+ihs_control_script: "{{ was_data_base_dir }}/ihs_control.sh"

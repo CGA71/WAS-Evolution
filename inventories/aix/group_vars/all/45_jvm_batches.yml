@@ -14,7 +14,7 @@
 #
 # Modifiable here, and only here: add a batch, move a bound, rename one. The
 # form's "Lot de JVM" choices (ci/awx/surveys/jvm-batch.json) and the batch
-# workflow's nodes (ci/awx/apply-batch-workflow.sh) follow the names - change
+# workflow's nodes (ci/awx/apply-fixpack.sh) follow the names - change
 # both when a name changes. Everything else of the mechanism is
 # roles/traditional/jvm_batch.
 jvm_batches:

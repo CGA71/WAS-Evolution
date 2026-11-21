@@ -1,0 +1,41 @@
+---
+# The deployment manager's binaries: the FIRST to be updated, on their own.
+#
+#   stop the deployment manager -> fix pack WASDMR -> start it
+#
+# WASDMR is WAS ND and its Java SDK, from the environment's response file
+# (config/<env>.yml, templates/imcl/was.xml.j2) - the SDK is updated with WAS,
+# in the same imcl input, and checked after it. Every node of the cell is
+# updated after its deployment manager, never before: a deployment manager
+# older than its nodes cannot manage them.
+#
+#   ansible-playbook -i inventories/aix <this> -e was_environment=DEV -e imcl_server=DMGR
+#
+# AWX: "WAS AIX - Fix pack: deployment manager", form Env, Serveur. When the fix
+# pack fails, the deployment manager stays stopped: starting binaries a failed
+# update left half-written is not a decision a playbook takes.
+
+- name: The deployment manager - stop, fix pack, start
+  hosts: "{{ fixpack_dmgr_hosts | default('dmgr') }}"
+  gather_facts: true
+
+  tasks:
+    - name: Stop the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.jvm_batch
+      vars:
+        jvm_batch_action: stop
+        jvm_batch: DMGR
+
+    - name: Fix pack WASDMR - WAS ND and its Java SDK
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.was_fixpack
+      vars:
+        imcl_selected_components: [WASDMR]
+
+    - name: Start the deployment manager
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.jvm_batch
+      vars:
+        jvm_batch_action: start
+        jvm_batch: DMGR

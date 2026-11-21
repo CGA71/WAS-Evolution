@@ -12,7 +12,7 @@
 # Everything as the WAS account.
 #
 # ONE PLAYBOOK, ONE JOB TEMPLATE, a batch per launch: the AWX workflow
-# "WAS AIX - Fix pack by JVM batch" runs it once per batch, and any batch can
+# "WAS AIX - Fix pack WAS by JVM batch" runs it once per batch, and any batch can
 # be relaunched alone from its job template.
 
 - name: Stop a batch of JVMs

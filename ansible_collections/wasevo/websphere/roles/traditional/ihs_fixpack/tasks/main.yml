@@ -1,0 +1,106 @@
+---
+# Stop the server's Apache instances, apply the IHSPLG fix pack, start them.
+#
+#   1. the environment's configuration says which instances the server has;
+#   2. every instance is stopped at once - apachectl -k stop, killed past
+#      ihs_stop_timeout;
+#   3. IHS and the plugin are updated from the rendered response file
+#      (was_fixpack, tasks/response_files.yml, component IHSPLG), which also
+#      updates the Java SDK they carry;
+#   4. every instance is started again, and must be running.
+#
+# When the fix pack fails, the instances stay stopped: starting binaries a
+# failed update left half-written is not a decision a playbook takes.
+
+- name: IHS fix pack - resolve the model and the environment
+  ansible.builtin.include_role:
+    name: wasevo.websphere.model
+
+- name: IHS fix pack - load the environment's configuration
+  ansible.builtin.include_role:
+    name: wasevo.websphere.env_config
+
+- name: IHS fix pack - the server's instances
+  ansible.builtin.set_fact:
+    _ihs_server: "{{ imcl_server | default('', true) or inventory_hostname }}"
+    _ihs_instances: >-
+      {%- set out = [] -%}
+      {%- set srv = imcl_server | default('', true) or inventory_hostname -%}
+      {%- for i in ((imcl_servers | default({}))[srv] | default({})).IHSPLG | default([]) -%}
+      {%-   set _ = out.append(i.location | default(imcl_ihs_base ~ '/' ~ (i.site | default('') | upper))) -%}
+      {%- endfor -%}{{ out }}
+
+- name: IHS fix pack - the server must have IHS instances in the configuration
+  ansible.builtin.assert:
+    that:
+      - _ihs_instances | length > 0
+    fail_msg: >-
+      {{ was_environment }} declares no IHS instance for the server
+      "{{ _ihs_server }}" in {{ env_config_file | basename }} (component
+      IHSPLG). Answer the form's "Serveur" question with a server of the file,
+      or declare its instances.
+    success_msg: "{{ _ihs_server }}: {{ _ihs_instances | join(', ') }}"
+
+- name: IHS fix pack - the control script, on the server
+  ansible.builtin.copy:
+    src: ihs_control.sh
+    dest: "{{ ihs_control_script }}"
+    mode: "0700"
+  become: true
+  check_mode: false
+
+- name: IHS fix pack - the instances now
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', ihs_control_script, 'status'] + _ihs_instances }}"
+  environment: "{{ _ihs_env }}"
+  register: _ihs_before
+  changed_when: false
+  check_mode: false
+  become: true
+  vars:
+    wasevo_become_as: "{{ ihs_control_become_as }}"
+
+- name: IHS fix pack - report
+  ansible.builtin.debug:
+    msg: "{{ _ihs_before.stdout_lines }}"
+
+- name: IHS fix pack - stop, update, start
+  when: not ansible_check_mode
+  block:
+
+    - name: IHS fix pack - stop every instance
+      ansible.builtin.command:
+        argv: "{{ ['/bin/sh', ihs_control_script, 'stop'] + _ihs_instances }}"
+      environment: "{{ _ihs_env }}"
+      register: _ihs_stop
+      changed_when: _ihs_stop.stdout is search('[|](stopped|killed)[|]')
+      failed_when: _ihs_stop.rc != 0 or _ihs_stop.stdout is search('[|]STILL-RUNNING[|]')
+      become: true
+      vars:
+        wasevo_become_as: "{{ ihs_control_become_as }}"
+
+    - name: IHS fix pack - stopped
+      ansible.builtin.debug:
+        msg: "{{ _ihs_stop.stdout_lines }}"
+
+    - name: IHS fix pack - update IHS and the plugin
+      ansible.builtin.include_role:
+        name: wasevo.websphere.traditional.was_fixpack
+        tasks_from: response_files
+      vars:
+        imcl_selected_components: [IHSPLG]
+
+    - name: IHS fix pack - start every instance
+      ansible.builtin.command:
+        argv: "{{ ['/bin/sh', ihs_control_script, 'start'] + _ihs_instances }}"
+      environment: "{{ _ihs_env }}"
+      register: _ihs_start
+      changed_when: _ihs_start.stdout is search('[|]started[|]')
+      failed_when: _ihs_start.rc != 0 or _ihs_start.stdout is search('[|]FAILED[|]')
+      become: true
+      vars:
+        wasevo_become_as: "{{ ihs_control_become_as }}"
+
+    - name: IHS fix pack - started
+      ansible.builtin.debug:
+        msg: "{{ _ihs_start.stdout_lines }}"

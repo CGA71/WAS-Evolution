@@ -1,0 +1,7 @@
+---
+# What the control script reads, from the role's settings.
+_ihs_env:
+  IHS_PID_FILE: "{{ ihs_pid_file }}"
+  IHS_STOP_TIMEOUT: "{{ ihs_stop_timeout }}"
+  IHS_KILL_GRACE: "{{ ihs_kill_grace }}"
+  IHS_START_TIMEOUT: "{{ ihs_start_timeout }}"

@@ -17,8 +17,17 @@ jvm_batches:
   - {name: "1536", max_xmx_mb: 1536}
   - {name: "2048", max_xmx_mb: 2048}
 
-# The batch this run acts on: one of the names above, or ALL - every JVM of
-# the node, the ones above the last bound included. Asked by the form.
+# Two batches that are not sizes: the node agent of the node, and the
+# deployment manager. They are stopped after the application servers and
+# started before them, with their own commands (stopNode.sh, stopManager.sh).
+# Never in a size batch, never in ALL.
+jvm_special_batches:
+  NODEAGENT: NODE_AGENT
+  DMGR: DEPLOYMENT_MANAGER
+
+# The batch this run acts on: one of the names above, ALL - every application
+# server of the node, the ones above the last bound included - NODEAGENT or
+# DMGR. Asked by the form.
 jvm_batch: ""
 
 # stop or start - set by the playbook (traditional_jvm_stop.yml,

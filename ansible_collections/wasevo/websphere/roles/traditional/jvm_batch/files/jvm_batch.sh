@@ -1,13 +1,17 @@
 #!/bin/sh
-# Stop or start WAS application server JVMs, a batch at a time, in parallel.
+# Stop or start WAS processes: application server JVMs a batch at a time, in
+# parallel - and the node agent, and the deployment manager.
 # Run as the account the JVMs run as (was) - never root: a kill reaches only
 # that account's processes, which is exactly the set this script may touch.
 #
 #   jvm_batch.sh discover
-#       one line per application server of every profile under
-#       $WAS_PROFILES_DIR:  profile|cell|node|server|xmx_mb|state|pid
+#       one line per process of every profile under $WAS_PROFILES_DIR:
+#       profile|cell|node|server|xmx_mb|state|pid|type
+#       type: APPLICATION_SERVER, NODE_AGENT, DEPLOYMENT_MANAGER (xmx 0)
 #   jvm_batch.sh stop  <profile>:<server> ...
-#       stopServer.sh for each, all at once; a JVM still alive after
+#       the stop command of each, all at once - stopServer.sh <server>,
+#       stopNode.sh for nodeagent, stopManager.sh for dmgr, the names WAS
+#       itself gives those two; a process still alive after
 #       $JVM_STOP_TIMEOUT seconds gets SIGTERM, then SIGKILL after
 #       $JVM_KILL_GRACE seconds.  One line each:  server|stopped|killed|...
 #   jvm_batch.sh start <profile>:<server> ...
@@ -68,26 +72,45 @@ discover() {
         idx="$prof/config/cells/$cell/nodes/$node/serverindex.xml"
         [ -f "$idx" ] || continue
         # serverEntries are one line each; their attributes in any order.
-        grep '<serverEntries' "$idx" | grep 'serverType="APPLICATION_SERVER"' \
-          | sed -n 's/.*serverName="\([^"]*\)".*/\1/p' | while read -r srv; do
-            sx="$prof/config/cells/$cell/nodes/$node/servers/$srv/server.xml"
-            [ -f "$sx" ] || continue
+        grep '<serverEntries' "$idx" | while read -r entry; do
+            srv=$(printf '%s\n' "$entry" | sed -n 's/.*serverName="\([^"]*\)".*/\1/p')
+            typ=$(printf '%s\n' "$entry" | sed -n 's/.*serverType="\([^"]*\)".*/\1/p')
+            case "$typ" in
+                APPLICATION_SERVER|NODE_AGENT|DEPLOYMENT_MANAGER) ;;
+                *) continue ;;
+            esac
+            xmx=0
+            if [ "$typ" = APPLICATION_SERVER ]; then
+                sx="$prof/config/cells/$cell/nodes/$node/servers/$srv/server.xml"
+                [ -f "$sx" ] || continue
+                xmx=$(xmx_of "$sx")
+            fi
             pid=$(pid_of "$prof" "$srv")
             state=stopped; [ -n "$pid" ] && state=running
-            echo "$prof|$cell|$node|$srv|$(xmx_of "$sx")|$state|$pid"
+            echo "$prof|$cell|$node|$srv|$xmx|$state|$pid|$typ"
         done
     done
+}
+
+# The command that stops or starts a process: the node agent and the
+# deployment manager have their own, under the names WAS gives them.
+control() {
+    case "$2" in
+        nodeagent) echo "$1/bin/${3}Node.sh" ;;
+        dmgr)      echo "$1/bin/${3}Manager.sh" ;;
+        *)         echo "$1/bin/${3}Server.sh $2" ;;
+    esac
 }
 
 stop_one() {
     prof="$1"; srv="$2"
     pid=$(pid_of "$prof" "$srv")
     if [ -z "$pid" ]; then echo "$srv|already-stopped|"; return; fi
+    cmd=$(control "$prof" "$srv" stop)
     if [ -n "$WAS_STOP_USER" ]; then
-        "$prof/bin/stopServer.sh" "$srv" -username "$WAS_STOP_USER" -password "$WAS_STOP_PASSWORD" \
-            > "$WORK/$srv.stop.log" 2>&1 &
+        $cmd -username "$WAS_STOP_USER" -password "$WAS_STOP_PASSWORD" > "$WORK/$srv.stop.log" 2>&1 &
     else
-        "$prof/bin/stopServer.sh" "$srv" > "$WORK/$srv.stop.log" 2>&1 &
+        $cmd > "$WORK/$srv.stop.log" 2>&1 &
     fi
     client=$!
     t=0
@@ -122,7 +145,7 @@ start_one() {
     prof="$1"; srv="$2"
     pid=$(pid_of "$prof" "$srv")
     if [ -n "$pid" ]; then echo "$srv|already-running|$pid"; return; fi
-    "$prof/bin/startServer.sh" "$srv" -timeout "${JVM_START_TIMEOUT:-600}" > "$WORK/$srv.start.log" 2>&1
+    $(control "$prof" "$srv" start) -timeout "${JVM_START_TIMEOUT:-600}" > "$WORK/$srv.start.log" 2>&1
     rc=$?
     pid=$(pid_of "$prof" "$srv")
     if [ "$rc" -eq 0 ] && [ -n "$pid" ]; then

@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
-# Declare, in AWX, the fix pack by JVM batch: two job templates and one
-# workflow.
+# Declare, in AWX, the fix packs of the site - three paths, in this order:
 #
-#   WAS AIX - JVM stop by batch     traditional_jvm_stop.yml   form: Lot de JVM
-#   WAS AIX - JVM start by batch    traditional_jvm_start.yml  form: Lot de JVM
+#   1. the deployment manager, FIRST, a job of its own:
+#        WAS AIX - Fix pack: deployment manager    traditional_fixpack_dmgr.yml
+#        stop the deployment manager -> WASDMR (WAS ND + Java SDK) -> start it
 #
-#   WAS AIX - Fix pack by JVM batch, a workflow:
+#   2. WAS on the nodes, a workflow - many JVMs to stop and start:
+#        WAS AIX - Fix pack WAS by JVM batch
+#        stop 512 -> 1024 -> 1536 -> 2048 -> stop the node agent
+#          -> WAS AIX - 2. Fix packs: Installation Manager, component WAS
+#             (WAS ND + Java SDK)
+#          -> start the node agent -> start 512 -> 1024 -> 1536 -> 2048
+#      its stop and start nodes being two job templates, launchable alone to
+#      relaunch or restart one batch:
+#        WAS AIX - JVM stop by batch     traditional_jvm_stop.yml   form: Lot de JVM
+#        WAS AIX - JVM start by batch    traditional_jvm_start.yml  form: Lot de JVM
 #
-#     stop 512 -> stop 1024 -> stop 1536 -> stop 2048
-#       -> WAS AIX - 2. Fix packs: Installation Manager
-#       -> start 512 -> start 1024 -> start 1536 -> start 2048
+#   3. IBM HTTP Server and its plugin, a job:
+#        WAS AIX - Fix pack: IHS and plugin        traditional_fixpack_ihs.yml
+#        stop the Apache instances -> IHSPLG (IHS + plugin + Java SDK) -> start them
 #
-# The workflow's form is the fix pack's (surveys/fixpack-imcl.json: Env,
-# Composants, Serveur); each stop and start node carries its own batch. Every
-# node is a job template that can also be launched alone - relaunch one batch,
-# or restart a batch, from its template's form.
+# The fix pack jobs and the workflow ask Env and Serveur
+# (surveys/fixpack-target.json); each stop and start node of the workflow
+# carries its own batch.
 #
-#   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-batch-workflow.sh          apply
-#   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-batch-workflow.sh --show   the graph
+#   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-fixpack.sh          apply
+#   AWX_API=https://<awx>/api/v2 bash ci/awx/apply-fixpack.sh --show   the workflow
 #
 # Run it after apply-cell-workflow.sh, which creates the inventory and the fix
 # pack template. The batch names are JVM_BATCHES below, the same as
@@ -30,7 +38,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API="${AWX_API:-https://awx.example.internal/api/v2}"
 AWX_USER="${AWX_USER:-admin}"
-WORKFLOW="${AWX_BATCH_WORKFLOW:-WAS AIX - Fix pack by JVM batch}"
+WORKFLOW="${AWX_BATCH_WORKFLOW:-WAS AIX - Fix pack WAS by JVM batch}"
 PROJECT="${AWX_PROJECT:-WAS Evolution}"
 INVENTORY="${AWX_CELL_INVENTORY:-WAS AIX}"
 MACHINE_CRED="${AWX_MACHINE_CRED:-ServeurAIX (ansible)}"
@@ -39,6 +47,8 @@ VAULT_CRED="${AWX_VAULT_CRED:-WAS AIX vault}"
 FIXPACK_JT="WAS AIX - 2. Fix packs: Installation Manager"
 STOP_JT="WAS AIX - JVM stop by batch"
 START_JT="WAS AIX - JVM start by batch"
+DMGR_JT="WAS AIX - Fix pack: deployment manager"
+IHS_JT="WAS AIX - Fix pack: IHS and plugin"
 JVM_BATCHES=(512 1024 1536 2048)
 COL=ansible_collections/wasevo/websphere/playbooks
 
@@ -172,26 +182,29 @@ form() {
     ok "$label: form $(basename "$spec")"
 }
 
+# name, playbook, form, extra vars
 make_jt() {
-    local name="$1" playbook="$2" id
+    local name="$1" playbook="$2" spec="$3" extra="$4" id
     py 'import json,sys
-name, playbook, inv, proj, ee = sys.argv[1:6]
+name, playbook, inv, proj, ee, extra = sys.argv[1:7]
 b = {"name": name, "job_type": "run", "inventory": int(inv), "project": int(proj),
      "playbook": playbook, "become_enabled": True, "verbosity": 1, "timeout": 7200,
      "ask_job_type_on_launch": True, "ask_variables_on_launch": True,
-     "extra_vars": "---\njvm_hosts: nodeagents\n"}
+     "extra_vars": "---\n%s\n" % extra}
 if ee:
     b["execution_environment"] = int(ee)
-print(json.dumps(b))' "$name" "$COL/$playbook" "$INV_ID" "$PROJECT_ID" "$EE_ID" > "$BODY"
+print(json.dumps(b))' "$name" "$COL/$playbook" "$INV_ID" "$PROJECT_ID" "$EE_ID" "$extra" > "$BODY"
     id="$(upsert job_templates "$name")"
     attach_cred "$id" "$MACHINE_CRED_ID"
     attach_cred "$id" "$VAULT_CRED_ID"
     attach_cred "$id" "$WAS_CRED_ID"
-    form "job_templates/$id" "$HERE/surveys/jvm-batch.json" "$name" >&2
+    form "job_templates/$id" "$HERE/surveys/$spec" "$name" >&2
     printf '%s' "$id"
 }
-STOP_ID="$(make_jt "$STOP_JT" traditional_jvm_stop.yml)"
-START_ID="$(make_jt "$START_JT" traditional_jvm_start.yml)"
+STOP_ID="$(make_jt "$STOP_JT" traditional_jvm_stop.yml jvm-batch.json "jvm_hosts: nodeagents")"
+START_ID="$(make_jt "$START_JT" traditional_jvm_start.yml jvm-batch.json "jvm_hosts: nodeagents")"
+make_jt "$DMGR_JT" traditional_fixpack_dmgr.yml fixpack-target.json "fixpack_dmgr_hosts: dmgr" >/dev/null
+make_jt "$IHS_JT" traditional_fixpack_ihs.yml fixpack-target.json "fixpack_ihs_hosts: was_install" >/dev/null
 attach_cred "$FIXPACK_ID" "$VAULT_CRED_ID"
 
 # ---------------------------------------------------------------------------
@@ -199,11 +212,12 @@ say "Workflow"
 # ---------------------------------------------------------------------------
 py 'import json,sys
 print(json.dumps({"name": sys.argv[1], "organization": int(sys.argv[2]), "inventory": int(sys.argv[3]),
-  "description": "Stop the JVMs batch by batch, apply the fix pack from the environment configuration, "
-                 "start them batch by batch.",
+  "description": "WAS on the nodes: stop the JVMs batch by batch and the node agent, apply the WAS "
+                 "fix pack (WAS ND and its Java SDK) from the environment configuration, start the node "
+                 "agent and the JVMs batch by batch.",
   "ask_variables_on_launch": True}))' "$WORKFLOW" "$ORG_ID" "$INV_ID" > "$BODY"
 WF_ID="$(upsert workflow_job_templates "$WORKFLOW")"
-form "workflow_job_templates/$WF_ID" "$HERE/surveys/fixpack-imcl.json" "workflow \"$WORKFLOW\""
+form "workflow_job_templates/$WF_ID" "$HERE/surveys/fixpack-target.json" "workflow \"$WORKFLOW\""
 
 # The nodes are rebuilt from the list below every time: the same template
 # appears once per batch, so a node cannot be found by its template alone, and
@@ -214,14 +228,15 @@ for n in $(api GET "/workflow_job_templates/$WF_ID/workflow_nodes/?page_size=200
     api DELETE "/workflow_job_template_nodes/$n/" >/dev/null || die "could not remove node $n"
 done
 
+# extra: the node's own variables, as JSON
 add_node() {
-    local jt="$1" ident="$2" batch="$3"
+    local jt="$1" ident="$2" extra="$3"
     py 'import json,sys
-jt, ident, batch = sys.argv[1:4]
+jt, ident, extra = sys.argv[1:4]
 b = {"unified_job_template": int(jt), "identifier": ident}
-if batch:
-    b["extra_data"] = {"jvm_batch": batch}
-print(json.dumps(b))' "$jt" "$ident" "$batch" > "$BODY"
+if extra:
+    b["extra_data"] = json.loads(extra)
+print(json.dumps(b))' "$jt" "$ident" "$extra" > "$BODY"
     api POST "/workflow_job_templates/$WF_ID/workflow_nodes/" --data-binary "@$BODY" \
         | py 'import sys,json
 d = json.load(sys.stdin)
@@ -230,13 +245,18 @@ if "id" not in d:
 print(d["id"])'
 }
 
+# The application servers batch by batch, then the node agent: a WAS fix pack
+# needs every process of the node stopped. Started again in the reverse
+# order: the node agent first, so each JVM finds it.
 CHAIN=()
 for b in "${JVM_BATCHES[@]}"; do
-    CHAIN+=("$(add_node "$STOP_ID" "stop-$b" "$b")")
+    CHAIN+=("$(add_node "$STOP_ID" "stop-$b" "{\"jvm_batch\": \"$b\"}")")
 done
-CHAIN+=("$(add_node "$FIXPACK_ID" "fixpack" "")")
+CHAIN+=("$(add_node "$STOP_ID" "stop-nodeagent" '{"jvm_batch": "NODEAGENT"}')")
+CHAIN+=("$(add_node "$FIXPACK_ID" "fixpack-was" '{"imcl_selected_components": ["WAS"]}')")
+CHAIN+=("$(add_node "$START_ID" "start-nodeagent" '{"jvm_batch": "NODEAGENT"}')")
 for b in "${JVM_BATCHES[@]}"; do
-    CHAIN+=("$(add_node "$START_ID" "start-$b" "$b")")
+    CHAIN+=("$(add_node "$START_ID" "start-$b" "{\"jvm_batch\": \"$b\"}")")
 done
 prev=""
 for node in "${CHAIN[@]}"; do
@@ -246,7 +266,7 @@ for node in "${CHAIN[@]}"; do
     fi
     prev="$node"
 done
-ok "${#CHAIN[@]} nodes: stop ${JVM_BATCHES[*]} -> fix pack -> start ${JVM_BATCHES[*]}"
+ok "${#CHAIN[@]} nodes: stop ${JVM_BATCHES[*]} NODEAGENT -> fix pack WAS -> start NODEAGENT ${JVM_BATCHES[*]}"
 
 say "Done"
 printf '   Launch it in AWX:\n     %s\n' \

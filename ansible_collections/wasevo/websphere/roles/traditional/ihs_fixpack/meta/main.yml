@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: ihs_fixpack
+  author: neo
+  description: >-
+    Apply the IHS and plugin fix pack of a server: stop its Apache instances,
+    update IHS and the plugin from the environment's response file, start the
+    instances again.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+dependencies: []
