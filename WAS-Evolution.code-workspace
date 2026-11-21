@@ -34,17 +34,7 @@
 		],
 		"files.trimTrailingWhitespace": true,
 		"files.insertFinalNewline": true,
-		"files.eol": "\n",
-		"mcp": {
-			"servers": {
-				"WinDbg": {
-					"type": "stdio",
-					"command": "C:/Tools/DbgX.Mcp.Proxy.exe",
-					"args": []
-				}
-			},
-			"inputs": []
-		}
+		"files.eol": "\n"
 	},
 	"extensions": {
 		"recommendations": [
