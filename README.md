@@ -1680,7 +1680,7 @@ The role [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jv
 
 ### IHS instances
 
-An IHS profile is an Apache instance. The instances of a server are its IHSPLG entries in `config/<env>.yml` — the list the response file is rendered from, so what is stopped is exactly what is updated. Each is stopped with `apachectl -k stop`, killed past `ihs_stop_timeout` (its workers, then the parent), and started with `apachectl -k start`. As `was` by default; an instance on a port below 1024 needs `ihs_control_become_as: root`.
+An IHS profile is an Apache instance. The instances of a server are its IHSPLG entries in `config/<env>.yml` — the list the response file is rendered from, so what is stopped is exactly what is updated. Each is stopped with `apachectl -k stop`, killed past `ihs_stop_timeout` (its workers, then the parent), and started with `apachectl -k start`. As **root** on this site (`ihs_control_become_as: root`, [`group_vars/was_servers.yml`](inventories/aix/group_vars/was_servers.yml)): the Apache parent process runs as root and its workers as `was`, so only root can signal it.
 
 The CI jobs `jvm-batch` run both scripts against fakes: discovery and heap reading, the stop, the kill of a process that ignores it, the start, the node agent, the Apache instances.
 
@@ -3385,6 +3385,6 @@ Le rôle [`jvm_batch`](ansible_collections/wasevo/websphere/roles/traditional/jv
 
 ### Les instances IHS
 
-Un profil IHS est une instance Apache. Les instances d'un serveur sont ses entrées IHSPLG dans `config/<env>.yml` — la liste d'où le fichier réponse est rendu : ce qui est arrêté est exactement ce qui est mis à jour. Chacune est arrêtée par `apachectl -k stop`, tuée au-delà de `ihs_stop_timeout` (ses workers, puis le parent), et démarrée par `apachectl -k start`. En `was` par défaut ; une instance sur un port inférieur à 1024 demande `ihs_control_become_as: root`.
+Un profil IHS est une instance Apache. Les instances d'un serveur sont ses entrées IHSPLG dans `config/<env>.yml` — la liste d'où le fichier réponse est rendu : ce qui est arrêté est exactement ce qui est mis à jour. Chacune est arrêtée par `apachectl -k stop`, tuée au-delà de `ihs_stop_timeout` (ses workers, puis le parent), et démarrée par `apachectl -k start`. En **root** sur ce site (`ihs_control_become_as: root`, [`group_vars/was_servers.yml`](inventories/aix/group_vars/was_servers.yml)) : le processus Apache parent tourne en root et ses workers en `was`, seul root peut donc le signaler.
 
 Le job CI `jvm-batch` exécute les deux scripts contre des simulacres : découverte et lecture du heap, l'arrêt, le kill d'un processus qui l'ignore, le démarrage, le node agent, les instances Apache.

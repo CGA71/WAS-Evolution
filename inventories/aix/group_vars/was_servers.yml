@@ -37,3 +37,10 @@ ansible_become_exe: "{{ 'sudo su -' if wasevo_become_as == 'root' else 'su -' }}
 ansible_become_password: >-
   {{ (vault_site_root_become_password | default(''))
      if wasevo_become_as == 'root' else site_was_password }}
+
+# IBM HTTP Server: the Apache parent process of an instance runs as root, its
+# workers as was (User / Group of its httpd.conf) - as observed on the site's
+# servers. Stopping and starting an instance is therefore root's, through
+# sudo su -: only root can signal the parent. The IHS fix pack itself (imcl)
+# is not concerned by this line.
+ihs_control_become_as: root

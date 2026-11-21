@@ -21,10 +21,10 @@ ihs_stop_timeout: 60
 ihs_kill_grace: 15
 ihs_start_timeout: 60
 
-# Who stops and starts the instances. was by default, like everything of
-# WebSphere. An instance listening below 1024 - port 80, 443 - must be started
-# by root, which then hands its workers to the User of httpd.conf: set root
-# for a server that has one.
+# Who stops and starts the instances: the owner of the Apache PARENT process.
+# Usually root - it binds the ports, then hands its workers to the User of
+# httpd.conf - and then only root can signal it. was where the whole instance
+# runs as was. The AIX inventory sets root (group_vars/was_servers.yml).
 ihs_control_become_as: was
 
 # Where the control script is put on the server.
