@@ -6,8 +6,7 @@ imcl_level: FP9.0.5.28
 
 imcl_servers:
 
-  # Le serveur du gestionnaire de déploiement (val-dmgr-01_WAS_response_file.xml -
-  # non photographié, déduit des autres environnements : à confirmer).
+  # Le serveur du gestionnaire de déploiement (val-dmgr-01_WAS_response_file.xml).
   val-dmgr-01:
     WASDMR:
       profile: Was90Val
@@ -51,9 +50,7 @@ imcl_servers:
         service_name: IBM HTTP Server V9.0
         port: "8081"
 
-  # L'IHS de l'ESB seul (Ihs_Esb_response_file.xml, vérifié sur le serveur le
-  # 21 novembre 2026). Le partage ne dit pas sur quel serveur il tourne : la clé reste
-  # le nom du fichier tant qu'on ne le sait pas.
+  # L'IHS de l'ESB seul (Ihs_Esb_response_file.xml). a voir si on le garde ou pas
   Ihs_Esb:
     IHSPLG:
       - profile: Ihs90Esb
