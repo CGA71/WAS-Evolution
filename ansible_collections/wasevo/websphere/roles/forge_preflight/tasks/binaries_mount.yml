@@ -193,7 +193,7 @@
           (agent.installer.aix.motif.ppc_<version>.zip), not the Linux one.
         success_msg: >-
           Installation Manager: {{ _bin_im.files | map(attribute='path') | map('basename') | join(', ') }};
-          WAS repository: {{ (_bin_was.files | map(attribute='path') | first) | dirname }}
+          WAS repository: {{ (_bin_was.files | map(attribute='path') | first | default('')) | dirname }}
 
     - name: Binaries mount point - what it carries
       ansible.builtin.debug:
