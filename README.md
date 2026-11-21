@@ -460,10 +460,11 @@ There is no environment group, on purpose: the same server is built as any envir
 
 ### The DSI's environments: a family and an instance
 
-The DSI runs four environment families — **DEV** (development), **VAL** (validation), **PREPROD** and **PROD** — and each can be refined per project with a two-digit instance: `DEV01`, `DEV02`, `VAL01`, `PREPROD01`… They are declared as **site data** in [`inventories/aix/group_vars/all/10_environment.yml`](inventories/aix/group_vars/all/10_environment.yml), never in the collection:
+The DSI runs five environment families — **TEST**, **DEV** (development), **VAL** (validation), **PREPROD** and **PROD** — and each can be refined per project with a two-digit instance: `DEV01`, `DEV02`, `VAL01`, `PREPROD01`… They are declared as **site data** in [`inventories/aix/group_vars/all/10_environment.yml`](inventories/aix/group_vars/all/10_environment.yml), never in the collection:
 
 ```yaml
 was_environment_families:
+  TEST:    {tier: non_prod, long_name: Test}
   DEV:     {tier: non_prod, long_name: Developpement}
   VAL:     {tier: non_prod, long_name: Validation}
   PREPROD: {tier: non_prod, long_name: Preproduction}
@@ -472,6 +473,12 @@ was_environment_instance_pattern: "[0-9]{2}"
 ```
 
 With families declared, the `model` role accepts a code only if it is a family, alone or followed by an instance (`DEV`, `DEV01`, `VAL02`, `PROD`), and refuses anything else (`XYZ01`, `DEV1`). **The family decides the tier**: only PROD is production — a PROD run still needs `model_allow_production` or the workflow's approval — and a `was_environment_tier` that contradicts the family is refused, not corrected. The long name follows (`Developpement 01`). An inventory that declares no families keeps the open behaviour: any usable code, tier as an input. Codes are up to ten characters (`PREPROD01` is nine).
+
+### The imcl response files, per environment
+
+[`inventories/aix/response_files/`](inventories/aix/response_files/README.md) holds the site's Installation Manager response files (`imcl -input`), as they are on the server in `/tmp/wasinst/response_files/`: one directory per family — `test`, `dev`, `val`, `preprod`, `prod` — then one per fix pack level, `FP9.0.5.28` today. Fifteen files: WAS ND, IBM HTTP Server (one instance per site in the preprod IHS files) and the web server plugin, each with its Java 8 SDK. They were rebuilt from screen captures, and each one's byte count was checked against the server's `ls -l`. Two are deduced and marked as such; the README of the directory lists them, with what was not rebuilt.
+
+[`36_response_files.yml`](inventories/aix/group_vars/all/36_response_files.yml) turns the launch answer into a directory: the family the code belongs to (`DEV01` → `DEV`) through `imcl_response_files_env_dirs`, then `imcl_response_files_level`. `imcl_response_files_dir` and `imcl_response_files` (the `.xml` files found there, on the controller) resolve once the `model` role has run. `test/` is empty: the server has no response file for it yet. These are not the manageprofiles response files of `35_profiles.yml`, which create profiles.
 
 ### Building it by hand
 
@@ -2054,10 +2061,11 @@ Pas de groupe d'environnement, volontairement : le même serveur se construit so
 
 ### Les environnements de la DSI : une famille et une instance
 
-La DSI a quatre familles d'environnements — **DEV** (développement), **VAL** (validation), **PREPROD** et **PROD** — et chacune peut être déclinée par projet avec une instance sur deux chiffres : `DEV01`, `DEV02`, `VAL01`, `PREPROD01`… Elles sont déclarées comme **donnée du site** dans [`inventories/aix/group_vars/all/10_environment.yml`](inventories/aix/group_vars/all/10_environment.yml), jamais dans la collection :
+La DSI a cinq familles d'environnements — **TEST**, **DEV** (développement), **VAL** (validation), **PREPROD** et **PROD** — et chacune peut être déclinée par projet avec une instance sur deux chiffres : `DEV01`, `DEV02`, `VAL01`, `PREPROD01`… Elles sont déclarées comme **donnée du site** dans [`inventories/aix/group_vars/all/10_environment.yml`](inventories/aix/group_vars/all/10_environment.yml), jamais dans la collection :
 
 ```yaml
 was_environment_families:
+  TEST:    {tier: non_prod, long_name: Test}
   DEV:     {tier: non_prod, long_name: Developpement}
   VAL:     {tier: non_prod, long_name: Validation}
   PREPROD: {tier: non_prod, long_name: Preproduction}
@@ -2066,6 +2074,12 @@ was_environment_instance_pattern: "[0-9]{2}"
 ```
 
 Quand des familles sont déclarées, le rôle `model` n'accepte un code que s'il est une famille, seule ou suivie d'une instance (`DEV`, `DEV01`, `VAL02`, `PROD`), et refuse le reste (`XYZ01`, `DEV1`). **La famille décide du palier** : seul PROD est en production — un run PROD exige toujours `model_allow_production` ou l'approbation du workflow — et un `was_environment_tier` qui contredit la famille est refusé, pas corrigé. Le libellé suit (`Developpement 01`). Un inventaire sans familles garde le comportement ouvert : tout code utilisable, palier en entrée. Les codes font jusqu'à dix caractères (`PREPROD01` en fait neuf).
+
+### Les fichiers réponse imcl, par environnement
+
+[`inventories/aix/response_files/`](inventories/aix/response_files/README.md) contient les fichiers réponse Installation Manager du site (`imcl -input`), tels qu'ils sont sur le serveur dans `/tmp/wasinst/response_files/` : un répertoire par famille — `test`, `dev`, `val`, `preprod`, `prod` — puis un par niveau de fix pack, `FP9.0.5.28` aujourd'hui. Quinze fichiers : WAS ND, IBM HTTP Server (une instance par site dans les fichiers IHS de préprod) et le plugin, chacun avec son SDK Java 8. Ils ont été reconstruits à partir de captures d'écran, et la taille de chacun comparée au `ls -l` du serveur. Deux sont déduits et signalés comme tels ; le README du répertoire les liste, avec ce qui n'a pas été reconstruit.
+
+[`36_response_files.yml`](inventories/aix/group_vars/all/36_response_files.yml) transforme la réponse du lancement en répertoire : la famille du code (`DEV01` → `DEV`) via `imcl_response_files_env_dirs`, puis `imcl_response_files_level`. `imcl_response_files_dir` et `imcl_response_files` (les `.xml` trouvés, côté contrôleur) se résolvent une fois le rôle `model` passé. `test/` est vide : le serveur n'en a pas encore. Ce ne sont pas les fichiers réponse manageprofiles de `35_profiles.yml`, qui créent les profils.
 
 ### Le construire à la main
 

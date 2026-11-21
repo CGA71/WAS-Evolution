@@ -25,8 +25,8 @@ model_require_hosts: false
 # ---------------------------------------------------------------------------
 # The DSI's environments
 # ---------------------------------------------------------------------------
-# Four families, each usable alone or refined per project with a two-digit
-# instance: DEV, DEV01, DEV02... VAL01, VAL02... PREPROD, PREPROD01... PROD.
+# Five families, each usable alone or refined per project with a two-digit
+# instance: TEST, DEV, DEV01, DEV02... VAL01, VAL02... PREPROD, PREPROD01... PROD.
 # The answer to the survey must be one of them - anything else is refused - and
 # the family decides the tier: only PROD is production, and a PROD run still
 # needs model_allow_production (or the workflow's approval).
@@ -35,7 +35,11 @@ model_require_hosts: false
 # (<letter>DmgrNode). PREPROD and PROD would both default to P; they are
 # separate cells, so it only matters if both are ever built on one machine -
 # set a letter here if that can happen.
+#
+# Each family also owns a directory of imcl response files, in
+# response_files/ beside this inventory - see 36_response_files.yml.
 was_environment_families:
+  TEST: {tier: non_prod, long_name: Test}
   DEV: {tier: non_prod, long_name: Developpement}
   VAL: {tier: non_prod, long_name: Validation}
   PREPROD: {tier: non_prod, long_name: Preproduction}

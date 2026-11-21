@@ -1,0 +1,48 @@
+---
+# The Installation Manager response files of this site, per environment.
+#
+# Not to be confused with 35_profiles.yml: those are manageprofiles response
+# files (profile creation). These are imcl response files (imcl -input): what
+# Installation Manager installs, where, with which features - WAS ND, IBM HTTP
+# Server and the web server plugin, each with its Java 8 SDK.
+#
+# They are kept as they are on the server, in /tmp/wasinst/response_files/,
+# one directory per environment family and one per fix pack level:
+#
+#   inventories/aix/response_files/
+#     test/FP9.0.5.28/       empty: no response file on the server yet
+#     dev/FP9.0.5.28/        dev on the server
+#     val/FP9.0.5.28/        valid on the server
+#     preprod/FP9.0.5.28/
+#     prod/FP9.0.5.28/
+#
+# See response_files/README.md for what each file installs.
+#
+# THE ENVIRONMENT PICKS THE DIRECTORY. The survey answer (DEV, DEV01, VAL02...)
+# belongs to a family of 10_environment.yml; the model role publishes that
+# family as was_env_family_upper, and the map below turns it into a directory.
+# DEV01 and DEV read the same files: the instance is a cell, not a new set of
+# binaries.
+
+imcl_response_files_root: "{{ inventory_dir }}/response_files"
+
+# The fix pack level the files install: 9.0.5.28, WAS 9.0.5028.20260604_1356
+# and the SDK 8.0.8065.20260410_0653. A new level is a new directory beside
+# this one, and this line.
+imcl_response_files_level: FP9.0.5.28
+
+# Family (as 10_environment.yml spells it) -> directory.
+imcl_response_files_env_dirs:
+  TEST: test
+  DEV: dev
+  VAL: val
+  PREPROD: preprod
+  PROD: prod
+
+# Resolved after the model role has run, like every name that depends on the
+# environment.
+imcl_response_files_dir: >-
+  {{ imcl_response_files_root }}/{{ imcl_response_files_env_dirs[was_env_family_upper] }}/{{ imcl_response_files_level }}
+
+# The files of the chosen environment, on the controller, sorted.
+imcl_response_files: "{{ lookup('ansible.builtin.fileglob', imcl_response_files_dir ~ '/*.xml', wantlist=True) | sort }}"
