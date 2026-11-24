@@ -477,30 +477,40 @@ aix:preflight:
 
 # --- build -------------------------------------------------------------------
 
-# The product, from the mount: Installation Manager, its fix pack pass, WAS,
-# IHS and the plugin, the second fix pack pass - the order the AWX workflow
-# runs them in. Then the six again, which must change nothing.
+# The product, from the mount: Installation Manager, WAS, IHS and the plugin,
+# then the fix packs - WAS and its SDK, IHS and the plugin, at the form's
+# default versions. Then all of it again, which must change nothing.
+# <playbook>:<component> passes fixpack_component to the fix pack playbook.
 aix:install:
   extends: .aix-change
   stage: build
   timeout: 3h
+  variables:
+    AIX_INSTALL_STEPS: >-
+      lab_install_im lab_install_was lab_install_ihs lab_install_plugin
+      lab_apply_fixpacks:was-sdk lab_apply_fixpacks:ihs-plg
   script:
     - |
       set -e
-      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_install_ihs lab_install_plugin lab_apply_fixpacks; do
-        echo "=============== $pb ==============="
+      for step in $AIX_INSTALL_STEPS; do
+        pb="${step%%:*}"; comp=""; [ "$pb" = "$step" ] || comp="${step#*:}"
+        echo "=============== $step ==============="
         ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$pb.yml \
-          -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" | tee -a install.log
+          -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" \
+          ${comp:+-e fixpack_component=$comp} | tee -a install.log
       done
     - |
       set -e
       echo "=============== replay: must change nothing ==============="
       : > install-replay.log
-      for pb in lab_install_im lab_apply_fixpacks lab_install_was lab_install_ihs lab_install_plugin lab_apply_fixpacks; do
+      for step in $AIX_INSTALL_STEPS; do
+        pb="${step%%:*}"; comp=""; [ "$pb" = "$step" ] || comp="${step#*:}"
+        log="replay-${pb}${comp:+-$comp}.log"
         ansible-playbook -i $AIX_INVENTORY $COLLECTION/playbooks/$pb.yml \
-          -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" > "replay-$pb.log"
-        cat "replay-$pb.log" >> install-replay.log
-        bash ci/assert-idempotent.sh "replay-$pb.log"
+          -e lab_hosts=was_install -e was_environment="$WAS_ENVIRONMENT" \
+          ${comp:+-e fixpack_component=$comp} > "$log"
+        cat "$log" >> install-replay.log
+        bash ci/assert-idempotent.sh "$log"
       done
     - |
       set -e

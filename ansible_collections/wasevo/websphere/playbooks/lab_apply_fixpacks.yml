@@ -1,25 +1,50 @@
 ---
-# The fixpack job. It appears TWICE in the workflow.
+# Fix pack of WAS, IHS, the plugin or the SDK, to the version the form asks.
 #
-#   1. IM install
-#   2. THIS, pass 1   -> brings Installation Manager to the level WAS needs
-#   3. WAS / SDK / IHS / plugin install
-#   4. THIS, pass 2   -> patches what step 3 just installed
+# AWX "WAS AIX - 2. Fix packs: Installation Manager" and "WAS AIX - 4. Fix
+# packs: WAS", form ci/awx/surveys/fixpack.json:
 #
-# One job template, two workflow nodes. That only works because the role
-# discovers what is installed rather than being handed a list: on pass 1 only
-# Installation Manager is there, on pass 2 everything is.
+#   Component      was | sdk | was-sdk | ihs | plg | ihs-plg
+#   WAS version    9.0.5.28        IHS version   9.0.5.28
+#   PLG version    9.0.5.28        SDK version   8.0.8.65
+#   WAS home       /usr/IBM/WebSphere9/AppServer  (several: comma-separated)
+#   IHS home       /usr/IBM/IHS9
+#   PLG home       /usr/IBM/Plugins9
 #
-#   ansible-playbook -i inventories/aix \
-#       ansible_collections/wasevo/websphere/playbooks/lab_apply_fixpacks.yml \
-#       -e was_environment=<code>
+# For each product of the component, in its home: <home>/bin/versionInfo.sh
+# (java -version for the SDK) gives the version installed; when it differs
+# from the one asked, the full package name is read from the level's
+# repository on the share, a response file is rendered and imcl applies it.
+# No cell, node or profile name is needed. A home without the product is
+# reported and left alone - which is why the build workflow can run this
+# before WAS is installed (job 2) and after (job 4).
 #
-# Finding no fixpack repository is a normal outcome, not a failure. The job
-# says what it found and where to put media, and exits green.
+#   ansible-playbook -i inventories/aix <this> \
+#       -e fixpack_component=was-sdk -e fixpack_was_version=9.0.5.28
+#
+# THE ACCOUNT. The job connects with the AWX Machine credential, then every
+# task runs through "sudo su - <was user>": site_was_user when the inventory
+# defines it, else was. It is set here, on the play, because a `become: true`
+# that names nobody goes to root - Ansible's default - and imcl run as root
+# reads another registry than was's and fails with "The registry information
+# does not exist or does not match with this executable".
 
-- name: Apply IBM fixpacks
+- name: Fix pack - WAS, IHS, plugin, SDK
   hosts: "{{ lab_hosts | default('was_install') }}"
-  gather_facts: true
+  gather_facts: false
+  become: true
+
+  vars:
+    ansible_become_method: su
+    ansible_become_exe: sudo su -
+    ansible_become_user: "{{ site_was_user | default('was', true) }}"
+    ansible_become_password: ""
+    # su gets no pipelining: Ansible copies the module to /var/tmp as the
+    # connecting account, and was must read it. AIX has no setfacl and refuses
+    # chown to a non-root user (sys0 chown_restrict), so the module file is
+    # made readable for the few seconds it runs, then removed. It carries no
+    # secret.
+    ansible_shell_allow_world_readable_temp: true
 
   roles:
     - role: wasevo.websphere.traditional.was_fixpack

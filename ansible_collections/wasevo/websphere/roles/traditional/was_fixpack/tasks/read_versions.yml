@@ -1,0 +1,44 @@
+---
+# The version installed of each product of _fp_items, read from its home:
+#
+#   WAS, IHS, plugin   <home>/bin/versionInfo.sh          Version   9.0.5.23
+#   SDK                <home>/java/8.0/bin/java -version  (build 8.0.8.45 - ...)
+#
+# Sets _fp_state: each item of _fp_items with `installed` - the four numbers,
+# "absent" when the home does not carry the product, "?" when its output
+# could not be read.
+
+- name: Read the installed versions
+  ansible.builtin.shell: |
+    {% if item.product == 'sdk' %}
+    p="{{ item.home }}/java/8.0/bin/java"
+    [ -x "$p" ] || { echo NOT_INSTALLED; exit 0; }
+    "$p" -version 2>&1
+    {% else %}
+    p="{{ item.home }}/bin/versionInfo.sh"
+    [ -x "$p" ] || { echo NOT_INSTALLED; exit 0; }
+    "$p" 2>&1
+    {% endif %}
+  loop: "{{ _fp_items }}"
+  loop_control:
+    label: "{{ item.product }} {{ item.home }}"
+  register: _fp_read
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Keep the versions read
+  ansible.builtin.set_fact:
+    _fp_state: >-
+      {%- set out = [] -%}
+      {%- for r in _fp_read.results -%}
+      {%-   set o = r.stdout | default('') -%}
+      {%-   if 'NOT_INSTALLED' in o -%}
+      {%-     set v = 'absent' -%}
+      {%-   elif r.item.product == 'sdk' -%}
+      {%-     set v = (o | regex_findall('build ([0-9]+[.][0-9]+[.][0-9]+[.][0-9]+)') + ['?']) | first -%}
+      {%-   else -%}
+      {%-     set v = (o | regex_findall('(?m)^Version[ \t]+([0-9]+[.][0-9]+[.][0-9]+[.][0-9]+)') + ['?']) | first -%}
+      {%-   endif -%}
+      {%-   set _ = out.append(r.item | combine({'installed': v, 'output': o[-400:]})) -%}
+      {%- endfor -%}{{ out }}

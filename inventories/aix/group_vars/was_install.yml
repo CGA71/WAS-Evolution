@@ -13,7 +13,6 @@
 # Neither the Installation Manager archive nor the WAS repository can be
 # downloaded without an IBMid: they are placed on the share by hand.
 im_media_src: ""
-was_fixpack_media_src: ""
 
 # The level the base install must reach at least. A Passport Advantage base
 # image yields 9.0.0.0 and the fix pack job lifts it; a repository that already
@@ -27,10 +26,8 @@ was_expected_version: "9.0.0.0"
 # group_vars/dmgr.yml and group_vars/nodeagents.yml, the cell and the cluster
 # in group_vars/all/30_naming.yml.
 
-# No target level declared: whatever the fix pack repositories on the mount
-# offer is what the server gets. Pin it here (e.g. "9.0.5.28") once the site
-# has decided its level.
-was_fixpack_target_version: ""
+# The fix pack level is not set here: the fix pack jobs ask it in their form
+# (ci/awx/surveys/fixpack.json), one version per product.
 
 # The share is mounted on demand, as the site does by hand: no stanza in
 # /etc/filesystems, so a reboot does not try to reach the NIM server.

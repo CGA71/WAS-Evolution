@@ -1,0 +1,94 @@
+{
+  "name": "WAS AIX fix pack",
+  "description": "Which product, to which version, in which home. The version installed is read from <home>/bin/versionInfo.sh; when it differs, the fix pack is applied from Fixes/FP<version> on the binaries share, as was.",
+  "spec": [
+    {
+      "question_name": "Component",
+      "question_description": "was: WAS ND. sdk: the Java SDK of the WAS home. was-sdk: both. ihs: IBM HTTP Server. plg: the web server plugin. ihs-plg: both.",
+      "variable": "fixpack_component",
+      "type": "multiplechoice",
+      "required": true,
+      "min": 0,
+      "max": 1024,
+      "default": "was-sdk",
+      "choices": "was\nsdk\nwas-sdk\nihs\nplg\nihs-plg"
+    },
+    {
+      "question_name": "WAS version",
+      "question_description": "The WAS ND fix pack level, from Fixes/FP<version>/WAS.",
+      "variable": "fixpack_was_version",
+      "type": "text",
+      "required": true,
+      "min": 7,
+      "max": 16,
+      "default": "9.0.5.28",
+      "choices": ""
+    },
+    {
+      "question_name": "IHS version",
+      "question_description": "The IBM HTTP Server fix pack level, from Fixes/FP<version>/IHSPLG.",
+      "variable": "fixpack_ihs_version",
+      "type": "text",
+      "required": true,
+      "min": 7,
+      "max": 16,
+      "default": "9.0.5.28",
+      "choices": ""
+    },
+    {
+      "question_name": "PLG version",
+      "question_description": "The web server plugin fix pack level, from Fixes/FP<version>/IHSPLG.",
+      "variable": "fixpack_plg_version",
+      "type": "text",
+      "required": true,
+      "min": 7,
+      "max": 16,
+      "default": "9.0.5.28",
+      "choices": ""
+    },
+    {
+      "question_name": "SDK version",
+      "question_description": "The Java SDK 8 level, from Fixes/FP*/SDK/<version>.",
+      "variable": "fixpack_sdk_version",
+      "type": "text",
+      "required": true,
+      "min": 7,
+      "max": 16,
+      "default": "8.0.8.65",
+      "choices": ""
+    },
+    {
+      "question_name": "WAS home",
+      "question_description": "Where WAS ND is installed. Several homes separated by commas: /usr/IBM/WebSphere9/AppServerDmgr,/usr/IBM/WebSphere9/AppServerNode1",
+      "variable": "fixpack_was_home",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 1024,
+      "default": "/usr/IBM/WebSphere9/AppServer",
+      "choices": ""
+    },
+    {
+      "question_name": "IHS home",
+      "question_description": "Where IBM HTTP Server is installed.",
+      "variable": "fixpack_ihs_home",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 256,
+      "default": "/usr/IBM/IHS9",
+      "choices": ""
+    },
+    {
+      "question_name": "PLG home",
+      "question_description": "Where the web server plugin is installed.",
+      "variable": "fixpack_plg_home",
+      "type": "text",
+      "required": true,
+      "min": 1,
+      "max": 256,
+      "default": "/usr/IBM/Plugins9",
+      "choices": ""
+    }
+  ]
+}

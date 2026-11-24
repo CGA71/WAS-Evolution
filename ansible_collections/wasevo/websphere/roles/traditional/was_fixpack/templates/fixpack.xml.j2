@@ -1,0 +1,29 @@
+{#-
+  Installation Manager response file of one home - rendered by
+  tasks/component.yml for each installation to update.
+
+  item.profile        the Installation Manager profile (package group) the
+                      home is registered under, read from installed.xml
+  item.home           its installation directory
+  item.repositories   the level's repositories on the share
+  item.offerings      [{id, version, features}] - the full package name,
+                      found in the repository by imcl listAvailablePackages
+-#}
+<?xml version='1.0' encoding='UTF-8'?>
+<agent-input acceptLicense='true'>
+  <server>
+{% for r in item.repositories %}
+    <repository location='{{ r }}'/>
+{% endfor %}
+  </server>
+  <profile id='{{ item.profile }}' installLocation='{{ item.home }}'>
+    <data key='cic.selector.arch' value='{{ imcl_arch | default('ppc64') }}'/>
+    <data key='cic.selector.ws' value='{{ imcl_ws | default('gtk') }}'/>
+  </profile>
+  <install>
+{% for o in item.offerings %}
+    <offering profile='{{ item.profile }}' id='{{ o.id }}' version='{{ o.version }}' features='{{ o.features }}'/>
+{% endfor %}
+  </install>
+  <preference name='offering.service.repositories.areUsed' value='false'/>
+</agent-input>

@@ -484,13 +484,19 @@ With families declared, the `model` role accepts a code only if it is a family, 
 
 ### The imcl response files: templates, one configuration per environment
 
-The fix pack job **WAS AIX - 2. Fix packs: Installation Manager** has its own form (`ci/awx/surveys/fixpack-imcl.json`, attached by `apply-survey.sh`):
+The fix pack jobs **WAS AIX - 2. Fix packs: Installation Manager** and **WAS AIX - 4. Fix packs: WAS** run one playbook, [`lab_apply_fixpacks.yml`](ansible_collections/wasevo/websphere/playbooks/lab_apply_fixpacks.yml), with one form (`ci/awx/surveys/fixpack.json`, attached by `apply-survey.sh`):
 
-| Question | Variable | Answers |
+| Question | Variable | Default |
 |---|---|---|
-| Environment | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — which environment's configuration to deploy |
-| Components | `imcl_selected_components` | IHSPLG (IHS instances and their plugins), WAS (WAS ND on a node server), WASDMR (WAS ND on the deployment manager's server) — one or several |
-| Server | `imcl_server` | the server as the configuration names it; blank: the host's `imcl_server`, else its inventory name |
+| Component | `fixpack_component` | `was-sdk` — or `was`, `sdk`, `ihs`, `plg`, `ihs-plg` |
+| WAS / IHS / PLG version | `fixpack_was_version`, `fixpack_ihs_version`, `fixpack_plg_version` | `9.0.5.28` |
+| SDK version | `fixpack_sdk_version` | `8.0.8.65` |
+| WAS home | `fixpack_was_home` | `/usr/IBM/WebSphere9/AppServer` — several, comma-separated |
+| IHS home / PLG home | `fixpack_ihs_home`, `fixpack_plg_home` | `/usr/IBM/IHS9`, `/usr/IBM/Plugins9` |
+
+For each product of the component, the job reads the version installed — `<home>/bin/versionInfo.sh`, `<home>/java/8.0/bin/java -version` for the SDK — and when it differs from the one asked: it finds the full package name in the level's repository (`imcl listAvailablePackages` on `Fixes/FP<version>/WAS|IHSPLG`, `Fixes/FP*/SDK/<version>`), the home's Installation Manager profile in `installed.xml`, renders a response file ([`fixpack.xml.j2`](ansible_collections/wasevo/websphere/roles/traditional/was_fixpack/templates/fixpack.xml.j2)) and runs `imcl input`. No cell, node or profile name. Every task runs through `sudo su - was` (`site_was_user`), set by the playbook itself: a `become` that names nobody goes to root, and imcl run as root fails on *The registry information does not exist or does not match*. It stops nothing and refuses while a java or httpd of a home to update runs. A home without the product is left alone, so job 2, before WAS is installed, changes nothing.
+
+The deployment manager, IHS and JVM batch fix pack jobs (section 26) use the environment's response files below instead.
 
 **The repository is the guarantor of what each environment runs.** Three places, one mechanism:
 
@@ -500,7 +506,7 @@ The fix pack job **WAS AIX - 2. Fix packs: Installation Manager** has its own fo
 | [`config/<env>.yml`](inventories/aix/config/) | what differs per environment: its level, and per server the WAS profile id and the IHS instances — `site: SITEA` is enough for a multi-site server, the rest is derived |
 | [`templates/imcl/`](inventories/aix/templates/imcl/) | the response files as Jinja templates: `was.xml.j2` (WAS, WASDMR), `ihsplg.xml.j2` (IHSPLG) |
 
-The generic role [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) loads `config/<family>.yml` from the answer — `DEV01` reads `dev.yml` — and is meant for the other roles too. The job then renders one file per component, as `was`, 0600, runs `imcl input <file> -repositories <share>/Fixes/<level>/{WAS|IHSPLG},<…>/SDK/<sdk>`, checks with `listInstalledPackages` that every offering is at its level, and removes the file. Job type *Check* renders and shows without running imcl. Launched from the build workflow, with no component chosen, the job keeps its discovery mode (`imcl updateAll`).
+The generic role [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) loads `config/<family>.yml` from the answer — `DEV01` reads `dev.yml` — and is meant for the other roles too. The job then renders one file per component, as `was`, 0600, runs `imcl input <file> -repositories <share>/Fixes/<level>/{WAS|IHSPLG},<…>/SDK/<sdk>`, checks with `listInstalledPackages` that every offering is at its level, and removes the file. Job type *Check* renders and shows without running imcl.
 
 The fifteen files rebuilt from the servers were used once, to prove the templates render exactly what each server used (all fifteen matched), then removed: the repository, not the share, is now the source. They remain in the git history.
 
@@ -514,11 +520,11 @@ ansible-playbook -i inventories/aix $COL/binaries_mount.yml
 ansible-playbook -i inventories/aix $COL/binaries_mount_check.yml
 ansible-playbook $E $COL/forge_preflight.yml -e forge_preflight_hosts=was_install -e forge_preflight_check_dirs=false
 ansible-playbook $E $COL/lab_install_im.yml
-ansible-playbook $E $COL/lab_apply_fixpacks.yml
 ansible-playbook $E $COL/lab_install_was.yml
 ansible-playbook $E $COL/lab_install_ihs.yml
 ansible-playbook $E $COL/lab_install_plugin.yml
-ansible-playbook $E $COL/lab_apply_fixpacks.yml
+ansible-playbook $E $COL/lab_apply_fixpacks.yml -e fixpack_component=was-sdk
+ansible-playbook $E $COL/lab_apply_fixpacks.yml -e fixpack_component=ihs-plg
 ansible-playbook $E $COL/lab_create_profiles.yml -e profile_hosts=was_install -e was_topology=nd -e @admin.json
 ansible-playbook $E $COL/traditional_cluster.yml -e config_dmgr_hosts=dmgr -e @admin.json
 ansible-playbook $E $COL/traditional_cluster_members.yml -e config_dmgr_hosts=dmgr -e @admin.json
@@ -1443,11 +1449,11 @@ bash ci/awx/apply-templates.sh            # the configuration templates 9-23, ap
 | 0a. Binaries share: mount | `binaries_mount.yml` | role `binaries_share`; first, nothing runs without it |
 | 0. Binaries mount point | `binaries_mount_check.yml` | Stops the workflow before anything is unpacked if the share is not there |
 | 1. Installation Manager | `lab_install_im.yml` | with `prereqs_os` first |
-| 2. Fix packs: Installation Manager | `lab_apply_fixpacks.yml` | lifts IM to the level WAS needs |
+| 2. Fix packs: Installation Manager | `lab_apply_fixpacks.yml` | the fix pack form; before WAS is installed it finds nothing and changes nothing |
 | 3. WAS | `lab_install_was.yml` | |
 | 3b. IHS | `lab_install_ihs.yml` | role `ihs_install`; left alone when already installed |
 | 3c. Web server plugin | `lab_install_plugin.yml` | role `plugin_install`; left alone when already installed |
-| 4. Fix packs: WAS | `lab_apply_fixpacks.yml` | the same playbook, a second template; also patches IHS and the plugin |
+| 4. Fix packs: WAS | `lab_apply_fixpacks.yml` | the same playbook and form: the component, its version, its home |
 | 5. Profiles | `lab_create_profiles.yml` | deployment manager, then the federated node |
 | 6. Cluster · 7. Cluster members · 8. Start | | `config_dmgr_hosts: dmgr` |
 | 9 – 24 | J2C, JDBC, shared libraries, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, security, policy sets, dynamic cache, logging, PMI, log root (`traditional_log_root.yml`) | by `apply-templates.sh` |
@@ -2147,13 +2153,19 @@ Quand des familles sont déclarées, le rôle `model` n'accepte un code que s'il
 
 ### Les fichiers réponse imcl : des templates, une configuration par environnement
 
-Le job de fix pack **WAS AIX - 2. Fix packs: Installation Manager** a son propre formulaire (`ci/awx/surveys/fixpack-imcl.json`, attaché par `apply-survey.sh`) :
+Les jobs de fix pack **WAS AIX - 2. Fix packs: Installation Manager** et **WAS AIX - 4. Fix packs: WAS** lancent un seul playbook, [`lab_apply_fixpacks.yml`](ansible_collections/wasevo/websphere/playbooks/lab_apply_fixpacks.yml), avec un seul formulaire (`ci/awx/surveys/fixpack.json`, attaché par `apply-survey.sh`) :
 
-| Question | Variable | Réponses |
+| Question | Variable | Défaut |
 |---|---|---|
-| Environment | `was_environment` | TEST, DEV, VAL, PREPROD, PROD — la configuration de quel environnement déployer |
-| Components | `imcl_selected_components` | IHSPLG (instances IHS et leurs plugins), WAS (WAS ND d'un serveur de nœud), WASDMR (WAS ND du serveur du gestionnaire de déploiement) — un ou plusieurs |
-| Server | `imcl_server` | le serveur tel que la configuration le nomme ; vide : l'`imcl_server` de l'hôte, sinon son nom d'inventaire |
+| Component | `fixpack_component` | `was-sdk` — ou `was`, `sdk`, `ihs`, `plg`, `ihs-plg` |
+| WAS / IHS / PLG version | `fixpack_was_version`, `fixpack_ihs_version`, `fixpack_plg_version` | `9.0.5.28` |
+| SDK version | `fixpack_sdk_version` | `8.0.8.65` |
+| WAS home | `fixpack_was_home` | `/usr/IBM/WebSphere9/AppServer` — plusieurs, séparés par des virgules |
+| IHS home / PLG home | `fixpack_ihs_home`, `fixpack_plg_home` | `/usr/IBM/IHS9`, `/usr/IBM/Plugins9` |
+
+Pour chaque produit du composant, le job lit la version installée — `<home>/bin/versionInfo.sh`, `<home>/java/8.0/bin/java -version` pour le SDK — et si elle diffère de celle demandée : il trouve le nom complet du package dans le dépôt du niveau (`imcl listAvailablePackages` sur `Fixes/FP<version>/WAS|IHSPLG`, `Fixes/FP*/SDK/<version>`), le profil Installation Manager du home dans `installed.xml`, génère un fichier réponse ([`fixpack.xml.j2`](ansible_collections/wasevo/websphere/roles/traditional/was_fixpack/templates/fixpack.xml.j2)) et lance `imcl input`. Aucun nom de cellule, de nœud ni de profil. Chaque tâche passe par `sudo su - was` (`site_was_user`), fixé par le playbook lui-même : un `become` qui ne nomme personne va vers root, et imcl lancé en root échoue sur *The registry information does not exist or does not match*. Il n'arrête rien et refuse tant qu'un java ou un httpd d'un home à mettre à jour tourne. Un home sans le produit est laissé tel quel, donc le job 2, avant l'installation de WAS, ne change rien.
+
+Les jobs de fix pack du gestionnaire de déploiement, d'IHS et par lot de JVM (section 26) utilisent à la place les fichiers réponse par environnement ci-dessous.
 
 **Le dépôt est le garant de ce que chaque environnement exécute.** Trois endroits, un seul mécanisme :
 
@@ -2163,7 +2175,7 @@ Le job de fix pack **WAS AIX - 2. Fix packs: Installation Manager** a son propre
 | [`config/<env>.yml`](inventories/aix/config/) | ce qui diffère par environnement : son niveau, et par serveur l'identifiant de profil WAS et les instances IHS — `site: SITEA` suffit pour un serveur multi-sites, le reste est déduit |
 | [`templates/imcl/`](inventories/aix/templates/imcl/) | les fichiers réponse en templates Jinja : `was.xml.j2` (WAS, WASDMR), `ihsplg.xml.j2` (IHSPLG) |
 
-Le rôle générique [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) charge `config/<famille>.yml` d'après la réponse — `DEV01` lit `dev.yml` — et servira aux autres rôles. Le job rend ensuite un fichier par composant, en `was`, en 0600, lance `imcl input <fichier> -repositories <partage>/Fixes/<niveau>/{WAS|IHSPLG},<…>/SDK/<sdk>`, vérifie par `listInstalledPackages` que chaque offre est à son niveau, et supprime le fichier. Le Job type *Check* rend et affiche sans lancer imcl. Lancé depuis le workflow de construction, sans composant choisi, le job garde son mode découverte (`imcl updateAll`).
+Le rôle générique [`env_config`](ansible_collections/wasevo/websphere/roles/env_config/defaults/main.yml) charge `config/<famille>.yml` d'après la réponse — `DEV01` lit `dev.yml` — et servira aux autres rôles. Le job rend ensuite un fichier par composant, en `was`, en 0600, lance `imcl input <fichier> -repositories <partage>/Fixes/<niveau>/{WAS|IHSPLG},<…>/SDK/<sdk>`, vérifie par `listInstalledPackages` que chaque offre est à son niveau, et supprime le fichier. Le Job type *Check* rend et affiche sans lancer imcl.
 
 Les quinze fichiers reconstruits depuis les serveurs ont servi une fois, à prouver que les templates rendent exactement ce que chaque serveur utilisait (les quinze correspondaient), puis ont été supprimés : le dépôt, et non plus le partage, est la source. Ils restent dans l'historique git.
 
@@ -2177,11 +2189,11 @@ ansible-playbook -i inventories/aix $COL/binaries_mount.yml
 ansible-playbook -i inventories/aix $COL/binaries_mount_check.yml
 ansible-playbook $E $COL/forge_preflight.yml -e forge_preflight_hosts=was_install -e forge_preflight_check_dirs=false
 ansible-playbook $E $COL/lab_install_im.yml
-ansible-playbook $E $COL/lab_apply_fixpacks.yml
 ansible-playbook $E $COL/lab_install_was.yml
 ansible-playbook $E $COL/lab_install_ihs.yml
 ansible-playbook $E $COL/lab_install_plugin.yml
-ansible-playbook $E $COL/lab_apply_fixpacks.yml
+ansible-playbook $E $COL/lab_apply_fixpacks.yml -e fixpack_component=was-sdk
+ansible-playbook $E $COL/lab_apply_fixpacks.yml -e fixpack_component=ihs-plg
 ansible-playbook $E $COL/lab_create_profiles.yml -e profile_hosts=was_install -e was_topology=nd -e @admin.json
 ansible-playbook $E $COL/traditional_cluster.yml -e config_dmgr_hosts=dmgr -e @admin.json
 ansible-playbook $E $COL/traditional_cluster_members.yml -e config_dmgr_hosts=dmgr -e @admin.json
@@ -3147,11 +3159,11 @@ bash ci/awx/apply-templates.sh            # les templates de configuration 9-23,
 | 0a. Montage du partage des binaires | `binaries_mount.yml` | rôle `binaries_share` ; en premier, rien ne tourne sans lui |
 | 0. Point de montage des binaires | `binaries_mount_check.yml` | Arrête le workflow avant tout dépaquetage si le partage n'est pas là |
 | 1. Installation Manager | `lab_install_im.yml` | avec `prereqs_os` d'abord |
-| 2. Fix packs : Installation Manager | `lab_apply_fixpacks.yml` | monte IM au niveau dont WAS a besoin |
+| 2. Fix packs : Installation Manager | `lab_apply_fixpacks.yml` | le formulaire de fix pack ; avant l'installation de WAS il ne trouve rien et ne change rien |
 | 3. WAS | `lab_install_was.yml` | |
 | 3b. IHS | `lab_install_ihs.yml` | rôle `ihs_install` ; laissé tel quel s'il est déjà installé |
 | 3c. Plugin du serveur web | `lab_install_plugin.yml` | rôle `plugin_install` ; laissé tel quel s'il est déjà installé |
-| 4. Fix packs : WAS | `lab_apply_fixpacks.yml` | le même playbook, un second template ; corrige aussi IHS et le plugin |
+| 4. Fix packs : WAS | `lab_apply_fixpacks.yml` | le même playbook et formulaire : le composant, sa version, son home |
 | 5. Profils | `lab_create_profiles.yml` | gestionnaire de déploiement, puis nœud fédéré |
 | 6. Cluster · 7. Membres · 8. Démarrage | | `config_dmgr_hosts: dmgr` |
 | 9 – 24 | J2C, JDBC, bibliothèques partagées, SIBus, JMS, transactions, EJB, CDI, JPA, SSL, sécurité, policy sets, cache dynamique, logging, PMI, racine des logs (`traditional_log_root.yml`) | par `apply-templates.sh` |

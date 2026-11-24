@@ -1,0 +1,360 @@
+---
+# The form's way: one component, the version of each product, its home(s).
+#
+#   1. read the version installed in each home (read_versions.yml); a home
+#      that does not carry the product is reported and left alone
+#   2. the version asked is already there: nothing to do
+#   3. otherwise, on the binaries share:
+#        the level's repository     <Fixes>/FP<version>/WAS | IHSPLG,
+#                                   <Fixes>/FP*/SDK/<sdk version>
+#        the full package name      imcl listAvailablePackages, e.g.
+#                                   com.ibm.websphere.ND.v90_9.0.5028.20260604_1356
+#        the home's IM profile      Installation Manager's installed.xml
+#      rendered into a response file (templates/fixpack.xml.j2), one per
+#      home, applied with imcl input, removed
+#   4. read the versions again: each must be the one asked
+#
+# Nothing is stopped: the job refuses while a java or an httpd of a home to
+# update still runs. Job type Check: the plan and the response files, no imcl.
+
+- name: The form's answers
+  ansible.builtin.set_fact:
+    _fp_component: "{{ fixpack_component | default('', true) | string | trim | lower }}"
+    _fp_versions:
+      was: "{{ fixpack_was_version | string | trim | regex_replace('^[Ff][Pp]', '') }}"
+      ihs: "{{ fixpack_ihs_version | string | trim | regex_replace('^[Ff][Pp]', '') }}"
+      plg: "{{ fixpack_plg_version | string | trim | regex_replace('^[Ff][Pp]', '') }}"
+      sdk: "{{ fixpack_sdk_version | string | trim }}"
+    _fp_homes:
+      was: >-
+        {{ (fixpack_was_home | default('', true) | string).split(',')
+           | map('trim') | reject('equalto', '') | map('regex_replace', '/+$', '') | unique | list }}
+      ihs: ["{{ fixpack_ihs_home | default('', true) | string | trim | regex_replace('/+$', '') }}"]
+      plg: ["{{ fixpack_plg_home | default('', true) | string | trim | regex_replace('/+$', '') }}"]
+
+- name: The component must be one the form offers
+  ansible.builtin.assert:
+    that:
+      - _fp_component in fixpack_components
+    fail_msg: >-
+      Component "{{ _fp_component }}" - choose one of
+      {{ fixpack_components.keys() | join(', ') }}.
+    quiet: true
+
+- name: What the component means on this server
+  ansible.builtin.set_fact:
+    _fp_items: >-
+      {%- set out = [] -%}
+      {%- for p in fixpack_components[_fp_component] -%}
+      {%-   for h in _fp_homes[p if p in ['ihs', 'plg'] else 'was'] -%}
+      {%-     set _ = out.append({'product': p, 'home': h, 'version': _fp_versions[p]}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}{{ out }}
+
+- name: Every version and every home must be given
+  ansible.builtin.assert:
+    that:
+      - _bad | length == 0
+    fail_msg: "{{ _bad | join(' ') }}"
+    quiet: true
+  vars:
+    _bad: >-
+      {%- set out = [] -%}
+      {%- for i in _fp_items -%}
+      {%-   if i.version is not match('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') -%}
+      {%-     set _ = out.append(fixpack_products[i.product].label ~ ': version "' ~ i.version
+                                 ~ '" is not four numbers (9.0.5.28, 8.0.8.65 for the SDK).') -%}
+      {%-   endif -%}
+      {%-   if i.home is not match('^/') -%}
+      {%-     set _ = out.append(fixpack_products[i.product].label ~ ': home "' ~ i.home
+                                 ~ '" is not an absolute path.') -%}
+      {%-   endif -%}
+      {%- endfor -%}{{ out | unique }}
+
+- name: Read the versions installed
+  ansible.builtin.include_tasks: read_versions.yml
+
+- name: Refuse a version that could not be read
+  ansible.builtin.assert:
+    that:
+      - _unread | length == 0
+    fail_msg: >-
+      Could not read the version of
+      {{ _unread | map(attribute='product') | join(', ') }} in
+      {{ _unread | map(attribute='home') | join(', ') }}. Output:
+      {{ _unread | map(attribute='output') | join(' | ') }}
+    quiet: true
+  vars:
+    _unread: "{{ _fp_state | selectattr('installed', 'equalto', '?') | list }}"
+
+- name: Work out what to update
+  ansible.builtin.set_fact:
+    _fp_todo: >-
+      {%- set out = [] -%}
+      {%- for s in _fp_state if s.installed not in ['absent', '?'] and s.installed != s.version -%}
+      {%-   set _ = out.append(s) -%}
+      {%- endfor -%}{{ out }}
+
+- name: Report the plan
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = ['component : ' ~ _fp_component] -%}
+      {%- for s in _fp_state -%}
+      {%-   set what = 'not installed here, left alone' if s.installed == 'absent'
+                       else ('already at the version' if s.installed == s.version
+                       else 'to update') -%}
+      {%-   set _ = out.append(fixpack_products[s.product].label ~ ' ' ~ s.home ~ ' : '
+                               ~ s.installed ~ ' -> ' ~ s.version ~ ' (' ~ what ~ ')') -%}
+      {%- endfor -%}{{ out }}
+
+- name: Update
+  when: _fp_todo | length > 0
+  block:
+
+    # -----------------------------------------------------------------------
+    # The repositories of the levels asked
+    # -----------------------------------------------------------------------
+    - name: Find the repositories on the share
+      ansible.builtin.find:
+        paths: "{{ fixpack_repository_base }}"
+        patterns: repository.config
+        recurse: true
+        depth: 4
+        file_type: file
+      register: _fp_found
+      check_mode: false
+
+    - name: The repository of each product
+      ansible.builtin.set_fact:
+        _fp_repos: >-
+          {%- set dirs = _fp_found.files | map(attribute='path') | map('dirname') | list -%}
+          {%- set out = {} -%}
+          {%- for p in _fp_todo | map(attribute='product') | unique -%}
+          {%-   set v = _fp_versions[p] -%}
+          {%-   if p == 'sdk' -%}
+          {%-     set r = (dirs | select('match', '.*/SDK/' ~ (v | regex_escape) ~ '$') | list + ['']) | first -%}
+          {%-   else -%}
+          {%-     set r = fixpack_repository_base ~ '/FP' ~ v ~ '/' ~ fixpack_products[p].repository -%}
+          {%-   endif -%}
+          {%-   set _ = out.update({p: r if r in dirs else ''}) -%}
+          {%- endfor -%}{{ out }}
+
+    - name: Refuse a level that is not on the share
+      ansible.builtin.assert:
+        that:
+          - _missing | length == 0
+        fail_msg: >-
+          Not on the share, under {{ fixpack_repository_base }}:
+          {{ _missing | join(', ') }}. Is the binaries share mounted, and is
+          the level staged with its repository.config?
+        quiet: true
+      vars:
+        _missing: >-
+          {%- set out = [] -%}
+          {%- for p, r in _fp_repos.items() if r == '' -%}
+          {%-   set _ = out.append(fixpack_products[p].label ~ ' ' ~ _fp_versions[p]
+                                   ~ (' (FP*/SDK/' ~ _fp_versions[p] ~ ')' if p == 'sdk'
+                                      else ' (FP' ~ _fp_versions[p] ~ '/' ~ fixpack_products[p].repository ~ ')')) -%}
+          {%- endfor -%}{{ out }}
+
+    # -----------------------------------------------------------------------
+    # The full package name, from the repository
+    # -----------------------------------------------------------------------
+    - name: Ask each repository what it offers
+      ansible.builtin.command:
+        cmd: "{{ im_installer_cmd }} listAvailablePackages -repositories {{ item }}"
+      loop: "{{ _fp_repos.values() | unique | list }}"
+      register: _fp_available
+      changed_when: false
+      check_mode: false
+
+    - name: The full package name of each product
+      ansible.builtin.set_fact:
+        _fp_packages: >-
+          {%- set out = {} -%}
+          {%- for p, r in _fp_repos.items() -%}
+          {%-   set n = _fp_versions[p].split('.') -%}
+          {%-   set prefix = fixpack_products[p].offering ~ '_' ~ n[0] ~ '.' ~ n[1] ~ '.' ~ n[2]
+                             ~ ('%03d' | format(n[3] | int)) -%}
+          {%-   set lines = _fp_available.results | selectattr('item', 'equalto', r)
+                            | map(attribute='stdout_lines') | first -%}
+          {#-   the latest build of that version, when the repository has several -#}
+          {%-   set pkg = ([''] + (lines | map('trim') | select('match', (prefix | regex_escape) ~ '([.]|$)')
+                                   | sort | list)) | last -%}
+          {%-   set _ = out.update({p: {'name': pkg, 'prefix': prefix, 'repository': r,
+                                       'id': pkg.split('_')[0],
+                                       'version': (pkg.split('_', 1)[1] if '_' in pkg else ''),
+                                       'features': fixpack_products[p].features}}) -%}
+          {%- endfor -%}{{ out }}
+
+    - name: Refuse when the repository does not carry the version asked
+      ansible.builtin.assert:
+        that:
+          - _absent | length == 0
+        fail_msg: >-
+          {% for p in _absent %}{{ _fp_packages[p].repository }} offers no
+          {{ _fp_packages[p].prefix }}.* - it offers:
+          {{ (_fp_available.results | selectattr('item', 'equalto', _fp_packages[p].repository)
+              | map(attribute='stdout_lines') | first) | join(', ') }}. {% endfor %}
+        quiet: true
+      vars:
+        _absent: "{{ _fp_packages | dict2items | selectattr('value.name', 'equalto', '') | map(attribute='key') | list }}"
+
+    # -----------------------------------------------------------------------
+    # The Installation Manager profile each home is registered under
+    # -----------------------------------------------------------------------
+    - name: Read Installation Manager's installed.xml
+      ansible.builtin.shell: |
+        d="{{ im_agent_data_dir | default('') }}"
+        if [ -z "$d" ]; then
+          d=$(sed -n 's/^cic.appDataLocation=//p' "{{ im_installer_cmd | dirname | dirname }}/configuration/config.ini" | tail -1)
+          d=$(echo "$d" | sed "s#@user.home#$HOME#")
+        fi
+        echo "registry: $d/installed.xml" >&2
+        cat "$d/installed.xml"
+      register: _fp_installed_xml
+      changed_when: false
+      check_mode: false
+
+    - name: The profile of each home
+      ansible.builtin.set_fact:
+        _fp_profiles: >-
+          {%- set out = {} -%}
+          {%- for e in _fp_installed_xml.stdout | regex_findall('<profile [^>]*>') -%}
+          {%-   set id = (e | regex_findall('[ ]id=[\'"]([^\'"]*)[\'"]') + ['']) | first -%}
+          {%-   set loc = (e | regex_findall('[ ]installLocation=[\'"]([^\'"]*)[\'"]') + ['']) | first -%}
+          {%-   if id and loc -%}
+          {%-     set _ = out.update({loc | regex_replace('/+$', ''): id}) -%}
+          {%-   endif -%}
+          {%- endfor -%}{{ out }}
+
+    - name: Refuse a home Installation Manager does not know
+      ansible.builtin.assert:
+        that:
+          - _unknown | length == 0
+        fail_msg: >-
+          Installation Manager has no profile installed at
+          {{ _unknown | join(', ') }} ({{ _fp_installed_xml.stderr }}). It knows:
+          {{ _fp_profiles.keys() | join(', ') or 'nothing' }}.
+        quiet: true
+      vars:
+        _unknown: "{{ _fp_todo | map(attribute='home') | unique | reject('in', _fp_profiles) | list }}"
+
+    # -----------------------------------------------------------------------
+    # Nothing may run from a home to update
+    # -----------------------------------------------------------------------
+    - name: List the running processes
+      ansible.builtin.command:
+        cmd: ps -eo pid,user,args
+      register: _fp_ps
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse while a process runs from a home to update
+      ansible.builtin.assert:
+        that:
+          - _running | length == 0
+        fail_msg: >-
+          Still running - stop them first (deployment manager, node agents,
+          servers, IHS), then relaunch: {{ _running | join(' | ') }}
+        quiet: true
+      vars:
+        # The program itself must come from the home (its java, its httpd):
+        # a "tail -f" on one of its logs does not count.
+        _running: >-
+          {%- set out = [] -%}
+          {%- for l in _fp_ps.stdout_lines[1:] if l.split() | length > 2 -%}
+          {%-   for h in _fp_todo | map(attribute='home') | unique if l.split()[2].startswith(h ~ '/') -%}
+          {%-     set _ = out.append(l | trim | truncate(160)) -%}
+          {%-   endfor -%}
+          {%- endfor -%}{{ out | unique }}
+
+    # -----------------------------------------------------------------------
+    # One response file per home, applied, removed
+    # -----------------------------------------------------------------------
+    - name: One response file per home
+      ansible.builtin.set_fact:
+        _fp_jobs: >-
+          {%- set out = [] -%}
+          {%- for h in _fp_todo | map(attribute='home') | unique -%}
+          {%-   set prods = _fp_todo | selectattr('home', 'equalto', h) | map(attribute='product') | list -%}
+          {%-   set _ = out.append({
+                  'home': h,
+                  'profile': _fp_profiles[h],
+                  'file': '/tmp/wasevo_fixpack_' ~ (h | regex_replace('[^A-Za-z0-9]+', '_')) ~ '.xml',
+                  'products': prods,
+                  'repositories': prods | map('extract', _fp_packages) | map(attribute='repository') | unique | list,
+                  'offerings': prods | map('extract', _fp_packages) | list}) -%}
+          {%- endfor -%}{{ out }}
+
+    - name: Apply
+      block:
+
+        - name: Render the response files
+          ansible.builtin.template:
+            src: fixpack.xml.j2
+            dest: "{{ item.file }}"
+            mode: "0600"
+          loop: "{{ _fp_jobs }}"
+          loop_control:
+            label: "{{ item.home }} : {{ item.offerings | map(attribute='name') | join(', ') }}"
+          diff: true
+
+        - name: imcl input
+          ansible.builtin.command:
+            cmd: >-
+              {{ im_installer_cmd }} input {{ item.file }}
+              {{ ('-dataLocation ' ~ im_agent_data_dir) if (im_agent_data_dir | default('') | length > 0) else '' }}
+              -acceptLicense -showProgress
+          loop: "{{ _fp_jobs }}"
+          loop_control:
+            label: "{{ item.home }}"
+          register: _fp_imcl
+          changed_when: true
+          async: 5400
+          poll: 30
+          # async is refused in check mode: a Check run stops at the files.
+          when: not ansible_check_mode
+
+        - name: What imcl said
+          ansible.builtin.debug:
+            msg: "{{ item.item.home }}: {{ (item.stdout_lines | default([]))[-15:] }}"
+          loop: "{{ _fp_imcl.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.home | default('-') }}"
+          when: item.stdout_lines is defined
+
+      always:
+
+        - name: Remove the response files
+          ansible.builtin.file:
+            path: "{{ item.file }}"
+            state: absent
+          loop: "{{ _fp_jobs }}"
+          loop_control:
+            label: "{{ item.file }}"
+          when: not ansible_check_mode
+
+    # -----------------------------------------------------------------------
+    # Verify
+    # -----------------------------------------------------------------------
+    - name: Read the versions again
+      ansible.builtin.include_tasks: read_versions.yml
+      when: not ansible_check_mode
+
+    - name: Every product updated must be at the version asked
+      ansible.builtin.assert:
+        that:
+          - _behind | length == 0
+        fail_msg: >-
+          Not at the version asked after imcl:
+          {% for s in _behind %}{{ fixpack_products[s.product].label }} {{ s.home }} is {{ s.installed }}, not {{ s.version }}. {% endfor %}
+        success_msg: >-
+          {% for s in _fp_state if s.installed != 'absent' %}{{ fixpack_products[s.product].label }} {{ s.home }}: {{ s.installed }}. {% endfor %}
+      vars:
+        _behind: >-
+          {%- set out = [] -%}
+          {%- for s in _fp_state if s.installed != 'absent' and s.installed != s.version -%}
+          {%-   set _ = out.append(s) -%}
+          {%- endfor -%}{{ out }}
+      when: not ansible_check_mode

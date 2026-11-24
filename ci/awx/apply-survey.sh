@@ -163,14 +163,16 @@ fi
 # ---------------------------------------------------------------------------
 say "Apply"
 
-# A job template whose form is its own, not the build's. The fix pack job
-# asks which environment's configuration to deploy and which components
-# (surveys/fixpack-imcl.json). Launched from the workflow it still receives the
-# workflow's answers and, with no component chosen, keeps its discovery mode;
-# launched alone, this is the form it shows.
+# A job template whose form is its own, not the build's. The two fix pack
+# jobs - one playbook, lab_apply_fixpacks.yml - ask the component, the
+# version of each product and the homes (surveys/fixpack.json), nothing about
+# the cell. In the build workflow they run with the form's defaults: job 2,
+# before WAS is installed, finds nothing in the homes and changes nothing;
+# job 4 updates what jobs 3 to 3c installed.
 own_spec() {
     case "$1" in
-        "WAS AIX - 2. Fix packs: Installation Manager") echo "$HERE/surveys/fixpack-imcl.json" ;;
+        "WAS AIX - 2. Fix packs: Installation Manager"|"WAS AIX - 4. Fix packs: WAS")
+            echo "$HERE/surveys/fixpack.json" ;;
         *) echo "$SPEC" ;;
     esac
 }
