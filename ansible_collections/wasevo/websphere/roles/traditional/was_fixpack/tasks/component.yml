@@ -350,7 +350,9 @@
           Not at the version asked after imcl:
           {% for s in _behind %}{{ fixpack_products[s.product].label }} {{ s.home }} is {{ s.installed }}, not {{ s.version }}. {% endfor %}
         success_msg: >-
-          {% for s in _fp_state if s.installed != 'absent' %}{{ fixpack_products[s.product].label }} {{ s.home }}: {{ s.installed }}. {% endfor %}
+          {% for s in _fp_state if s.installed != 'absent' -%}
+          {{ fixpack_products[s.product].label }} {{ s.home }}: {{ s.installed }}.
+          {% endfor %}
       vars:
         _behind: >-
           {%- set out = [] -%}

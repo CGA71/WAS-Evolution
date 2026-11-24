@@ -15,8 +15,10 @@ J="$HERE/../ansible_collections/wasevo/websphere/roles/traditional/jvm_batch/fil
 T=$(mktemp -d)
 P="$T/profiles/Node1Test"
 C="$P/config/cells/TEST90Cell/nodes/Node1Test"
+# `|| true`: under set -e a kill of a process already gone would end the
+# script with status 1 after every check had passed, and before the rm.
 cleanup() {
-    for f in "$P"/logs/*/*.pid; do [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; done
+    for f in "$P"/logs/*/*.pid; do [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null || true; done
     rm -rf "$T"
 }
 trap cleanup 0
@@ -41,9 +43,19 @@ echo '<jvmEntries xmi:id="J" maximumHeapSize="512" genericJvmArguments="-Xms1g -
 echo '<jvmEntries xmi:id="J">' > "$C/servers/APPHANG/server.xml"
 
 # Fake JVMs: APP512 stops on request; APPHANG ignores the stop and SIGTERM.
-sleep 600 & echo $! > "$P/logs/APP512/APP512.pid"
-sleep 600 & echo $! > "$P/logs/nodeagent/nodeagent.pid"
-sh -c 'trap "" TERM; while :; do sleep 1; done' & echo $! > "$P/logs/APPHANG/APPHANG.pid"
+#
+# Not children of this script, as a real JVM is not: a child killed while
+# this script waits in a $(...) stays a zombie until reaped, and kill -0 -
+# what jvm_batch.sh asks - answers "alive" for a zombie. A wrapper shell
+# starts each one, waits for it, reaps it when it dies.
+spawn() { # spawn <pid file> <command...>
+    f="$1"; shift
+    sh -c '"$@" & echo $! > "$0"; wait' "$f" "$@" > /dev/null 2>&1 &
+    while [ ! -s "$f" ]; do sleep 1; done
+}
+spawn "$P/logs/APP512/APP512.pid" sleep 600
+spawn "$P/logs/nodeagent/nodeagent.pid" sleep 600
+spawn "$P/logs/APPHANG/APPHANG.pid" sh -c 'trap "" TERM; while :; do sleep 1; done'
 cat > "$P/bin/stopServer.sh" <<'EOF'
 #!/bin/sh
 [ "$1" = APPHANG ] && { sleep 600; exit 1; }

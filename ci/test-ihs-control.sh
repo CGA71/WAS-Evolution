@@ -11,8 +11,11 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 H="$HERE/../ansible_collections/wasevo/websphere/roles/traditional/ihs_fixpack/files/ihs_control.sh"
 T=$(mktemp -d)
+# `|| true`: under set -e a kill of a process already gone - the normal case
+# once the test has stopped everything - would end the script with status 1
+# after every check had passed, and before the rm.
 cleanup() {
-    for f in "$T"/*/logs/httpd.pid; do [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; done
+    for f in "$T"/*/logs/httpd.pid; do [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null || true; done
     rm -rf "$T"
 }
 trap cleanup 0

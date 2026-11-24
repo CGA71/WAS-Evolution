@@ -73,10 +73,19 @@ variables:
   image: python:3.12-slim
   before_script:
     - pip install --quiet --no-cache-dir ansible-core ansible-lint yamllint
+    # The collections the roles call (community.general.pam_limits,
+    # ansible.posix...): without them --syntax-check stops on "couldn't
+    # resolve module/action". Installed into $CI_PROJECT_DIR, the first
+    # collections path, as the .aix jobs do.
+    - ansible-galaxy collection install --force -r collections/requirements.yml >/dev/null
 
 yamllint:
   extends: .static
   stage: validation
+  # Its own before_script: the collections .static installs land under
+  # ansible_collections/, which `yamllint .` would then lint as ours.
+  before_script:
+    - pip install --quiet --no-cache-dir yamllint
   script:
     - yamllint -s .
 
