@@ -207,8 +207,10 @@
       ansible.builtin.shell: |
         d="{{ im_agent_data_dir | default('') }}"
         if [ -z "$d" ]; then
-          d=$(sed -n 's/^cic.appDataLocation=//p' "{{ im_installer_cmd | dirname | dirname }}/configuration/config.ini" | tail -1)
-          d=$(echo "$d" | sed "s#@user.home#$HOME#")
+          # The last cic.appDataLocation line, by sed alone: no pipe, since
+          # AIX's /bin/sh (ksh88) has no pipefail to guard one.
+          d=$(sed -n '/^cic.appDataLocation=/h; ${x;s/^cic.appDataLocation=//p;}' "{{ im_installer_cmd | dirname | dirname }}/configuration/config.ini")
+          case "$d" in @user.home*) d="$HOME${d#@user.home}" ;; esac
         fi
         echo "registry: $d/installed.xml" >&2
         cat "$d/installed.xml"
@@ -300,7 +302,7 @@
             label: "{{ item.home }} : {{ item.offerings | map(attribute='name') | join(', ') }}"
           diff: true
 
-        - name: imcl input
+        - name: Apply the response file - imcl input
           ansible.builtin.command:
             cmd: >-
               {{ im_installer_cmd }} input {{ item.file }}
