@@ -146,7 +146,7 @@ MACHINE_CRED_ID="$(id_of credentials "$MACHINE_CRED")"
 FIXPACK_ID="$(id_of job_templates "$FIXPACK_JT")"
 [ -n "$FIXPACK_ID" ] || die "no template \"$FIXPACK_JT\" - run apply-cell-workflow.sh first"
 VAULT_CRED_ID="$(id_of credentials "$VAULT_CRED")"
-[ -n "$VAULT_CRED_ID" ] || note "no credential \"$VAULT_CRED\" yet (docs/vault.md): the jobs cannot become was without it"
+[ -n "$VAULT_CRED_ID" ] || note "no credential \"$VAULT_CRED\" (docs/vault.md): needed only if sudo su - asks a password"
 CT_ID="$(id_of credential_types "$WAS_CRED_TYPE")"
 WAS_CRED_ID=""
 if [ -n "$CT_ID" ]; then

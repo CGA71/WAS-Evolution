@@ -21,5 +21,7 @@ ansible_python_interpreter: /opt/freeware/bin/python3
 # group_vars/was_servers.yml: it does not apply to the AWX web front.
 
 # /tmp on AIX is often a small filesystem; Ansible's temporary files go under
-# the account's home instead.
+# the account's home instead - on the hosts that become nobody but root. The
+# WAS servers, which become was, override this with /tmp
+# (group_vars/was_servers.yml): was cannot reach the connecting account's home.
 ansible_remote_tmp: "~/.ansible/tmp"

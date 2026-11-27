@@ -1,15 +1,14 @@
 ---
-# Privilege escalation on the WAS servers: two targets, one switch.
+# Privilege escalation on the WAS servers: two targets, one switch, one path.
 #
 #   WebSphere - build, configure, change: install, fix packs, profiles,
 #   cluster, resources, start and stop. As was, the owner of
-#   /usr/IBM/WebSphere9, with ITS OWN PASSWORD:
-#       su - was -c '<the module>'
+#   /usr/IBM/WebSphere9:
+#       sudo su - was -c '<the module>'
 #
 #   The system - what only root may do: mount the binaries share, the
 #   directory layout, the AIX packages and user limits (roles binaries_share
-#   and prereqs_os). As root, the way the site's operators reach it - the
-#   connecting account may run "sudo su -", nothing narrower:
+#   and prereqs_os). As root:
 #       sudo su - root -c '<the module>'
 #
 # A task that needs root says so - `vars: {wasevo_become_as: root}` beside its
@@ -18,25 +17,53 @@
 # root.
 #
 # The connecting account itself is the AWX Machine credential's
-# (50_connection.yml). Ansible's sudo method cannot be used: it runs its own
-# command line through sudo, which a "sudo su -" rule refuses; the su method
-# with "sudo su -" as its executable runs exactly what the rule allows.
+# (50_connection.yml). The site's operators reach root and was the same way,
+# "sudo su -", and that is the only path the connecting account is allowed.
+# Ansible's sudo method cannot be used: it runs its own command line through
+# sudo, which a "sudo su -" rule refuses; the su method with "sudo su -" as its
+# executable runs exactly what the rule allows.
+#
+# WHY NOT "su - was" WITH WAS'S PASSWORD. That was the first design: it
+# needs the vault on every job and breaks wherever a server's was password
+# differs from the vault's. "sudo su - was" asks no password (the fix pack
+# jobs run so on the site since 24 November 2026), the same on every server.
+# The JVM stop job (traditional_jvm_stop.yml), on another server, could only
+# become was once its temporary directory was /tmp: see below.
 
 wasevo_become_as: was
 
 ansible_become_method: su
 ansible_become_user: "{{ 'root' if wasevo_become_as == 'root' else site_was_user }}"
-ansible_become_exe: "{{ 'sudo su -' if wasevo_become_as == 'root' else 'su -' }}"
+ansible_become_exe: sudo su -
 
-# was: its password, from the vault (00_site.yml, docs/vault.md).
-# root: nothing. On this site "sudo su -" asks the connecting account for no
-# password (checked by hand, 21 November 2026), so the vault holds only was's.
-# Should a server ever ask: this variable outranks the AWX credential's
-# "Privilege Escalation Password", so that password would go into the vault
-# too, as vault_site_root_become_password.
-ansible_become_password: >-
-  {{ (vault_site_root_become_password | default(''))
-     if wasevo_become_as == 'root' else site_was_password }}
+# "sudo su -" asks the connecting account for no password on this site
+# (checked by hand, 21 November 2026). Should a server ever ask: the
+# connecting account's password goes into the vault as
+# vault_site_root_become_password (docs/vault.md) - this variable outranks the
+# AWX credential's "Privilege Escalation Password", for was as for root.
+ansible_become_password: "{{ vault_site_root_become_password | default('') }}"
+
+# THE MODULE FILES, READABLE BY WAS. Ansible never pipelines through the su
+# method, nor an async task: every module is copied to the server as the
+# connecting account, then run as was - which must read it. To hand it over,
+# Ansible tries setfacl, chown, chmod +a, a common group, and last a
+# world-readable file. On AIX the first three cannot work: no setfacl (AIX
+# has aclput, which Ansible does not use), chown to another account is
+# refused to a non-root user (sys0 chown_restrict), chmod +a is macOS's.
+#
+#   - the temporary directory is /tmp, one of the two system directories
+#     Ansible accepts for an unprivileged become. Under the connecting
+#     account's home (~/.ansible/tmp, 50_connection.yml) was cannot reach it.
+#     The module files are small and removed after each task.
+#   - the file is made readable for the seconds the task runs. It carries no
+#     secret: the passwords travel in the module's arguments, not its code.
+#
+# A group the connecting account and was share would be narrower: set
+# ansible_common_remote_group to it here, and Ansible gives the file to that
+# group (chgrp, chmod g+rx - both allowed on AIX) before trying the
+# world-readable file.
+ansible_remote_tmp: /tmp
+ansible_shell_allow_world_readable_temp: true
 
 # IBM HTTP Server: the Apache parent process of an instance runs as root, its
 # workers as was (User / Group of its httpd.conf) - as observed on the site's

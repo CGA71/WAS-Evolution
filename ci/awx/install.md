@@ -18,7 +18,7 @@ Aucun script ne crée ces objets : ils portent un secret ou un choix de site.
 | Projet | `WAS Evolution` | Git, `https://github.com/CGA71/WAS-Evolution.git`, **branche `features`**, environnement d'exécution par défaut renseigné |
 | Credential machine | `ServeurAIX (ansible)` | clé SSH du compte WAS sur ServeurAIX |
 | Environnement d'exécution | — | au moins un job template doit en porter un : `apply-cell-workflow.sh` le reprend (sinon `could not work out which Execution Environment to use`) |
-| Credential vault | `WAS AIX vault` | optionnelle, voir `docs/vault.md` ; sans elle les jobs ne peuvent pas devenir `was` |
+| Credential vault | `WAS AIX vault` | optionnelle, voir `docs/vault.md` ; utile seulement si `sudo su -` demande un mot de passe |
 | Credential WAS | type `WAS administrative user` | optionnelle, à créer **après** l'étape 2 qui crée le type ; sans elle les templates la demandent au lancement |
 
 **Branche du projet.** Les playbooks de fix pack (`traditional_jvm_stop.yml`,
