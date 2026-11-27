@@ -209,7 +209,8 @@
         if [ -z "$d" ]; then
           # The last cic.appDataLocation line, by sed alone: no pipe, since
           # AIX's /bin/sh (ksh88) has no pipefail to guard one.
-          d=$(sed -n '/^cic.appDataLocation=/h; ${x;s/^cic.appDataLocation=//p;}' "{{ im_installer_cmd | dirname | dirname }}/configuration/config.ini")
+          ini="{{ im_installer_cmd | dirname | dirname }}/configuration/config.ini"
+          d=$(sed -n '/^cic.appDataLocation=/h; ${x;s/^cic.appDataLocation=//p;}' "$ini")
           case "$d" in @user.home*) d="$HOME${d#@user.home}" ;; esac
         fi
         echo "registry: $d/installed.xml" >&2
