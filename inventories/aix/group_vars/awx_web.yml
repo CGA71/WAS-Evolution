@@ -15,6 +15,14 @@ certportal_web_root: /var/www/wasevo/certificates
 ansible_user: "{{ awx_web_user | default('ansible') }}"
 ansible_python_interpreter: auto_silent
 
+# Its escalation is plain sudo to root, to write the web server's files - not
+# the collection's "sudo su - was" of the WAS servers
+# (playbooks/group_vars/all.yml), which this group overrides.
+ansible_become_method: sudo
+ansible_become_exe: sudo
+ansible_become_user: root
+ansible_remote_tmp: "~/.ansible/tmp"
+
 # The application portal, beside it on the same web front: served at
 # /wasevo/applications/. The workflow names are the ones
 # ci/awx/apply-application-workflows.sh creates.

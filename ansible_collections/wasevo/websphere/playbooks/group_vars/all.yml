@@ -1,0 +1,65 @@
+---
+# Privilege escalation of every play of the collection, WHATEVER THE INVENTORY.
+#
+# Ansible reads this file for every playbook of this directory - the AWX job
+# templates and the imported ones alike. It used to live only in the AIX
+# inventory's group_vars/was_servers.yml, so a host outside that group (the
+# inventory inventories/was, an AWX inventory built without the group) fell
+# back to Ansible's own default - sudo to root - and the WebSphere tasks
+# either ran as root or were refused by a "sudo su -" rule. The JVM stop job
+# failed that way on another server.
+#
+# PRECEDENCE. Playbook group_vars/all outranks the inventory's group_vars/all
+# but not its named groups: inventories/aix/group_vars/was_servers.yml or
+# awx_web.yml still win for their hosts. A site changes these there, never
+# here.
+#
+# TWO TARGETS, ONE SWITCH.
+#
+#   WebSphere - build, configure, change, start and stop: as the WAS account
+#   (site_was_user), the owner of the installation:
+#       sudo su - <was> -c '<the module>'
+#
+#   The system - mount the binaries share, the directory layout, OS packages
+#   and user limits (binaries_share, prereqs_os) - as root:
+#       sudo su - root -c '<the module>'
+#
+# A task that needs root says so - `vars: {wasevo_become_as: root}` beside
+# its `become: true`. Every other `become: true` lands on the WAS account:
+# WebSphere is never touched as root.
+#
+# Ansible's sudo method is not used: it runs its own command line through
+# sudo, which a "sudo su -" rule refuses; the su method with "sudo su -" as
+# its executable runs exactly what such a rule allows, and works unchanged
+# where an account has full sudo. A sudo password, if one is asked, is the
+# AWX Machine credential's "Privilege Escalation Password" - or the
+# inventory's ansible_become_password, which outranks it.
+
+wasevo_become_as: was
+
+ansible_become_method: su
+ansible_become_exe: sudo su -
+ansible_become_user: >-
+  {{ 'root' if wasevo_become_as == 'root'
+     else (site_was_user | default('was', true)) }}
+
+# THE MODULE FILES, READABLE BY THE WAS ACCOUNT. Ansible never pipelines
+# through su, nor for an async task: each module is copied to the server as
+# the connecting account, then run as the WAS account, which must read it.
+# Ansible tries setfacl, chown, chmod +a, a common group, then a
+# world-readable file - and on AIX the first three do not exist or are
+# refused (no setfacl, chown to another account refused to a non-root user by
+# sys0 chown_restrict, chmod +a is macOS's).
+#
+#   - /tmp is one of the two system directories Ansible accepts for an
+#     unprivileged become; under the connecting account's home the WAS
+#     account cannot reach the file. The files are small and removed after
+#     each task.
+#   - the file is readable for the seconds the task runs; it carries no
+#     secret, the passwords travel in the module's arguments.
+#
+# A group shared by the connecting account and the WAS account is narrower:
+# set ansible_common_remote_group to it in the inventory, and Ansible uses
+# chgrp and chmod g+rx, both allowed on AIX, before the world-readable file.
+ansible_remote_tmp: /tmp
+ansible_shell_allow_world_readable_temp: true

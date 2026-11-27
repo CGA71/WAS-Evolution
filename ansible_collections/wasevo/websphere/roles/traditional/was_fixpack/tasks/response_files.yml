@@ -11,7 +11,7 @@
 #
 # The repository is therefore the guarantor of what an environment runs. Every
 # imcl call runs as was - the become of the WAS servers lands on was, never
-# root (inventories/aix/group_vars/was_servers.yml).
+# root (playbooks/group_vars/all.yml).
 #
 # A check run (Job type: Check) renders the files and shows them, and runs no
 # imcl.

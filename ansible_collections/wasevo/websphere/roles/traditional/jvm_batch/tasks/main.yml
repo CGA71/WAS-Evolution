@@ -11,7 +11,7 @@
 #
 # Everything as was: the JVMs are its processes, and a kill reaches nothing
 # else. was is reached through "sudo su - was", its module files in /tmp
-# (inventories/aix/group_vars/was_servers.yml).
+# (playbooks/group_vars/all.yml, for every inventory).
 # A check run reads and reports, and stops or starts nothing.
 
 - name: JVM batch - the request

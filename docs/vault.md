@@ -14,7 +14,7 @@ Sur les serveurs WAS AIX, trois comptes, trois rôles :
 | `root` | le compte de connexion lance `sudo su -` | ce qui change le **système** : monter le partage des binaires, l'arborescence, les paquets et les limites AIX (rôles `binaries_share`, `prereqs_os`) |
 | `was` | le compte de connexion lance `sudo su - was` | tout ce qui **construit, configure ou modifie WebSphere** : installation, fix packs, profils, cluster, ressources, arrêt et démarrage |
 
-Les deux élévations partent toujours du compte de connexion, par le même chemin que les exploitants : `sudo su -`. C'est [`inventories/aix/group_vars/was_servers.yml`](../inventories/aix/group_vars/was_servers.yml) qui les règle ; une tâche qui doit passer root le déclare (`vars: {wasevo_become_as: root}`), toutes les autres passent `was`.
+Les deux élévations partent toujours du compte de connexion, par le même chemin que les exploitants : `sudo su -`. C'est la collection qui les règle, pour tout inventaire : [`playbooks/group_vars/all.yml`](../ansible_collections/wasevo/websphere/playbooks/group_vars/all.yml) ; le [`was_servers.yml`](../inventories/aix/group_vars/was_servers.yml) du site ne garde que ce qui lui est propre ; une tâche qui doit passer root le déclare (`vars: {wasevo_become_as: root}`), toutes les autres passent `was`.
 
 **Sur ce site, le vault n'est pas nécessaire** : `sudo su -` ne demande aucun mot de passe au compte de connexion (vérifié à la main le 21 novembre 2026), et le mot de passe de `was` n'est plus utilisé — `su - was` avec ce mot de passe a été remplacé par `sudo su - was`, identique sur tous les serveurs.
 
@@ -120,7 +120,7 @@ Avant toute publication publique du dépôt, `90_vault.yml` est chiffré mais re
 
 ## English summary
 
-**Three accounts.** The **connecting** account is the AWX Machine credential's (the inventory sets no `ansible_user`). **root** is reached through `sudo su -`, only for system tasks — mounting the share, directories, AIX packages and limits (`binaries_share`, `prereqs_os`), each marked `vars: {wasevo_become_as: root}`. Everything that **builds, configures or changes WebSphere** runs as **`was`**, through `sudo su - was`. See [`was_servers.yml`](../inventories/aix/group_vars/was_servers.yml).
+**Three accounts.** The **connecting** account is the AWX Machine credential's (the inventory sets no `ansible_user`). **root** is reached through `sudo su -`, only for system tasks — mounting the share, directories, AIX packages and limits (`binaries_share`, `prereqs_os`), each marked `vars: {wasevo_become_as: root}`. Everything that **builds, configures or changes WebSphere** runs as **`was`**, through `sudo su - was`. See [`playbooks/group_vars/all.yml`](../ansible_collections/wasevo/websphere/playbooks/group_vars/all.yml), the same for every inventory.
 
 **On this site no vault is needed**: `sudo su -` asks no password, and `was`'s own password is no longer used (`su - was` with it was replaced by `sudo su - was`, the same on every server). The vault only matters if `sudo su -` ever asks a password.
 

@@ -17,11 +17,11 @@
 # named explicitly.
 ansible_python_interpreter: /opt/freeware/bin/python3
 
-# Privilege escalation on the WAS servers - was, or root - is in
-# group_vars/was_servers.yml: it does not apply to the AWX web front.
+# Privilege escalation - was, or root - is the collection's
+# (playbooks/group_vars/all.yml); the AWX web front overrides it (awx_web.yml).
 
 # /tmp on AIX is often a small filesystem; Ansible's temporary files go under
 # the account's home instead - on the hosts that become nobody but root. The
-# WAS servers, which become was, override this with /tmp
-# (group_vars/was_servers.yml): was cannot reach the connecting account's home.
+# collection overrides this with /tmp for every play
+# (playbooks/group_vars/all.yml): was cannot reach the connecting account's home.
 ansible_remote_tmp: "~/.ansible/tmp"

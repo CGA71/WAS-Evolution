@@ -23,8 +23,8 @@
 #       -e fixpack_component=was-sdk -e fixpack_was_version=9.0.5.28
 #
 # THE ACCOUNT. The job connects with the AWX Machine credential, then every
-# task runs through "sudo su - was" - the inventory's escalation of the WAS
-# servers (inventories/aix/group_vars/was_servers.yml), shared by every job:
+# task runs through "sudo su - was" - the collection's escalation of the WAS
+# servers (playbooks/group_vars/all.yml), shared by every job:
 # was without a password, the module files in /tmp made readable for was.
 # Never as root: imcl run as root reads another registry than was's and fails
 # with "The registry information does not exist or does not match with this

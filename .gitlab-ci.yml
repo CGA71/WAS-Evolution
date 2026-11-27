@@ -142,6 +142,9 @@ syntax:
     # The AIX server: the mount check and the install chain.
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/binaries_mount_check.yml
+    # The escalation every playbook resolves - the WAS account through
+    # "sudo su -", module files in /tmp - with any inventory.
+    - sh ci/test-escalation.sh
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_jvm_stop.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_jvm_start.yml
     - ansible-playbook -i $AIX_INVENTORY --syntax-check $COLLECTION/playbooks/traditional_fixpack_dmgr.yml
