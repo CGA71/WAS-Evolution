@@ -9,7 +9,9 @@
 # stopServer.sh for each JVM of the batch, all at once; a JVM still alive
 # after jvm_stop_timeout is killed (SIGTERM, then SIGKILL after
 # jvm_kill_grace).
-# Everything as the WAS account.
+# Everything as the WAS account, through "sudo su - was", the module files in
+# /tmp - set by the role's defaults, so it holds with any inventory
+# (roles/traditional/jvm_batch/defaults/main.yml).
 #
 # ONE PLAYBOOK, ONE JOB TEMPLATE, a batch per launch: the AWX workflow
 # "WAS AIX - Fix pack WAS by JVM batch" runs it once per batch, and any batch can

@@ -62,3 +62,23 @@ jvm_stop_with_credentials: true
 
 # Where the batch script is put on the server, the was account's.
 jvm_batch_script: "{{ was_data_base_dir }}/jvm_batch.sh"
+
+# THE ACCOUNT, whatever the inventory. Every task of this role runs as the
+# account that owns the JVMs - never root, never the connecting account. The
+# AIX inventory says how to get there (group_vars/was_servers.yml), but a host
+# outside that group - another inventory, an AWX inventory without the group -
+# would fall back to Ansible's own default, sudo to root: refused by a
+# "sudo su -" rule, and wrong anyway. These are role defaults, the lowest
+# precedence there is: any inventory that sets them wins.
+#
+#   sudo su - <was> -c '<module>'      the operators' own path, no password
+#
+# The module files go to /tmp and are made readable for the seconds a task
+# runs: su gets no pipelining, nor does the async stop/start task, so each
+# module is copied as the connecting account and was must read it - and AIX
+# has no setfacl and refuses chown to a non-root user. They carry no secret.
+ansible_become_method: su
+ansible_become_exe: sudo su -
+ansible_become_user: "{{ site_was_user | default('was', true) }}"
+ansible_remote_tmp: /tmp
+ansible_shell_allow_world_readable_temp: true
